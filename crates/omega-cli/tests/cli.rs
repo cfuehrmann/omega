@@ -256,18 +256,23 @@ async fn preset_standard_yields_twelve_tools() {
 }
 
 /// Kills: swapping `all` with `standard` in the PRESETS const — `all` is the
-/// only preset that exposes `python_repl` alongside the standard 12.
+/// only preset that exposes the opt-in tools (`python_repl` + the async
+/// `monitor`/`stop_monitor` pair) alongside the standard 12.
 #[tokio::test(flavor = "multi_thread")]
-async fn preset_all_yields_thirteen_tools_including_repl() {
+async fn preset_all_yields_fifteen_tools_including_repl_and_monitors() {
     let tools = run_preset_and_collect_tools("all");
     assert_eq!(
         tools.len(),
-        13,
-        "all preset should give 13 tools, got: {tools:?}"
+        15,
+        "all preset should give 15 tools, got: {tools:?}"
     );
     assert!(
         tools.contains(&"python_repl".to_owned()),
         "all preset must include python_repl"
+    );
+    assert!(
+        tools.contains(&"monitor".to_owned()) && tools.contains(&"stop_monitor".to_owned()),
+        "all preset must include the async monitor tools"
     );
     assert!(tools.contains(&"read_file".to_owned()));
     assert!(tools.contains(&"run_command".to_owned()));

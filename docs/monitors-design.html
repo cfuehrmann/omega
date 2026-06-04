@@ -344,14 +344,39 @@ const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows
         <code>tool_definitions</code> emits them, and add the deferred teaching copy (&sect;5).</li>
     </ol>
   </div>
+  <div class="box ok">
+    <strong>Phase 2 decisions (as built) &mdash; <span class="keep">✔</span>:</strong>
+    <ul>
+      <li><strong>Natural-exit <code>kill_group</code>: YES.</strong> When the waiter sees a
+        monitor self-exit (Running&rarr;Stopped), it calls <code>kill_group(pgid)</code>
+        before enqueuing the stop item. A self-exited <code>bash</code> leader can leave
+        background grandchildren reparented to init; because they inherit the leader&rsquo;s
+        process group, one group kill reaps them. Cost: an already-dead leader makes the
+        kill a harmless no-op. The alternative (reap only the leader) was rejected — it
+        silently leaks the exact orphans the process-group design exists to prevent. The
+        SIGKILL the waiter observes for an <em>agent</em>-killed monitor is suppressed (the
+        entry is already <code>Stopped</code>), so this never double-classifies as
+        <code>Crashed</code>.</li>
+      <li><strong>DEFAULT / preset: opt-in, not default.</strong> <code>monitor</code> and
+        <code>stop_monitor</code> join <code>ALL_TOOL_NAMES</code> and the <code>all</code>
+        preset only — <em>not</em> <code>DEFAULT_TOOL_NAMES</code>/<code>standard</code>
+        (same posture as <code>python_repl</code>). Rationale: monitors are an advanced
+        async capability whose correct use depends on the teaching copy being present
+        (&sect;5 teaching-copy prerequisite); making them opt-in keeps the default session
+        lean and ensures a monitor-aware session is deliberately selected. Explorative
+        minimalism (&sect;5): no dedicated new preset — <code>all</code> already means
+        &ldquo;everything&rdquo;.</li>
+    </ul>
+  </div>
   <p>
-    <strong>Deliberate Phase 1/2 boundary (not an oversight).</strong> On natural exit the
-    waiter task only reaps the child and flips the roster entry to <code>Stopped</code>
-    &mdash; it does <em>not</em> capture the exit code, distinguish
-    <code>ProcessExited</code> vs <code>Crashed</code>, or enqueue a stop item. So
-    <em>projected</em> stop delivery for self-terminating monitors is unwired by design;
-    Phase 2 must capture exit status if it wants that projection. Phase 1 stops at
-    &ldquo;mark stopped + reap.&rdquo; (Also: stderr&rsquo;s roster cap uses a single
+    <strong>Deliberate Phase 1/2 boundary (not an oversight).</strong> In Phase 1 the
+    waiter task only reaped the child and flipped the roster entry to <code>Stopped</code>
+    &mdash; it did <em>not</em> capture the exit code, distinguish
+    <code>ProcessExited</code> vs <code>Crashed</code>, or enqueue a stop item, so
+    <em>projected</em> stop delivery for self-terminating monitors was unwired. <strong>Phase 2
+    wired this</strong> (see the Phase 2 entry in &sect;11): the waiter now classifies the
+    <code>ExitStatus</code> and enqueues <code>PendingItem::Stopped</code>, and on the
+    natural transition also <code>kill_group</code>s for orphan reaping. (Also: stderr&rsquo;s roster cap uses a single
     <code>if</code>, not a <code>while</code> &mdash; safe because pushes are one-at-a-time, and
     it keeps the boundary mutation catchable rather than an infinite-loop timeout.)
   </p>
@@ -524,10 +549,49 @@ MonitorStopped { id, reason, exit_code, time }
     build note in &sect;4.</em> The tools are intentionally <strong>not</strong> exposed to the model yet
     (clean cutover). E2E tests via <code>execute_tool</code>; mutation recipes <code>mutants-monitors</code> /
     <code>mutants-monitor-tools</code> (all caught/unviable).</li>
-  <li><strong>Phase 2 — Loop integration.</strong> Unified pending queue (monitor lines +
-    human input). Drain at the two seams. Parking select over
-    <code>{human, queue, roster-changed}</code>. Terminate condition. Route human input
-    through the queue; keep explicit abort/interrupt as a separate path.</li>
+  <li><strong>Phase 2 — Loop integration. <span class="keep">✔ DONE</span>.</strong>
+    The agent owns one <code>Arc&lt;MonitorManager&gt;</code> per session
+    (<small class="path">agent.rs</small>), cloned into every <code>ToolCtx</code> it
+    builds (the Phase 1 <code>monitors: None</code> is gone). <strong>Drain at the two
+    seams</strong> via <code>Agent::drain_monitors()</code>: <em>Seam&nbsp;B</em> right after
+    each tool_result (before the next model call) and <em>Seam&nbsp;A</em> after
+    <code>end_turn</code>. Stdout batches per-monitor into a projected
+    <code>MonitorDelivery</code> (<code>role: user</code>, merged with the preceding
+    tool_result user message by <code>project_messages()</code> so the
+    tool_use/tool_result pair is never split); stderr becomes a non-projected
+    <code>MonitorStderr</code>. <strong>Exit-status capture</strong> (now in scope): the
+    waiter classifies <code>ProcessExited</code> (normal exit, any code) vs
+    <code>Crashed</code> (signal death, no exit code) and enqueues a new
+    <code>PendingItem::Stopped{monitor_id, reason, exit_code}</code> — single-writer
+    preserved: the waiter only enqueues, the loop injects via
+    <code>inject_monitor_stopped</code> (projects per <code>should_project()</code>). A
+    natural Running→Stopped transition also calls <code>kill_group</code> to reap
+    orphaned grandchildren (decision below); the SIGKILL the waiter then observes for an
+    agent-/shutdown-killed monitor is suppressed (it was already <code>Stopped</code>), so
+    no spurious <code>Crashed</code>. <strong>Parking select</strong>: when a cycle would
+    end, the loop parks iff a live monitor or queued item exists, else terminates (never
+    hangs when nothing can fire). While parked it blocks on a select over
+    <code>{human (ControlHandle continue/abort), queue (item-notify), roster-changed}</code>;
+    <em>roster-changed</em> fires from <code>stop()</code>/<code>shutdown()</code> when the
+    live set shrinks <em>without</em> a drainable item (e.g. a UI kill while parked) so the
+    parked loop re-evaluates park-vs-terminate. On wake it drains and runs another
+    monitor-driven cycle (projected content) or re-parks (stderr only). <strong>Shutdown</strong>:
+    <code>Agent::shutdown_monitors()</code> + a <code>Drop</code> backstop call
+    <code>MonitorManager::shutdown()</code> on session end (reaps all trees). <strong>Cutover
+    complete</strong>: <code>monitor</code>/<code>stop_monitor</code> are in
+    <code>ALL_TOOL_NAMES</code> + the <code>all</code> preset (opt-in; <em>not</em> default —
+    decision below), their schema fns emit through <code>tool_definitions</code>, and the
+    teaching copy lives in the system prompt (<code>monitor_addendum</code>) and both tool
+    descriptions. The feature is now <strong>fully wired</strong>. E2E tests via
+    <code>Agent::send_message</code>+<code>MockProvider</code>; mutation recipes
+    <code>mutants-agent-projection</code>, <code>mutants-monitors</code>,
+    <code>mutants-system-prompt</code>, <code>mutants-schemas</code> (all caught/unviable).
+    <em>Deviation from the original sketch:</em> human input is <strong>not</strong> yet
+    routed through the unified queue — it remains the existing per-message
+    <code>send_message</code> path, with the parked loop woken via the
+    <code>ControlHandle</code> (continue = interjection, abort = terminate). Routing
+    free-typed input through the queue and surfacing the parked state in the UI is folded
+    into Phase 3; the three logical wake sources all exist today.</li>
   <li><strong>Phase 3 — WS + UI.</strong> Push ephemeral roster + pending-queue over WS;
     <code>KillMonitor</code> control frame. Badge + modal + queue visualization. Later:
     per-monitor detail + kill button.</li>

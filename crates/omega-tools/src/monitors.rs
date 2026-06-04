@@ -49,6 +49,9 @@ use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Notify;
+
+use omega_types::events::MonitorStopReason;
 
 use crate::process_util::kill_group;
 
@@ -96,6 +99,22 @@ pub enum PendingItem {
         /// The stderr line, with its trailing newline stripped.
         chunk: String,
     },
+    /// A monitor self-terminated (its process exited on its own — Phase 2
+    /// exit-status capture).  Enqueued by the waiter task **only** for a
+    /// natural exit (a `Running` → `Stopped` transition it observed itself);
+    /// agent-initiated stops / session shutdown set `Stopped` *before*
+    /// killing, so the waiter suppresses the (bogus SIGKILL) item for those.
+    /// The loop drains this into a projected `MonitorStopped` event.
+    Stopped {
+        /// Id of the monitor that exited.
+        monitor_id: String,
+        /// Classified outcome: `ProcessExited` (normal exit, any code) or
+        /// `Crashed` (killed by a signal).
+        reason: MonitorStopReason,
+        /// Process exit code when it exited normally; `None` when killed by
+        /// a signal (the signal number is not carried in the frozen schema).
+        exit_code: Option<i32>,
+    },
 }
 
 /// Public, cloneable snapshot of one roster entry (for UI / WS / tests).
@@ -118,6 +137,18 @@ pub struct MonitorInfo {
 }
 
 /// Internal roster entry.
+/// Outcome of [`MonitorManager::mark_stopped_natural`] — whether the waiter's
+/// observed exit was the monitor's own (and therefore worth reporting) or a
+/// kill the agent/shutdown already accounted for (and therefore suppressed).
+enum NaturalStop {
+    /// The monitor was already `Stopped` (agent stop / shutdown got there
+    /// first); the waiter drops the redundant stop item.
+    Suppress,
+    /// This call performed the `Running` → `Stopped` transition; `pgid` is the
+    /// group to reap for orphaned grandchildren.
+    Transitioned { pgid: Option<u32> },
+}
+
 #[derive(Debug)]
 struct MonitorEntry {
     description: String,
@@ -153,6 +184,16 @@ pub struct SpawnedMonitor {
 #[derive(Debug)]
 pub struct MonitorManager {
     inner: Mutex<ManagerInner>,
+    /// Fired (one permit) whenever a drainable item is pushed onto the
+    /// pending queue — the parked main loop selects on this to wake and
+    /// drain.  Kept **outside** the inner lock so the loop never blocks the
+    /// reader/waiter tasks.
+    item_notify: Notify,
+    /// Fired whenever the live-monitor set shrinks **without** enqueuing a
+    /// drainable item (an agent/UI stop or session shutdown).  Lets a parked
+    /// loop re-evaluate park-vs-terminate instead of hanging when the last
+    /// live monitor is killed with an empty queue.
+    roster_notify: Notify,
 }
 
 impl MonitorManager {
@@ -167,7 +208,46 @@ impl MonitorManager {
                 pending: VecDeque::new(),
                 next_seq: 0,
             }),
+            item_notify: Notify::new(),
+            roster_notify: Notify::new(),
         })
+    }
+
+    /// Wake source the parked loop selects on for **queued items**.  A permit
+    /// is stored if no one is waiting, so a line pushed just before the loop
+    /// parks is not lost.
+    #[must_use]
+    pub fn notify_item(&self) -> &Notify {
+        &self.item_notify
+    }
+
+    /// Wake source the parked loop selects on for a **roster shrink** that
+    /// enqueued nothing (agent/UI stop, shutdown).
+    #[must_use]
+    pub fn notify_roster(&self) -> &Notify {
+        &self.roster_notify
+    }
+
+    /// Number of monitors currently believed `Running`.  The loop parks iff
+    /// this is non-zero (or the queue is non-empty); otherwise nothing can
+    /// ever fire and it terminates.
+    #[must_use]
+    pub fn live_count(&self) -> usize {
+        self.lock()
+            .monitors
+            .values()
+            .filter(|e| e.status == MonitorStatus::Running)
+            .count()
+    }
+
+    /// Number of items currently waiting in the pending queue (non-destructive).
+    ///
+    /// Unlike [`drain_pending`](Self::drain_pending) this does not consume the
+    /// queue; it exists so callers (and tests) can observe that an item has
+    /// been enqueued without taking it.
+    #[must_use]
+    pub fn pending_len(&self) -> usize {
+        self.lock().pending.len()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ManagerInner> {
@@ -250,16 +330,42 @@ impl MonitorManager {
             });
         }
 
-        // Waiter: reap the child (no zombies) and mark the roster entry
-        // Stopped when the process exits on its own.  Uses the SIGCHLD-driven
-        // `wait`; if the monitor was already stopped (agent stop / shutdown)
-        // the status is left as Stopped.
+        // Waiter: reap the child (no zombies), classify its exit, and — for a
+        // *natural* self-termination — enqueue a `Stopped` item so the loop can
+        // project a `MonitorStopped` event (single-writer: the waiter never
+        // writes events itself, it only enqueues).  Phase 2 exit-status
+        // capture: `ProcessExited` (normal exit, any code) vs `Crashed`
+        // (killed by a signal).
         {
             let mgr = Arc::clone(self);
             let mid = id.clone();
             tokio::spawn(async move {
-                let _ = child.wait().await;
-                mgr.mark_stopped(&mid);
+                let status = child.wait().await;
+                let (reason, exit_code) = match &status {
+                    Ok(st) => match st.code() {
+                        // Normal exit (any code, including non-zero).
+                        Some(code) => (MonitorStopReason::ProcessExited, Some(code)),
+                        // No code => terminated by a signal (e.g. SIGSEGV,
+                        // SIGKILL). `signal()` is the carrier; the frozen
+                        // schema has no field for it, so exit_code stays None.
+                        None => (MonitorStopReason::Crashed, None),
+                    },
+                    // `wait()` itself failed (should not happen for a child we
+                    // spawned); treat conservatively as a crash.
+                    Err(_) => (MonitorStopReason::Crashed, None),
+                };
+                // Only the natural Running->Stopped transition enqueues. If the
+                // agent/shutdown already set Stopped, the exit we observe here
+                // is the SIGKILL *we* sent — suppress the bogus item.
+                if let NaturalStop::Transitioned { pgid } = mgr.mark_stopped_natural(&mid) {
+                    // The group leader exited on its own but may have left
+                    // background grandchildren reparented to init; kill the
+                    // group to reap them (no orphans), then enqueue.
+                    if let Some(gid) = pgid {
+                        kill_group(gid);
+                    }
+                    mgr.enqueue_stopped(&mid, reason, exit_code);
+                }
             });
         }
 
@@ -275,6 +381,8 @@ impl MonitorManager {
             monitor_id: id.to_owned(),
             line,
         });
+        drop(inner);
+        self.item_notify.notify_one();
     }
 
     fn push_stderr(&self, id: &str, chunk: String) {
@@ -295,15 +403,41 @@ impl MonitorManager {
             monitor_id: id.to_owned(),
             chunk,
         });
+        drop(inner);
+        self.item_notify.notify_one();
     }
 
-    /// Mark a monitor Stopped if it is still known (idempotent; leaves an
-    /// already-Stopped entry untouched).
-    fn mark_stopped(&self, id: &str) {
+    /// Mark a monitor Stopped **iff** it was still `Running`, reporting the
+    /// transition to the waiter.
+    ///
+    /// Returns `Transitioned { pgid }` (the entry's process-group id, itself
+    /// optional) when this call performed the `Running` → `Stopped` transition
+    /// — i.e. a natural self-exit the waiter observed first.  Returns
+    /// `Suppress` when the monitor was unknown or already `Stopped` (agent stop
+    /// / shutdown got there first), so the waiter drops the redundant item.
+    fn mark_stopped_natural(&self, id: &str) -> NaturalStop {
         let mut inner = self.lock();
-        if let Some(entry) = inner.monitors.get_mut(id) {
-            entry.status = MonitorStatus::Stopped;
+        match inner.monitors.get_mut(id) {
+            Some(entry) if entry.status == MonitorStatus::Running => {
+                entry.status = MonitorStatus::Stopped;
+                NaturalStop::Transitioned { pgid: entry.pgid }
+            }
+            _ => NaturalStop::Suppress,
         }
+    }
+
+    /// Enqueue a `Stopped` item for a self-terminated monitor and wake the
+    /// parked loop.  Called by the waiter only after a natural transition.
+    fn enqueue_stopped(&self, id: &str, reason: MonitorStopReason, exit_code: Option<i32>) {
+        {
+            let mut inner = self.lock();
+            inner.pending.push_back(PendingItem::Stopped {
+                monitor_id: id.to_owned(),
+                reason,
+                exit_code,
+            });
+        }
+        self.item_notify.notify_one();
     }
 
     /// Stop one monitor: kill its whole process tree and mark it Stopped.
@@ -325,6 +459,10 @@ impl MonitorManager {
         if let Some(gid) = pgid {
             kill_group(gid);
         }
+        // The live set shrank but we enqueued nothing drainable: wake any
+        // parked loop so it re-evaluates park-vs-terminate (covers a UI
+        // KillMonitor of the last live monitor while parked).
+        self.roster_notify.notify_one();
         true
     }
 
@@ -347,6 +485,10 @@ impl MonitorManager {
             if let Some(gid) = pgid {
                 kill_group(*gid);
             }
+        }
+        if !killed.is_empty() {
+            // Roster shrank without enqueuing: wake a parked loop to terminate.
+            self.roster_notify.notify_one();
         }
         killed.into_iter().map(|(id, _)| id).collect()
     }
@@ -786,6 +928,190 @@ mod tests {
         assert!(
             poll_until(DL, || mgr.status(&id) == Some(MonitorStatus::Stopped)).await,
             "monitor should be marked Stopped after natural exit"
+        );
+    }
+
+    /// Spawn a monitor through the tool and return its id.
+    async fn spawn_mon(ctx: &ToolCtx, command: &str) -> String {
+        let r = execute_tool(
+            "monitor",
+            json!({ "description": "d", "command": command }),
+            None,
+            Some(ctx),
+        )
+        .await;
+        started_event(&r).id.clone()
+    }
+
+    #[tokio::test]
+    async fn natural_exit_enqueues_stopped_with_exit_code() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        // Exit with a specific non-zero code; the waiter must classify it as a
+        // normal `ProcessExited` and carry the code through the queue.
+        let id = spawn_mon(&ctx, "exit 7").await;
+        let items = accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
+        let stopped: Vec<_> = items
+            .iter()
+            .filter_map(|i| match i {
+                PendingItem::Stopped {
+                    monitor_id,
+                    reason,
+                    exit_code,
+                } => Some((monitor_id, reason.clone(), *exit_code)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stopped.len(), 1, "exactly one Stopped item");
+        assert_eq!(stopped[0].0, &id);
+        assert_eq!(stopped[0].1, MonitorStopReason::ProcessExited);
+        assert_eq!(stopped[0].2, Some(7), "normal exit carries its code");
+        assert_eq!(mgr.status(&id), Some(MonitorStatus::Stopped));
+    }
+
+    #[tokio::test]
+    async fn signal_death_enqueues_crashed_without_code() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        // Kill the shell with SIGKILL: no exit code => `Crashed`.
+        let _id = spawn_mon(&ctx, "kill -9 $$").await;
+        let items = accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
+        let stopped = items
+            .iter()
+            .find_map(|i| match i {
+                PendingItem::Stopped {
+                    reason, exit_code, ..
+                } => Some((reason.clone(), *exit_code)),
+                _ => None,
+            })
+            .expect("a Stopped item");
+        assert_eq!(stopped.0, MonitorStopReason::Crashed);
+        assert_eq!(stopped.1, None, "signal death carries no exit code");
+    }
+
+    #[tokio::test]
+    async fn agent_stop_suppresses_the_natural_stopped_item() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let id = spawn_mon(&ctx, "sleep 100").await;
+        // Let the process come up, then stop it. The SIGKILL the waiter later
+        // observes must NOT be reported as a `Stopped` item (single-writer: the
+        // agent already logged MonitorStopped(AgentStopped) via the tool).
+        assert!(
+            poll_until(DL, || mgr.live_count() == 1).await,
+            "monitor should be live"
+        );
+        assert!(mgr.stop(&id), "stop reports it was live");
+        // Give the waiter ample time to observe the kill and (wrongly, if buggy)
+        // enqueue.
+        let items = accumulate(&mgr, Duration::from_millis(400), 1, |i| {
+            matches!(i, PendingItem::Stopped { .. })
+        })
+        .await;
+        assert!(
+            !items
+                .iter()
+                .any(|i| matches!(i, PendingItem::Stopped { .. })),
+            "agent-killed monitor must not enqueue a Stopped item, got {items:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn natural_exit_reaps_orphaned_grandchildren() {
+        let (tmp, ctx, mgr) = ctx_with_manager();
+        let pidfile = tmp.path().join("grand.pid");
+        // The shell backgrounds a grandchild then exits *without* waiting. The
+        // grandchild is reparented to init but stays in the leader's process
+        // group, so the natural-exit `kill_group` must reap it (no orphan).
+        let cmd = format!("sleep 100 & echo $! > {}; exit 0", pidfile.display());
+        let id = spawn_mon(&ctx, &cmd).await;
+        assert!(poll_until(DL, || pidfile.exists()).await, "pidfile written");
+        let grand = poll_read_pid(&pidfile).await.expect("grandchild pid");
+        assert!(
+            poll_until(DL, || mgr.status(&id) == Some(MonitorStatus::Stopped)).await,
+            "leader should self-exit"
+        );
+        assert!(
+            poll_until(DL, || !process_alive(grand)).await,
+            "orphaned grandchild {grand} must be reaped by the natural-exit kill_group"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_count_and_pending_len_track_state() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        assert_eq!(mgr.live_count(), 0);
+        assert_eq!(mgr.pending_len(), 0);
+        let id = spawn_mon(&ctx, "printf 'one\\n'; sleep 100").await;
+        assert!(
+            poll_until(DL, || mgr.live_count() == 1).await,
+            "one live monitor"
+        );
+        assert!(
+            poll_until(DL, || mgr.pending_len() >= 1).await,
+            "the stdout line is queued (observable without draining)"
+        );
+        let drained = mgr.drain_pending();
+        assert!(!drained.is_empty(), "drain returns the queued line");
+        assert_eq!(mgr.pending_len(), 0, "drain empties the queue");
+        assert!(mgr.stop(&id));
+        assert_eq!(mgr.live_count(), 0, "stop drops the live count");
+    }
+
+    #[tokio::test]
+    async fn item_notify_fires_when_a_line_is_enqueued() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let _id = spawn_mon(&ctx, "printf 'x\\n'; sleep 100").await;
+        // Once a line is queued, `notify_one` has stored a permit, so a parked
+        // loop selecting on this source wakes immediately.
+        assert!(
+            poll_until(DL, || mgr.pending_len() >= 1).await,
+            "line queued"
+        );
+        let woke = tokio::time::timeout(DL, mgr.notify_item().notified())
+            .await
+            .is_ok();
+        assert!(woke, "enqueuing a line must fire item_notify");
+    }
+
+    #[tokio::test]
+    async fn roster_notify_fires_when_a_monitor_is_stopped() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let id = spawn_mon(&ctx, "sleep 100").await;
+        assert!(poll_until(DL, || mgr.live_count() == 1).await, "live");
+        assert!(mgr.stop(&id));
+        // A stop shrinks the live set without enqueuing a drainable item, so it
+        // must fire roster_notify to wake a parked loop into re-evaluating.
+        let woke = tokio::time::timeout(DL, mgr.notify_roster().notified())
+            .await
+            .is_ok();
+        assert!(woke, "stopping a monitor must fire roster_notify");
+    }
+
+    #[tokio::test]
+    async fn shutdown_fires_roster_notify_only_when_it_reaps_something() {
+        // No live monitors: shutdown reaps nothing, so roster_notify must NOT
+        // fire (a parked loop would otherwise spin needlessly).  This pins the
+        // `if !killed.is_empty()` guard.
+        let (_tmp, _ctx, mgr) = ctx_with_manager();
+        assert!(mgr.shutdown().is_empty());
+        let spurious =
+            tokio::time::timeout(Duration::from_millis(150), mgr.notify_roster().notified())
+                .await
+                .is_ok();
+        assert!(
+            !spurious,
+            "shutdown reaping nothing must not fire roster_notify"
+        );
+
+        // With a live monitor: shutdown shrinks the live set, so it must fire.
+        let (_tmp2, ctx2, mgr2) = ctx_with_manager();
+        spawn_mon(&ctx2, "sleep 100").await;
+        assert!(poll_until(DL, || mgr2.live_count() == 1).await, "live");
+        assert_eq!(mgr2.shutdown().len(), 1);
+        let woke = tokio::time::timeout(DL, mgr2.notify_roster().notified())
+            .await
+            .is_ok();
+        assert!(
+            woke,
+            "shutdown that reaps a monitor must fire roster_notify"
         );
     }
 

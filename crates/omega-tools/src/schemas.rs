@@ -30,9 +30,11 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
 
 /// Every tool Omega knows how to expose, in canonical order.
 ///
-/// `python_repl` is in `ALL_TOOL_NAMES` but not in [`DEFAULT_TOOL_NAMES`] —
-/// it must be requested explicitly via
-/// `AgentConfig::tool_selection`.
+/// `python_repl`, `monitor`, and `stop_monitor` are in `ALL_TOOL_NAMES` but
+/// not in [`DEFAULT_TOOL_NAMES`] — each must be requested explicitly via
+/// `AgentConfig::tool_selection` (the `all` preset includes them).  The two
+/// monitor tools are opt-in together (clean cutover, §5 teaching-copy
+/// prerequisite): a session is either monitor-unaware or fully monitor-wired.
 ///
 /// Names not present in this list are rejected by the agent at session
 /// creation time.
@@ -50,6 +52,8 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "wait_for_output",
     "write_stdin",
     "python_repl",
+    "monitor",
+    "stop_monitor",
 ];
 
 /// Tools in the REPL-centric preset: Python REPL plus web tools.  Everything
@@ -86,9 +90,9 @@ pub const PRESETS: &[Preset] = &[
     },
     Preset {
         id: "all",
-        label: "+ Python REPL",
+        label: "+ Python REPL & monitors",
         tools: ALL_TOOL_NAMES,
-        description: "All 13 tools — standard plus python_repl",
+        description: "All 15 tools — standard plus python_repl and async monitors",
     },
     Preset {
         id: "repl-centric",
@@ -145,6 +149,8 @@ pub fn tool_definitions(tool_selection: &[String]) -> Vec<ToolDefinition> {
             "wait_for_output" => wait_for_output(),
             "write_stdin" => write_stdin(),
             "python_repl" => python_repl(),
+            "monitor" => monitor(),
+            "stop_monitor" => stop_monitor(),
             // Unreachable: ALL_TOOL_NAMES is the source of truth and is
             // covered by an exhaustive match here — every name we iterate
             // came from this list.  If a new entry is added to
@@ -506,6 +512,59 @@ fn write_stdin() -> ToolDefinition {
     }
 }
 
+fn monitor() -> ToolDefinition {
+    ToolDefinition {
+        name: "monitor".into(),
+        description: "Start a long-lived background command as an ASYNCHRONOUS \
+                      MONITOR and return immediately — you do NOT wait for it. \
+                      A monitor is an out-of-band channel: its stdout lines arrive \
+                      LATER, on their own schedule, injected into the conversation \
+                      as user messages tagged with the monitor id. They never \
+                      interrupt you mid-thought — a delivery only lands at a safe \
+                      seam (after you finish a message, or right after a tool \
+                      result), never between a tool call and its result. While \
+                      monitors are live the session stays awake waiting for them; \
+                      a quiet monitor simply parks the loop until it speaks. \
+                      Use a monitor when you want to keep working (or wait for a \
+                      human) while something streams in the background — a dev \
+                      server's logs, a file watcher, a long test run you want to \
+                      glance at. Prefer the synchronous `wait_for_output` instead \
+                      when you need to BLOCK for a specific line before doing the \
+                      next step. Stop discipline: call `stop_monitor` once a \
+                      monitor has served its purpose. Session end reaps any \
+                      survivors, but that is a backstop, not licence to leak."
+            .into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "description": { "type": "string", "description": "Short human-readable label for this monitor (shown in the roster)." },
+                "command":     { "type": "string", "description": "Shell command to run as a long-lived monitor. Runs under `bash -c` in its own process group; returns immediately. Its stdout lines are delivered asynchronously as injected user messages." },
+            },
+            "required": ["description", "command"],
+        }),
+    }
+}
+
+fn stop_monitor() -> ToolDefinition {
+    ToolDefinition {
+        name: "stop_monitor".into(),
+        description: "Stop a running monitor by id and reap its whole process \
+                      tree. Use this as soon as a monitor has done its job — \
+                      leaving idle monitors live keeps the session awake waiting \
+                      on them and clutters the roster. A monitor that exits on its \
+                      own reports its own stop, so you only need this for ones that \
+                      would otherwise run forever (servers, watchers, tails)."
+            .into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Id of the monitor to stop (as reported when it started / in deliveries)." },
+            },
+            "required": ["id"],
+        }),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
@@ -581,13 +640,38 @@ mod tests {
     }
 
     #[test]
-    fn all_tool_names_is_default_plus_python_repl() {
-        assert_eq!(ALL_TOOL_NAMES.len(), DEFAULT_TOOL_NAMES.len() + 1);
-        assert_eq!(*ALL_TOOL_NAMES.last().unwrap(), "python_repl");
+    fn all_tool_names_is_default_plus_repl_and_monitors() {
+        // ALL = 12 defaults + python_repl + monitor + stop_monitor.
+        assert_eq!(ALL_TOOL_NAMES.len(), DEFAULT_TOOL_NAMES.len() + 3);
+        assert_eq!(ALL_TOOL_NAMES[DEFAULT_TOOL_NAMES.len()], "python_repl");
+        assert_eq!(*ALL_TOOL_NAMES.last().unwrap(), "stop_monitor");
+        assert_eq!(ALL_TOOL_NAMES[DEFAULT_TOOL_NAMES.len() + 1], "monitor");
         // Defaults appear in `ALL` in the same order.
         for (i, name) in DEFAULT_TOOL_NAMES.iter().enumerate() {
             assert_eq!(ALL_TOOL_NAMES[i], *name);
         }
+        // The monitor tools are opt-in: absent from the default set.
+        assert!(!DEFAULT_TOOL_NAMES.contains(&"monitor"));
+        assert!(!DEFAULT_TOOL_NAMES.contains(&"stop_monitor"));
+    }
+
+    #[test]
+    fn monitor_tools_are_selectable_via_tool_definitions() {
+        // Cutover: once selected, both monitor tools must be emitted so the
+        // model can choose them.
+        let sel = sel(&["read_file", "monitor", "stop_monitor"]);
+        let names: Vec<String> = tool_definitions(&sel).into_iter().map(|d| d.name).collect();
+        assert_eq!(names, vec!["read_file", "monitor", "stop_monitor"]);
+    }
+
+    #[test]
+    fn default_selection_excludes_monitor_tools() {
+        let names: Vec<String> = tool_definitions(&sel_default())
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(!names.contains(&"monitor".to_owned()));
+        assert!(!names.contains(&"stop_monitor".to_owned()));
     }
 
     #[test]
@@ -889,7 +973,7 @@ mod tests {
     }
 
     /// Kills: `replace ALL_TOOL_NAMES with DEFAULT_TOOL_NAMES` for the `all`
-    /// preset — `all` MUST cover the 13-tool superset.
+    /// preset — `all` MUST cover the 15-tool superset.
     #[test]
     fn all_preset_matches_all_tool_names() {
         let p = preset_by_id("all").expect("all exists");

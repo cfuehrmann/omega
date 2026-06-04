@@ -232,6 +232,7 @@ pub fn build_system_blocks(
         )
     });
     let has_python_repl = tool_selection.iter().any(|n| n == "python_repl");
+    let has_monitor_tools = tool_selection.iter().any(|n| n == "monitor");
 
     out.push(SystemBlock {
         label: "core",
@@ -264,6 +265,17 @@ pub fn build_system_blocks(
         out.push(SystemBlock {
             label: "repl",
             content: repl_addendum(),
+            source_path: None,
+        });
+    }
+
+    // Teaching copy (§5 prerequisite): a session is only monitor-aware when
+    // the monitor tools are selected, and then it MUST carry the conceptual
+    // explanation of the async out-of-band channel.
+    if has_monitor_tools {
+        out.push(SystemBlock {
+            label: "monitors",
+            content: monitor_addendum(),
             source_path: None,
         });
     }
@@ -400,6 +412,47 @@ available), keep the handle in a REPL variable, and read from it incrementally."
     }
 
     format!("## Reduced toolset\n\n{}", sections.join("\n\n"))
+}
+
+/// System-prompt addendum injected when the `monitor` / `stop_monitor` tools
+/// are in the selection (§5 teaching-copy prerequisite).
+///
+/// Conceptual, not nannying: it explains the async out-of-band channel, the
+/// seam/no-preemption guarantee, when to reach for a monitor vs the
+/// synchronous `wait_for_output`, and stop discipline — without micro-advice
+/// about specific shell flags.
+#[must_use]
+pub fn monitor_addendum() -> String {
+    "## Background monitors\n\n\
+     You have `monitor` and `stop_monitor` tools for watching long-lived \
+     processes (log tails, file watchers, dev servers, test loops) WITHOUT \
+     blocking your turn.\n\n\
+     - `monitor` starts a shell command in the background and returns \
+       IMMEDIATELY with a monitor id. It does not wait for output.\n\
+     - The command's stdout lines arrive LATER, out of band, as injected \
+       user messages tagged with the monitor id. You react to them on a \
+       future cycle, the same way you would react to anything a human says.\n\
+     - Delivery happens only at safe seams: after you finish a response and \
+       go idle, or right after a tool result. A monitor NEVER interrupts a \
+       reply you are part-way through composing, and never splits a tool \
+       call from its result. There is no preemption \u{2014} lines wait for the \
+       next seam.\n\
+     - If everything you could still do depends on a monitor, the session \
+       waits (parks) for the next line instead of ending. When a monitor \
+       stops, you are told (with its exit status) so you never block on a \
+       channel that can no longer speak.\n\n\
+     When to use which:\n\
+     - Use `wait_for_output` (synchronous) when you need a specific result \
+       NOW and have nothing useful to do until it appears \u{2014} you block and \
+       read it inline.\n\
+     - Use a `monitor` when a process should keep producing output over \
+       time while you do other work, and you want to be informed as lines \
+       arrive rather than sitting and waiting.\n\n\
+     Stop discipline: call `stop_monitor` as soon as a monitor has served \
+     its purpose. Monitors are reaped automatically at session end, but \
+     that is a backstop, not a licence to leak \u{2014} a forgotten monitor keeps \
+     a process alive and keeps waking you with output you no longer need.\n"
+        .to_owned()
 }
 
 /// Concatenate every block's `content` with `\n\n` between them.
@@ -812,6 +865,14 @@ mod tests {
         v
     }
 
+    /// Default 12 + the two monitor tools.
+    fn selection_default_plus_monitors() -> Vec<String> {
+        let mut v = selection_default();
+        v.push("monitor".to_owned());
+        v.push("stop_monitor".to_owned());
+        v
+    }
+
     /// Shell tools + web tools + `python_repl` (no file-op tools).
     fn selection_no_file_tools() -> Vec<String> {
         names(&[
@@ -959,6 +1020,53 @@ mod tests {
         assert!(
             repl.content.contains("truncated"),
             "repl block must describe truncation behaviour"
+        );
+    }
+
+    #[test]
+    fn monitor_tools_absent_adds_no_monitor_block() {
+        let blocks = build_system_blocks("/x", 1000, false, &[], &selection_default());
+        assert!(
+            blocks.iter().all(|b| b.label != "monitors"),
+            "monitors block must not be present when the monitor tools are absent"
+        );
+    }
+
+    #[test]
+    fn monitor_tools_present_appends_monitor_block() {
+        let blocks =
+            build_system_blocks("/x", 1000, false, &[], &selection_default_plus_monitors());
+        assert!(
+            blocks.iter().any(|b| b.label == "monitors"),
+            "monitors block must be present when the monitor tools are selected"
+        );
+    }
+
+    #[test]
+    fn monitor_block_teaches_the_async_channel_concept() {
+        // §5 teaching-copy prerequisite: the block must convey the async,
+        // out-of-band nature, the seam/no-preemption guarantee, the
+        // wait_for_output contrast, and stop discipline.  Asserting the
+        // concrete phrases also closes body-replacement mutations on the
+        // addendum string.
+        let m = monitor_addendum();
+        assert!(m.contains("monitor"), "must name the tool");
+        assert!(m.contains("stop_monitor"), "must name stop_monitor");
+        assert!(
+            m.contains("IMMEDIATELY") && m.contains("out of band"),
+            "must explain the async/out-of-band channel"
+        );
+        assert!(
+            m.contains("seam") && m.contains("preemption"),
+            "must explain the no-preemption seam guarantee"
+        );
+        assert!(
+            m.contains("wait_for_output"),
+            "must contrast with the synchronous wait_for_output"
+        );
+        assert!(
+            m.contains("reaped") && m.contains("backstop"),
+            "must explain stop discipline and session-end reaping backstop"
         );
     }
 

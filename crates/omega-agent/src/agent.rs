@@ -46,7 +46,9 @@ use omega_types::ids::{Origin, SessionId};
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
-use omega_tools::{PythonRepl, ToolCtx, execute_tool, tool_definitions};
+use omega_tools::{
+    MonitorManager, PendingItem, PythonRepl, ToolCtx, execute_tool, tool_definitions,
+};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -541,6 +543,15 @@ pub struct Agent {
     /// happens when the `Arc` reference count reaches zero — either at
     /// `Agent::drop` or when all outstanding `ToolCtx` handles are dropped.
     python_repl: Arc<tokio::sync::Mutex<Option<PythonRepl>>>,
+    /// Per-session async monitor manager (Phase 2).
+    ///
+    /// One `Arc<MonitorManager>` owned by the agent and cloned into every
+    /// [`ToolCtx`] so the `monitor` / `stop_monitor` tools enqueue work and
+    /// roster state on the *same* instance the loop drains at its seams.
+    /// The manager only enqueues; the loop is the single writer of monitor
+    /// events (§4).  Reaped on [`Agent::drop`] so no monitor tree outlives
+    /// the session.
+    monitors: Arc<MonitorManager>,
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +608,24 @@ fn format_monitor_stopped(id: &str, reason: &MonitorStopReason, exit_code: Optio
     }
 }
 
+/// Outcome of one [`Agent::drain_monitors`] pass.
+#[derive(Default)]
+struct MonitorDrain {
+    /// Events the loop must yield (delivery / stderr / stopped), in order.
+    events: Vec<OmegaEvent>,
+    /// Whether any drained item projected into context (so the loop should
+    /// run another cycle to let the model react).
+    projected: bool,
+}
+
+impl Drop for Agent {
+    fn drop(&mut self) {
+        // Session-end backstop (§4): reap every monitor tree so no grandchild
+        // is orphaned.  Idempotent with an explicit `shutdown_monitors`.
+        let _ = self.monitors.shutdown();
+    }
+}
+
 impl Agent {
     /// Build a new agent.
     ///
@@ -643,6 +672,7 @@ impl Agent {
             features,
             tool_selection,
             python_repl: Arc::new(tokio::sync::Mutex::new(None)),
+            monitors: MonitorManager::new(),
         }
     }
 
@@ -1011,13 +1041,14 @@ impl Agent {
         &mut self,
         id: String,
         chunk: String,
-    ) -> omega_store::Result<()> {
+    ) -> omega_store::Result<OmegaEvent> {
         let ev = OmegaEvent::MonitorStderr(MonitorStderrEvent {
             id,
             chunk,
             time: now_iso(),
         });
-        self.event_store.append(&ev).await
+        self.event_store.append(&ev).await?;
+        Ok(ev)
     }
 
     /// Inject a `MonitorDelivery` into the event log and context.
@@ -1033,7 +1064,7 @@ impl Agent {
     pub async fn inject_monitor_delivery(
         &mut self,
         items: Vec<MonitorDeliveryItem>,
-    ) -> omega_store::Result<()> {
+    ) -> omega_store::Result<OmegaEvent> {
         let ev = OmegaEvent::MonitorDelivery(MonitorDeliveryEvent {
             time: now_iso(),
             items: items.clone(),
@@ -1061,7 +1092,7 @@ impl Agent {
             content: new_blocks,
         });
         self.context_hashes.push(hash);
-        Ok(())
+        Ok(ev)
     }
 
     /// Inject a `MonitorStopped` event into the event log, and optionally
@@ -1080,7 +1111,7 @@ impl Agent {
         id: String,
         reason: MonitorStopReason,
         exit_code: Option<i32>,
-    ) -> omega_store::Result<()> {
+    ) -> omega_store::Result<OmegaEvent> {
         let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
             id: id.clone(),
             reason: reason.clone(),
@@ -1090,7 +1121,7 @@ impl Agent {
         self.event_store.append(&ev).await?;
 
         if !reason.should_project() {
-            return Ok(());
+            return Ok(ev);
         }
 
         // Project unexpected stop into context as a role:user notification.
@@ -1105,7 +1136,97 @@ impl Agent {
             content: blocks,
         });
         self.context_hashes.push(hash);
-        Ok(())
+        Ok(ev)
+    }
+
+    /// Borrow a clone of the session's monitor manager.
+    ///
+    /// The `Arc` is shared with every [`ToolCtx`]; the UI roster badge /
+    /// kill-modal (Phase 3) and tests read and control monitors through it.
+    #[must_use]
+    pub fn monitor_manager(&self) -> Arc<MonitorManager> {
+        Arc::clone(&self.monitors)
+    }
+
+    /// Reap every live monitor tree for this session (session-end backstop).
+    ///
+    /// Kills each monitor's process group so no grandchild outlives the
+    /// session, and returns the ids that were live.  Also invoked from
+    /// [`Agent::drop`]; calling it explicitly lets the server reap before
+    /// the agent is dropped.
+    #[must_use]
+    pub fn shutdown_monitors(&self) -> Vec<String> {
+        self.monitors.shutdown()
+    }
+
+    /// Drain the monitor pending-queue once and persist every drained item
+    /// as the matching `OmegaEvent`, returning the events to yield.
+    ///
+    /// This is the loop's single-writer projection of the queue (§4): the
+    /// manager only enqueues; this method (and only this method) turns queued
+    /// items into events.  `projected` is `true` iff at least one drained
+    /// item produced context the model must see (a `MonitorDelivery`, or a
+    /// `MonitorStopped` whose reason projects) — the Seam-A park loop uses it
+    /// to decide whether to run another cycle.
+    async fn drain_monitors(&mut self) -> MonitorDrain {
+        let items = self.monitors.drain_pending();
+        if items.is_empty() {
+            return MonitorDrain::default();
+        }
+        // Batch stdout lines per monitor, preserving first-seen order so the
+        // delivery reads chronologically.  Stderr / stopped stay per-item.
+        let mut stdout_groups: Vec<(String, Vec<String>)> = Vec::new();
+        let mut stderr: Vec<(String, String)> = Vec::new();
+        let mut stopped: Vec<(String, MonitorStopReason, Option<i32>)> = Vec::new();
+        for item in items {
+            match item {
+                PendingItem::Stdout { monitor_id, line } => {
+                    if let Some(group) = stdout_groups.iter_mut().find(|(id, _)| *id == monitor_id)
+                    {
+                        group.1.push(line);
+                    } else {
+                        stdout_groups.push((monitor_id, vec![line]));
+                    }
+                }
+                PendingItem::Stderr { monitor_id, chunk } => {
+                    stderr.push((monitor_id, chunk));
+                }
+                PendingItem::Stopped {
+                    monitor_id,
+                    reason,
+                    exit_code,
+                } => stopped.push((monitor_id, reason, exit_code)),
+            }
+        }
+
+        let mut events = Vec::new();
+        let mut projected = false;
+        if !stdout_groups.is_empty() {
+            let delivery: Vec<MonitorDeliveryItem> = stdout_groups
+                .into_iter()
+                .map(|(monitor_id, lines)| MonitorDeliveryItem { monitor_id, lines })
+                .collect();
+            if let Ok(ev) = self.inject_monitor_delivery(delivery).await {
+                events.push(ev);
+                projected = true;
+            }
+        }
+        for (monitor_id, chunk) in stderr {
+            if let Ok(ev) = self.append_monitor_stderr(monitor_id, chunk).await {
+                events.push(ev);
+            }
+        }
+        for (monitor_id, reason, exit_code) in stopped {
+            let should_project = reason.should_project();
+            if let Ok(ev) = self
+                .inject_monitor_stopped(monitor_id, reason, exit_code)
+                .await
+            {
+                events.push(ev);
+                projected = projected || should_project;
+            }
+        }
+        MonitorDrain { events, projected }
     }
 
     /// Drive one user turn.  Returns a stream of every event/signal
@@ -1145,6 +1266,9 @@ impl Agent {
             // Shadow the parameter so every downstream `cancel.is_cancelled()`
             // check and `cancel.clone()` for tool dispatch uses the merged token.
             let cancel = turn_cancel;
+            // One shared monitor manager for this turn: cloned into every
+            // ToolCtx, drained at the two seams, and selected on while parked.
+            let monitors = Arc::clone(&self.monitors);
 
             // -----------------------------------------------------------------
             // Step 1: dangling tool_use repair.
@@ -1272,7 +1396,7 @@ impl Agent {
             let mut tot_cache_creation: i64 = 0;
             let mut tot_cache_read: i64 = 0;
 
-            loop {
+            'agentic: loop {
                 if cancel.is_cancelled() {
                     let ev = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                         time: now_iso(),
@@ -1847,6 +1971,7 @@ impl Agent {
                             let system_prompt_paths = Arc::clone(&system_prompt_paths);
                             let python_repl = python_repl_opt.clone();
                             let tool_selection = self_tool_selection.clone();
+                            let monitors_for_ctx = Arc::clone(&monitors);
                             async move {
                                 let start = Instant::now();
                                 let ctx = ToolCtx {
@@ -1855,13 +1980,11 @@ impl Agent {
                                     system_prompt_paths,
                                     python_repl,
                                     tool_selection,
-                                    // Monitors are not wired into the agent loop
-                                    // until Phase 2 (clean cutover: the tools are
-                                    // not exposed to the model in Phase 1, so this
-                                    // stays None). Phase 2 threads the shared
-                                    // Arc<MonitorManager> here and drains it at
-                                    // boundaries.
-                                    monitors: None,
+                                    // Phase 2 cutover: every ToolCtx shares the
+                                    // agent's single Arc<MonitorManager> so the
+                                    // monitor / stop_monitor tools enqueue on the
+                                    // same instance the loop drains at its seams.
+                                    monitors: Some(monitors_for_ctx),
                                 };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;
@@ -2058,6 +2181,18 @@ impl Agent {
                         yield AgentItem::event(cont_ev);
                     }
 
+                    // ---- Seam B (§3): drain monitors right after a completed
+                    // tool_result, before the next LlmCall.  The drained
+                    // MonitorDelivery is appended as a *separate* role:user
+                    // message after the tool_result user message; project_messages
+                    // merges the two, so the tool_use/tool_result pair is never
+                    // split.  We continue to the next cycle regardless, so no
+                    // park/projected check is needed here.
+                    let seam_b = self.drain_monitors().await;
+                    for ev in seam_b.events {
+                        yield AgentItem::event(ev);
+                    }
+
                     continue;
                 }
 
@@ -2082,7 +2217,109 @@ impl Agent {
                 });
                 let _ = self.event_store.append(&te).await;
                 yield AgentItem::event(te);
-                return;
+
+                // ---- Seam A (§3/§4): the assistant emitted end_turn and is
+                // idle.  Drain monitors, then decide park-vs-terminate.
+                //
+                // • If a drained item *projected* (a delivery, or a stop that
+                //   projects), run a fresh monitor-driven cycle so the model
+                //   reacts.
+                // • Else if a live monitor (or queued item) still exists, PARK
+                //   on a select over {monitor-queue, roster-changed, human
+                //   input/abort} and re-drain on wake.
+                // • Else terminate — never hang when nothing can ever fire.
+                loop {
+                    let drain = self.drain_monitors().await;
+                    let projected = drain.projected;
+                    for ev in drain.events {
+                        yield AgentItem::event(ev);
+                    }
+                    if projected {
+                        continue 'agentic;
+                    }
+                    // Nothing projected this pass.  Terminate iff nothing can
+                    // ever fire again (no live monitor and an empty queue — the
+                    // drain above already emptied it).
+                    if monitors.live_count() == 0 {
+                        return;
+                    }
+                    // Park.  Enter suspend so a human `request_continue` (or
+                    // `request_abort`) notifies us, matching the pause seam.
+                    // Block on a select over the three wake sources (monitor
+                    // queue, roster-changed, human input) plus abort; any one
+                    // wakes us to re-drain and re-evaluate.
+                    let need_suspend = self.controls.try_enter_suspend();
+                    if need_suspend {
+                        if !self.controls.pending_continue_ready()
+                            && !cancel.is_cancelled()
+                        {
+                            tokio::select! {
+                                () = monitors.notify_item().notified() => {},
+                                () = monitors.notify_roster().notified() => {},
+                                () = self.controls.notify().notified() => {},
+                                () = cancel.cancelled() => {},
+                            }
+                        }
+                        self.controls.exit_suspend();
+                    }
+                    // Human abort while parked: the turn already ended cleanly
+                    // (TurnEnd above), so just terminate — no TurnInterrupted.
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+                    // Human interjection while parked: treat the pending
+                    // continue's content as a fresh user message and run a
+                    // cycle.  (Content-less continue just re-drains.)
+                    let pending_text = self
+                        .controls
+                        .take_pending_continue()
+                        .and_then(|cont| cont.content)
+                        .filter(|s| !s.is_empty());
+                    if let Some(text) = pending_text {
+                        {
+                            let blocks = vec![ContentBlock::Text {
+                                text: text.clone(),
+                            }];
+                            match self
+                                .context_store
+                                .append(Role::User, blocks.clone())
+                                .await
+                            {
+                                Ok(hash) => {
+                                    self.history.push(Message {
+                                        role: Role::User,
+                                        content: blocks,
+                                    });
+                                    self.context_hashes.push(hash);
+                                }
+                                Err(e) => {
+                                    let ev = OmegaEvent::AgentError(
+                                        AgentErrorEvent {
+                                            time: now_iso(),
+                                            error: format!(
+                                                "context_store append failed: {e}"
+                                            ),
+                                        },
+                                    );
+                                    let _ = self.event_store.append(&ev).await;
+                                    yield AgentItem::event(ev);
+                                    return;
+                                }
+                            }
+                            let user_ev = OmegaEvent::UserMessage(
+                                UserMessageEvent {
+                                    time: now_iso(),
+                                    content: text,
+                                },
+                            );
+                            let _ = self.event_store.append(&user_ev).await;
+                            yield AgentItem::event(user_ev);
+                            continue 'agentic;
+                        }
+                    }
+                    // Otherwise a monitor line or roster change woke us; the
+                    // 'park loop re-iterates to drain and re-evaluate.
+                }
             }
         })
     }
