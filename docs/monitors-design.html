@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Async Monitors — Design &amp; Resume Doc</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f9f9fb;--surface:#fff;--border:#e1e4e8;--text:#1a1a2e;--muted:#6a737d;
+  --accent:#0550ae;--accent-bg:#dbeafe;--warn-bg:#fff8dc;--warn-border:#e6c600;
+  --ok-bg:#dcfce7;--ok-border:#16a34a;--drop-bg:#fdecec;--drop-border:#e05656;
+  --callout-bg:#eff6ff;--callout-border:#3b82f6;--code-bg:#f3f4f6;
+  --content-max:900px;font-size:16px;color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;
+  --accent:#58a6ff;--accent-bg:#172a45;--warn-bg:#2d2a12;--warn-border:#9e8420;
+  --ok-bg:#10261a;--ok-border:#2ea043;--drop-bg:#2d1717;--drop-border:#b04444;
+  --callout-bg:#11203a;--callout-border:#1f6feb;--code-bg:#1b2129;
+}}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6;padding:2rem 1rem 6rem}
+main{max-width:var(--content-max);margin:0 auto}
+h1{font-size:2rem;line-height:1.2;margin-bottom:.4rem}
+h2{font-size:1.45rem;margin:2.4rem 0 .8rem;padding-bottom:.3rem;border-bottom:2px solid var(--border)}
+h3{font-size:1.15rem;margin:1.6rem 0 .5rem;color:var(--accent)}
+p,ul,ol,table{margin-bottom:1rem}
+ul,ol{padding-left:1.5rem}
+li{margin-bottom:.35rem}
+code{background:var(--code-bg);padding:.12em .4em;border-radius:4px;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.88em}
+pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:1rem;overflow-x:auto;margin-bottom:1.2rem}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;width:100%;font-size:.93rem}
+th,td{border:1px solid var(--border);padding:.5rem .7rem;text-align:left;vertical-align:top}
+th{background:var(--accent-bg)}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;padding:.1em .55em;border-radius:999px;vertical-align:middle}
+.tag-status{background:var(--ok-bg);border:1px solid var(--ok-border)}
+.box{border-radius:8px;padding:.9rem 1.1rem;margin:1.1rem 0;border-left:4px solid}
+.box.callout{background:var(--callout-bg);border-color:var(--callout-border)}
+.box.warn{background:var(--warn-bg);border-color:var(--warn-border)}
+.box.ok{background:var(--ok-bg);border-color:var(--ok-border)}
+.box.drop{background:var(--drop-bg);border-color:var(--drop-border)}
+.box h4{margin-bottom:.4rem;font-size:1rem}
+.meta{color:var(--muted);font-size:.9rem}
+.keep{color:var(--ok-border);font-weight:700}
+.drop{color:var(--drop-border);font-weight:700}
+hr{border:none;border-top:1px solid var(--border);margin:2rem 0}
+.toc{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem 1.2rem;margin:1.5rem 0}
+.toc h4{margin-bottom:.5rem}
+.toc ol{margin:0;padding-left:1.3rem}
+.toc a{color:var(--accent);text-decoration:none}
+.toc a:hover{text-decoration:underline}
+small.path{font-family:ui-monospace,monospace;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Async Monitors for Omega</h1>
+<p class="meta">
+  <span class="tag tag-status">DESIGN FROZEN — NOT YET IMPLEMENTED</span><br/>
+  Design &amp; cold-start resume document. Self-contained: a future session with
+  <em>no prior context</em> should be able to read this and either start
+  implementing or continue the discussion. Written because the authoring session
+  is about to be lost to a machine reboot.
+</p>
+
+<div class="toc">
+  <h4>Contents</h4>
+  <ol>
+    <li><a href="#goal">Goal &amp; motivation</a></li>
+    <li><a href="#research">Research: how others do it</a></li>
+    <li><a href="#seams">The seam rules (Anthropic API)</a></li>
+    <li><a href="#mechanic">Core mechanic: pull-at-boundary</a></li>
+    <li><a href="#philosophy">Guardrail philosophy</a></li>
+    <li><a href="#decisions">Signed-off decisions</a></li>
+    <li><a href="#layers">Layer mapping (Contract Authority)</a></li>
+    <li><a href="#schema">Proposed event schema</a></li>
+    <li><a href="#ui">UI design</a></li>
+    <li><a href="#lifecycle">Lifecycle, shutdown, resume, headless</a></li>
+    <li><a href="#steps">Implementation steps (phased)</a></li>
+    <li><a href="#open">Open items (deferred, non-blocking)</a></li>
+    <li><a href="#codefacts">Codebase facts gathered</a></li>
+  </ol>
+</div>
+
+<h2 id="goal">1. Goal &amp; motivation</h2>
+<p>
+  Omega today has <code>wait_for_output</code>, which is <strong>synchronous</strong>:
+  it occupies the single tool-call slot and blocks the agent loop for the whole
+  wait. We want an <strong>asynchronous monitor</strong> primitive instead — the
+  agent registers a condition and keeps working (or parks), and when the condition
+  fires, a message is injected as a <em>user turn at the next valid seam</em>
+  (turn boundary). This is the Claude Code "Monitor" model. <strong>No
+  preemption</strong> — monitors never interrupt an in-flight turn; they wait for
+  the next boundary.
+</p>
+<p>Target use cases (all expressible as one shell-command primitive):</p>
+<ul>
+  <li><strong>Wait a duration</strong> — <code>sleep N; echo done</code>.</li>
+  <li><strong>Wait for a process to finish</strong> — <code>wait $pid; echo done</code>.</li>
+  <li><strong>Arbitrary boolean condition</strong> — a poll-and-if loop that prints only when the condition flips.</li>
+</ul>
+
+<h2 id="research">2. Research: how others do it</h2>
+<table>
+  <tr><th>System</th><th>Async monitor?</th><th>Notes</th></tr>
+  <tr>
+    <td><strong>Claude Code</strong></td>
+    <td><span class="keep">Yes</span> — "Monitor" tool (~Apr 2026)</td>
+    <td>Launches a shell command whose <strong>stdout becomes an event stream</strong>;
+      each line wakes the session, silence costs nothing; lines within ~200&nbsp;ms
+      batch into one notification. Params: <code>description</code>,
+      <code>command</code>, <code>timeout_ms</code> (default 5&nbsp;min, max 1&nbsp;hr),
+      <code>persistent</code>. Two shapes: <em>stream filters</em>
+      (<code>tail -f | grep --line-buffered</code>) and <em>poll-and-if loops</em>
+      (<code>while true; …; sleep N</code>). stderr → file (inert). Auto-stops chatty
+      monitors. Contrasted with <code>run_in_background</code> (fire-and-forget,
+      one notification) and <code>/loop</code> polling (a full API call per check).</td>
+  </tr>
+  <tr>
+    <td><strong>opencode</strong></td>
+    <td>Partial — background subagents</td>
+    <td><code>BackgroundJob</code> service + <code>task</code> tool with
+      <code>background=true</code> (gated behind
+      <code>OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS</code>). On completion,
+      <code>injectBackgroundResult</code> appends a <code>synthetic:true</code>,
+      <code>role:user</code> message to the parent session. Subagents only, not
+      arbitrary shell. <strong>Same API primitive</strong> as Claude.</td>
+  </tr>
+  <tr><td><strong>forgecode</strong></td><td class="drop">No</td><td>Synchronous shell only. <code>followup</code> is a human-question tool.</td></tr>
+  <tr><td><strong>pi-mono</strong></td><td class="drop">No</td><td>Synchronous bash + streaming <code>onUpdate</code> + timeout + <code>killProcessTree</code>/detached-PID tracking (cleanup only). No monitor concept.</td></tr>
+</table>
+
+<h2 id="seams">3. The seam rules (Anthropic Messages API — correctness, not opinion)</h2>
+<ul>
+  <li><strong>Two roles only:</strong> <code>user</code> / <code>assistant</code>.
+    Anything not generated by the model — tool results, hook output, monitor
+    notifications, human input — <strong>must</strong> enter as <code>role:user</code>.
+    "Impersonating the user" is <em>forced by the protocol</em>, not a design choice;
+    both Claude and opencode do it. The <code>synthetic</code> flag is only a
+    harness/UI marker to distinguish it from a human-typed turn.</li>
+  <li><strong>tool_use → tool_result is rigid:</strong> every <code>tool_use</code>
+    block must be immediately followed, in the very next message, by matching
+    <code>tool_result</code> blocks. You cannot insert a separate message between them.</li>
+  <li><strong>Exactly two legal injection points</strong> for a user message:
+    <ul>
+      <li><strong>Seam A</strong> — after the assistant ends with <code>end_turn</code>
+        and is idle → start a fresh user turn.</li>
+      <li><strong>Seam B</strong> — piggybacked <em>after</em> the
+        <code>tool_result</code> blocks in the user message that answers a
+        <code>tool_use</code>.</li>
+    </ul></li>
+  <li><strong>A "turn boundary" = <code>end_turn</code> OR a completed
+    <code>tool_result</code>.</strong> "Generating" and "ToolRunning" are merely
+    <em>between boundaries</em>. A generation always resolves into one of the two
+    boundary kinds; if it resolves to a <code>tool_use</code>, you reach Seam B once
+    the tool returns.</li>
+  <li><strong>No preemption at the context level.</strong> The only way to act before
+    the next natural boundary is to <strong>abort the in-flight request</strong>
+    (transport level) — that "manufactures a seam now." We keep abort as a separate,
+    explicit <em>interrupt</em> path; it is not how monitors deliver.</li>
+  <li><strong>A long/blocking tool call holds Seam B shut</strong> for its whole
+    duration → starvation. This is precisely the <code>wait_for_output</code> problem,
+    and the reason monitors must be an out-of-band channel rather than a blocking tool.</li>
+</ul>
+
+<h2 id="mechanic">4. Core mechanic: pull-at-boundary (single writer)</h2>
+<ul>
+  <li>Monitors run as <strong>background OS processes</strong>. Each stdout line is
+    enqueued to an <strong>in-memory queue</strong>. Monitors <em>never</em> write
+    <code>events.jsonl</code>.</li>
+  <li>The <strong>main loop is the single writer</strong>. It drains the queue
+    <em>only</em> at the two boundaries:
+    <ol>
+      <li>right after it appends a <code>tool_result</code>, before calling the model again; and</li>
+      <li>when it is about to <strong>park</strong> at <code>end_turn</code>.</li>
+    </ol></li>
+  <li>When parked, the loop blocks on a select over
+    <code>{ human input, monitor queue, roster-changed }</code>. Any of them wakes it;
+    it drains the queue and runs.</li>
+  <li><strong>No-preemption is free</strong>: the loop simply never inspects the queue
+    mid-turn.</li>
+  <li>The monitor subsystem is <strong>dumb</strong> — it knows nothing about the fold
+    or the tool_use/tool_result invariant. That ignorance is the safety; only the loop,
+    which is always at a legal boundary when it drains, ever appends.</li>
+</ul>
+<pre><code>runtime (ephemeral)            main loop (single writer)        persistence / UI
+─────────────────────          ─────────────────────────        ────────────────
+monitor procs --stdout line--> [ pending queue ] --drain at----> events.jsonl
+              --stderr-------------------------------(chunk)----> events.jsonl (non-projected)
+              --status/tail----> [ live roster ] --WS ephemeral-> UI modal + badge
+human input ----------------->  [ pending queue ]                UI queue viz
+UI "KillMonitor" -----------------------------------------------> loop (logs MonitorStopped)</code></pre>
+
+<h2 id="philosophy">5. Guardrail philosophy</h2>
+<div class="box callout">
+  <strong>Explorative minimalism.</strong> Add <em>only</em> guardrails that are
+  obviously load-bearing for <strong>correctness</strong>. Deliberately
+  <strong>skip</strong> the rails Anthropic added to protect a broad public.
+  Iterate on agent features by <strong>observing the single agent's behavior</strong>,
+  not by pre-empting every footgun. Omega's Web UI makes this safe: human-in-the-loop
+  observability substitutes for automated kill.
+</div>
+
+<h3><span class="keep">KEEP</span> — obviously load-bearing (correctness)</h3>
+<ol>
+  <li><strong>Never inject between <code>tool_use</code> and its <code>tool_result</code></strong> — enforced structurally by pull-at-boundary (no decision to get wrong).</li>
+  <li><strong>Single writer</strong> — only the main loop appends events; monitors enqueue.</li>
+  <li><strong>Distinct event variant</strong> for monitor injections (not a reused human user-turn) — per the AGENTS.md <em>loud-schema-change</em> rule. Projects to <code>role:user</code>.</li>
+  <li><strong>Identity + lifecycle + stop</strong> — each monitor has an id; start/fired/stopped attributable; agent can stop by id; stopping a dead monitor is a no-op.</li>
+  <li><strong>Process-tree reaping</strong> on stop and on session end (no orphans).</li>
+  <li><strong>Defined park/terminate condition</strong> — park iff a live monitor or queued events exist; otherwise terminate. Never hang when nothing can ever fire.</li>
+</ol>
+
+<h3><span class="drop">DROP</span> — public-serving rails (skip now, re-add on evidence)</h3>
+<table>
+  <tr><th>Rail</th><th>Why we skip it</th></tr>
+  <tr><td>Default + hard-max <code>timeout_ms</code></td><td>Protects strangers from forgotten monitors. We have explicit stop + session-end reaping. No timeout default; observe whether the agent leaks monitors first.</td></tr>
+  <tr><td>Auto-stop chatty monitors (firehose)</td><td>Public-protective. We are one human watching one agent. <strong>UI count + activity is the backstop.</strong> Observe whether the agent self-corrects.</td></tr>
+  <tr><td>"Always use <code>grep --line-buffered</code>" / poll-interval nagging</td><td>Prompt nannying. Ship the raw primitive; add guidance only if observation shows laggy/buggy monitors.</td></tr>
+</table>
+
+<h3>Tool surface</h3>
+<p>
+  Ship the <strong>raw, general primitive first</strong>:
+  <code>monitor(description, command)</code> — stdout lines are events; returns
+  immediately with a monitor id. Plus <code>stop_monitor(id)</code>. <strong>No</strong>
+  sugar (<code>monitor_until</code>/<code>_for</code>/<code>_process</code>),
+  <strong>no</strong> timeout, <strong>no</strong> auto-stop, <strong>no</strong>
+  baked-in filter advice. Add a typed helper only if observation shows the agent
+  repeatedly fumbles the shell boilerplate.
+</p>
+
+<h2 id="decisions">6. Signed-off decisions</h2>
+<table>
+  <tr><th>#</th><th>Decision</th></tr>
+  <tr><td>1</td><td><strong>No auto-stop.</strong> Runaway monitors are caught by visibility, not automation. Visible in both logs <em>and</em> UI. The UI is what <em>earns</em> the right to skip auto-stop.</td></tr>
+  <tr><td>2</td><td><strong>Batch at seam.</strong> Everything pending is delivered together at the next boundary. Canonical events stay distinct (per source); the <em>context projection</em> merges consecutive <code>user</code>-role content into one API message.</td></tr>
+  <tr><td>3</td><td><strong>stderr → <code>events.jsonl</code> (forensics paramount), but excluded from the context projection.</strong> New event class: <em>diagnostic / non-projected</em> — in the canonical log + UI, never in the model context (no token cost, never wakes the agent). Accept a chatty log; <strong>coalesce later</strong>; no stable event format needed yet.</td></tr>
+  <tr><td>4</td><td><strong>Unify the pending queue.</strong> Monitor lines <em>and</em> human input flow through one queue. Guiding principle: <em>"when I (the human) queue a message, I am a human monitor."</em> Items tagged by source (human / monitor-id). Default = enqueue (delivered at next seam, no preempt). <strong>Explicit interrupt (abort)</strong> stays a separate path (Enter = enqueue; explicit interrupt = abort/preempt the turn).</td></tr>
+  <tr><td>5</td><td><strong>Visualize the pending queue</strong> in the UI, including human messages.</td></tr>
+  <tr><td>6</td><td><strong>Unexpected/killed terminations surface into context</strong> (agent must learn so it does not wait forever). Clean agent-initiated stops need not.</td></tr>
+  <tr><td>7</td><td><strong>Collapsed-badge first enhancement = events-fired/activity</strong> (the runaway detector), ahead of timing stats.</td></tr>
+  <tr><td>8</td><td><strong>Monitor liveness is runtime-only</strong>, never reconstructed from the log. But <strong>forensics is fully in the log.</strong></td></tr>
+  <tr><td>9</td><td><strong>Clean shutdown</strong> kills all monitors + best-effort writes <code>MonitorStopped</code>. <strong>Hard crash</strong> leaves a dangling <code>MonitorStarted</code> — that is intended forensic signal, not a bug.</td></tr>
+  <tr><td>10</td><td><strong>Resume forks a new session</strong> (see code facts); no live-monitor inheritance; nothing to reconcile.</td></tr>
+  <tr><td>11</td><td><strong>Headless</strong> = benchmark-only, bounded by an external time limit + session-end cleanup. Residual token-burn risk from a runaway monitor = <em>observe, don't guard</em>.</td></tr>
+</table>
+
+<h2 id="layers">7. Layer mapping (Contract Authority — types are the schema)</h2>
+<div class="box warn">
+  <strong>Contract rule (from AGENTS.md):</strong> the Rust <code>OmegaEvent</code> in
+  <small class="path">crates/omega-types/src/events.rs</small> is the canonical schema.
+  Persistence, WS protocol, and UI are derived projections. A <em>semantic</em> change
+  must get a <em>syntactic</em> change (new variant), not a silent alias. Update the UI
+  to match the types — never the reverse.
+</div>
+<table>
+  <tr><th>Layer</th><th>What lives here</th></tr>
+  <tr><td><strong>Canonical <code>OmegaEvent</code></strong></td>
+    <td><code>MonitorStarted</code>, <code>MonitorDelivery</code> (the batched synthetic turn, projects <code>role:user</code>), <code>MonitorStderr</code> (diagnostic, non-projected), <code>MonitorStopped</code>. See §8.</td></tr>
+  <tr><td><strong>Persistence</strong></td>
+    <td><code>events.jsonl</code> = <em>all</em> events. <code>context.jsonl</code> = <em>derived projection</em> — it <strong>excludes</strong> <code>MonitorStderr</code> and <strong>merges</strong> consecutive <code>user</code>-role events into one API message. (<code>events.jsonl</code> ⊋ <code>context.jsonl</code>.)</td></tr>
+  <tr><td><strong><code>WsMessage</code></strong> (ephemeral; may carry extra fields)</td>
+    <td>Live roster (per-monitor status, start time, runtime, event-fired count, stderr tail); pending-queue contents tagged by source; UI→server <code>KillMonitor(id)</code> control frame.</td></tr>
+  <tr><td><strong>UI</strong></td>
+    <td>Collapsed badge (active count + activity) → modal (roster); pending-queue visualization; later: per-monitor detail + kill button.</td></tr>
+</table>
+
+<h2 id="schema">8. Proposed event schema (sketch — finalize in events.rs first)</h2>
+<p>Field names illustrative; the point is the <em>variant boundaries</em>:</p>
+<pre><code>// canonical OmegaEvent variants (camelCase on the wire)
+MonitorStarted { id, description, command, time }
+MonitorDelivery {                       // drained at a seam; projects role:user
+    time,
+    items: [ { source, lines } ]        // source = Human | Monitor(id); per-source attribution
+}                                        // (human turns MAY stay their existing user-message
+                                         //  event, drained alongside — see open item)
+MonitorStderr  { id, chunk, time }       // DIAGNOSTIC: in events.jsonl, NOT in context.jsonl
+MonitorStopped { id, reason, exit_code, time }
+                                         // reason = AgentStopped | UserKilled | ProcessExited | Crashed
+</code></pre>
+<ul>
+  <li>The context fold must <strong>skip</strong> <code>MonitorStderr</code>.</li>
+  <li><code>MonitorDelivery</code> (and any human user-turn drained with it) projects to
+    <code>role:user</code>; consecutive user-role events merge into one API message at
+    the projection boundary (satisfies role alternation + "batch at seam").</li>
+  <li>Unexpected <code>MonitorStopped</code> (<code>UserKilled</code>/<code>Crashed</code>/
+    <code>ProcessExited</code> while the agent depends on it) should be projected into
+    context so the agent learns; clean <code>AgentStopped</code> need not.</li>
+</ul>
+
+<h2 id="ui">9. UI design</h2>
+<ul>
+  <li><strong>Collapsed badge</strong> — shows the active-monitor count. First enhancement: events-fired / recent activity (so a single spewing monitor is visible at a glance). This <em>is</em> the runaway backstop.</li>
+  <li><strong>Modal</strong> — roster of active monitors. Later: per-monitor start time, run time, events fired, stderr tail.</li>
+  <li><strong>Pending-queue visualization</strong> — what the agent will see at the next seam, each item tagged human / monitor-id.</li>
+  <li><strong>Kill button</strong> (longer-term) — per-monitor kill. Killing = terminate process tree immediately (server-side, urgent) + enqueue a <code>MonitorStopped(UserKilled)</code> notice drained at the next seam (no preempt). If the agent was parked on the last live monitor, the kill must <em>wake</em> the park (roster-changed wake reason) so the loop re-evaluates/terminates rather than hangs.</li>
+</ul>
+
+<h2 id="lifecycle">10. Lifecycle, shutdown, resume, headless</h2>
+<ul>
+  <li><strong>Within a running session:</strong> monitors are live runtime entities in the in-memory roster.</li>
+  <li><strong>Clean shutdown:</strong> kill all monitor process trees + best-effort write <code>MonitorStopped</code> for forensics.</li>
+  <li><strong>Hard crash / kill -9:</strong> dangling <code>MonitorStarted</code> with no <code>Stopped</code>; a forensic reader infers "process died here." Acceptable — intended signal.</li>
+  <li><strong>Resume</strong> (<code>handle_resume_session</code>): forks a <em>new</em> session from a resumption basis; does <strong>not</strong> inherit live monitors. Nothing to reconcile. Verify nothing tries to revive monitors from the prior log.</li>
+  <li><strong>WS reconnect/replay</strong> (<code>should_replay</code>): re-sends logged events to render the view; live roster reflects whatever the running process currently holds (empty after a restart). Liveness is never reconstructed.</li>
+  <li><strong>Headless:</strong> benchmark-only, bounded by an external time limit + session-end cleanup. No human-kill needed there.</li>
+</ul>
+
+<h2 id="steps">11. Implementation steps (phased)</h2>
+<div class="box ok"><strong>Order is contract-first:</strong> schema before runtime before UI. Run targeted mutation testing (<code>cargo mutants -p &lt;crate&gt; --cap-lints=true --file &lt;path&gt;</code>) after each non-trivial logic chunk; add a Justfile recipe per run (template: <code>mutants-system-prompt-guard</code>). Tests end-to-end: omega-tools via <code>execute_tool</code>, omega-agent via <code>Agent::send_message</code> + <code>MockProvider</code>.</div>
+<ol>
+  <li><strong>Phase 0 — Schema.</strong> Add the four <code>OmegaEvent</code> variants in
+    <small class="path">crates/omega-types/src/events.rs</small>. Mark
+    <code>MonitorStderr</code> non-projected in the context fold. Ensure the projection
+    merges consecutive user-role events into one API message. Tests: fold invariants,
+    projection merge, non-projection of stderr.</li>
+  <li><strong>Phase 1 — Monitor runtime.</strong> Process manager: spawn shell command,
+    stdout line → queue, stderr → (chatty) <code>MonitorStderr</code> events, process-tree
+    track + kill. Ephemeral roster (id, description, command, status, start time,
+    event-fired count, stderr tail). Tools <code>monitor()</code> / <code>stop_monitor()</code>
+    (returns immediately).</li>
+  <li><strong>Phase 2 — Loop integration.</strong> Unified pending queue (monitor lines +
+    human input). Drain at the two seams. Parking select over
+    <code>{human, queue, roster-changed}</code>. Terminate condition. Route human input
+    through the queue; keep explicit abort/interrupt as a separate path.</li>
+  <li><strong>Phase 3 — WS + UI.</strong> Push ephemeral roster + pending-queue over WS;
+    <code>KillMonitor</code> control frame. Badge + modal + queue visualization. Later:
+    per-monitor detail + kill button.</li>
+  <li><strong>Phase 4 — Shutdown / resume / headless.</strong> Clean shutdown kills + logs
+    <code>MonitorStopped</code>. Verify resume does not revive monitors. Headless relies on
+    session end + external time limit.</li>
+</ol>
+
+<h2 id="open">12. Open items (deferred, non-blocking)</h2>
+<ul>
+  <li><strong>stderr coalescing granularity</strong> — by-lines vs by-time. Decided: accept chatty log for now, optimize later; no stable format required.</li>
+  <li><strong>Human-in-delivery representation</strong> — does <code>MonitorDelivery</code> aggregate human + monitor items in one event, or does the human turn stay its existing user-message event drained <em>alongside</em> a monitor delivery? Lean: keep them as <em>separate</em> canonical events; the projection merges them. (Either way the UI tags by source.)</li>
+  <li><strong>Exact <code>reason</code> enum</strong> for <code>MonitorStopped</code> and which reasons project into context (lean: all "unexpected" ones do).</li>
+  <li><strong>Does <code>MonitorStarted</code> re-surface into context?</strong> Lean: no — the tool result already informs the agent; the event is for log/causality.</li>
+</ul>
+
+<h2 id="codefacts">13. Codebase facts gathered (Omega = Rust workspace)</h2>
+<ul>
+  <li>Canonical events: <small class="path">crates/omega-types/src/events.rs</small> — <code>OmegaEvent</code> enum. Already has <code>SessionResumedEvent</code> / <code>SessionResumed</code> variant (<code>resumed_from</code> field, camelCase <code>resumedFrom</code>).</li>
+  <li>Server router: <small class="path">crates/omega-server/src/router.rs</small> — <code>handle_resume_session</code> forks a new session via <code>create_active_session</code>, using <code>extract_resumption_basis</code> + <code>extract_tool_selection</code> from the prior log, recording <code>resumed_from</code>. <code>should_replay</code> / <code>REPLAY_EXCLUDE = ["ready","text"]</code> govern WS replay to reconnecting clients. <code>ClientFrame::ResumeSession</code>. <code>request_abort()</code> exists (winds down an in-flight turn — the existing transport-level interrupt).</li>
+  <li>WS transport: <small class="path">crates/omega-server/src/ws_message.rs</small> — <code>WsMessage</code> (transport projection; may carry extra ephemeral fields).</li>
+  <li>Process-cleanup precedent to mirror: pi-mono's <code>killProcessTree</code> / detached-PID tracking.</li>
+  <li>AGENTS.md essentials: branch <code>develop</code>; finish with <code>git add -A &amp;&amp; git commit</code> (pre-commit hook runs the gate; never <code>--no-verify</code>); mutation testing per changed file; tests as end-to-end as possible; declare only the cargo features a crate actually uses.</li>
+</ul>
+
+<hr/>
+<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: §6 is settled, §12 lists the only soft spots. If implementing: start at §11 Phase 0 (schema in <small class="path">events.rs</small>), contract-first.</p>
+
+</main>
+</body>
+</html>
