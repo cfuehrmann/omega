@@ -58,7 +58,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h1>Async Monitors for Omega</h1>
 <p class="meta">
-  <span class="tag tag-status">DESIGN FROZEN — NOT YET IMPLEMENTED</span><br/>
+  <span class="tag tag-status">PHASE 0 IMPLEMENTED — PHASES 1–4 PENDING</span><br/>
+  <span class="meta">Phase 0 (event schema + context projection) landed in commit <code>0edc8d5</code>; the four <code>OmegaEvent</code> variants and the §12 decisions are now locked in <small class="path">crates/omega-types/src/events.rs</small> and <small class="path">crates/omega-agent/src/agent.rs</small>. The rest of this doc remains the design of record for Phases 1–4.</span><br/>
   Design &amp; cold-start resume document. Self-contained: a future session with
   <em>no prior context</em> should be able to read this and either start
   implementing or continue the discussion. Written because the authoring session
@@ -318,7 +319,7 @@ UI "KillMonitor" -----------------------------------------------> loop (logs Mon
   <tr><td><strong>Canonical <code>OmegaEvent</code></strong></td>
     <td><code>MonitorStarted</code>, <code>MonitorDelivery</code> (the batched synthetic turn, projects <code>role:user</code>), <code>MonitorStderr</code> (diagnostic, non-projected), <code>MonitorStopped</code>. See §8.</td></tr>
   <tr><td><strong>Persistence</strong></td>
-    <td><code>events.jsonl</code> = <em>all</em> events. <code>context.jsonl</code> = <em>derived projection</em> — it <strong>excludes</strong> <code>MonitorStderr</code> and <strong>merges</strong> consecutive <code>user</code>-role events into one API message. (<code>events.jsonl</code> ⊋ <code>context.jsonl</code>.)</td></tr>
+    <td><code>events.jsonl</code> = <em>all</em> events. <code>context.jsonl</code> = <em>derived projection</em>: a <strong>per-record</strong> log (each record keyed by its own <code>ContextHash</code>) that <strong>excludes</strong> <code>MonitorStderr</code>. (<code>events.jsonl</code> ⊋ <code>context.jsonl</code>.) The <strong>merge of consecutive <code>user</code>-role records into one API message is a separate request-assembly step</strong> — <code>project_messages()</code> in <small class="path">crates/omega-agent/src/agent.rs</small>, applied when the <code>LlmRequest</code> is built, not when <code>context.jsonl</code> is written. (Anthropic combines consecutive same-role turns server-side anyway; doing it client-side just makes the local view match.) The per-record log is left un-merged so the <code>ContextHash</code> foreign keys stay stable.</td></tr>
   <tr><td><strong><code>WsMessage</code></strong> (ephemeral; may carry extra fields)</td>
     <td>Live roster (per-monitor status, start time, runtime, event-fired count, stderr tail); pending-queue contents tagged by source; UI→server <code>KillMonitor(id)</code> control frame.</td></tr>
   <tr><td><strong>UI</strong></td>
@@ -369,11 +370,11 @@ MonitorStopped { id, reason, exit_code, time }
 <h2 id="steps">11. Implementation steps (phased)</h2>
 <div class="box ok"><strong>Order is contract-first:</strong> schema before runtime before UI. Run targeted mutation testing (<code>cargo mutants -p &lt;crate&gt; --cap-lints=true --file &lt;path&gt;</code>) after each non-trivial logic chunk; add a Justfile recipe per run (template: <code>mutants-system-prompt-guard</code>). Tests end-to-end: omega-tools via <code>execute_tool</code>, omega-agent via <code>Agent::send_message</code> + <code>MockProvider</code>.</div>
 <ol>
-  <li><strong>Phase 0 — Schema.</strong> Add the four <code>OmegaEvent</code> variants in
+  <li><strong>Phase 0 — Schema. <span class="keep">✔ DONE</span> (commit <code>0edc8d5</code>).</strong> Add the four <code>OmegaEvent</code> variants in
     <small class="path">crates/omega-types/src/events.rs</small>. Mark
     <code>MonitorStderr</code> non-projected in the context fold. Ensure the projection
     merges consecutive user-role events into one API message. Tests: fold invariants,
-    projection merge, non-projection of stderr.</li>
+    projection merge, non-projection of stderr. <em>As built:</em> the merge is a request-assembly step (<code>project_messages()</code>), not a property of <code>context.jsonl</code> on disk — see §7. §12 decisions locked: monitor-only delivery items; <code>AgentStopped</code> not projected, other stop reasons projected; <code>MonitorStarted</code> not resurfaced.</li>
   <li><strong>Phase 1 — Monitor runtime.</strong> Process manager: spawn shell command,
     stdout line → queue, stderr → (chatty) <code>MonitorStderr</code> events, process-tree
     track + kill. Ephemeral roster (id, description, command, status, start time,
