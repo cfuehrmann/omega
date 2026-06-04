@@ -21,6 +21,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::monitors::MonitorManager;
 use crate::python_repl::PythonRepl;
 
 /// Session-scoped execution context passed to every tool invocation.
@@ -82,6 +83,21 @@ pub struct ToolCtx {
     /// vector when constructed via [`ToolCtx::new`]; the agent populates
     /// this with the live session's `tool_selection` for every dispatch.
     pub tool_selection: Vec<String>,
+
+    /// Shared handle to the session's async-monitor runtime (pending queue +
+    /// roster).  `Some(…)` when monitors are enabled for this session;
+    /// `None` otherwise (the `monitor` / `stop_monitor` tools then return an
+    /// error).
+    ///
+    /// The agent's main loop owns the same `Arc` so it can drain the pending
+    /// queue at boundaries (Phase 2) and reap all process trees on session
+    /// end via [`MonitorManager::shutdown`].  Cloning the `Arc` into each
+    /// `ToolCtx` is what lets the `monitor` tool push to the manager the
+    /// loop later drains — the single ownership seam between the two phases.
+    ///
+    /// Phase 1 leaves this `None` in production (the tools are not yet
+    /// exposed to the model — clean-cutover); tests populate it explicitly.
+    pub monitors: Option<Arc<MonitorManager>>,
 }
 
 impl ToolCtx {
@@ -102,6 +118,7 @@ impl ToolCtx {
             system_prompt_paths: Arc::new(HashSet::new()),
             python_repl: None,
             tool_selection: Vec::new(),
+            monitors: None,
         }
     }
 }

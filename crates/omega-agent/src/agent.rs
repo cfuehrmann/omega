@@ -1855,6 +1855,13 @@ impl Agent {
                                     system_prompt_paths,
                                     python_repl,
                                     tool_selection,
+                                    // Monitors are not wired into the agent loop
+                                    // until Phase 2 (clean cutover: the tools are
+                                    // not exposed to the model in Phase 1, so this
+                                    // stays None). Phase 2 threads the shared
+                                    // Arc<MonitorManager> here and drains it at
+                                    // boundaries.
+                                    monitors: None,
                                 };
                                 let res =
                                     execute_tool(&name, input, Some(&cancel_clone), Some(&ctx)).await;

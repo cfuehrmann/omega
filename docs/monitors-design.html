@@ -248,6 +248,42 @@ monitor procs --stdout line--> [ pending queue ] --drain at----> events.jsonl
 human input ----------------->  [ pending queue ]                UI queue viz
 UI "KillMonitor" -----------------------------------------------> loop (logs MonitorStopped)</code></pre>
 
+<div class="box callout">
+  <h4>Phase 1 build note &mdash; queue/roster ownership &amp; clean cutover</h4>
+  <p>
+    <strong>Where the queue and roster live.</strong> Both sit together in a single
+    <code>MonitorManager</code> (<small class="path">crates/omega-tools/src/monitors.rs</small>)
+    held behind an <code>Arc</code> and stored on
+    <code>ToolCtx.monitors: Option&lt;Arc&lt;MonitorManager&gt;&gt;</code> &mdash; mirroring how
+    the <code>python_repl</code> state is threaded onto <code>ToolCtx</code>. This is the
+    <em>smallest</em> ownership model that bridges Phase 1 &rarr; Phase 2: the
+    <code>monitor</code>/<code>stop_monitor</code> tools reach it <em>now</em> through the
+    <code>ctx</code> handle, and Phase 2&rsquo;s main loop will hold the <em>same</em>
+    <code>Arc</code>, clone it into every <code>ToolCtx</code> it builds, and call
+    <code>drain_pending()</code> at each boundary plus <code>shutdown()</code> on session end
+    &mdash; no re-architecting. It is deliberately <strong>not</strong> a module-level
+    <code>static</code> (unlike the <code>run_background</code> registry): a global would leak
+    the roster across sessions and across tests, violating the ephemeral-roster rule
+    (&sect;10) and making tests non-deterministic.
+  </p>
+  <p>
+    <strong>Clean cutover &mdash; no half-wired sessions.</strong> A session must be either
+    <em>unaware</em> of monitors or <em>all-in</em>, never in between. Phase 1 ships the
+    runtime and the two tools but does <em>not</em> wire the loop drain, so exposing the
+    tools to the model now would let it call <code>monitor()</code> and spawn a process
+    whose output nothing ever drains &mdash; a half-wired state. Therefore Phase 1 keeps
+    the tools <strong>invisible</strong>: <code>monitor</code>/<code>stop_monitor</code> are
+    <em>not</em> in <code>ALL_TOOL_NAMES</code> / <code>DEFAULT_TOOL_NAMES</code> / any preset,
+    and <code>tool_definitions</code> never emits their schemas, so the model can never
+    select or call them (the agent also rejects any tool name outside
+    <code>ALL_TOOL_NAMES</code>). The <code>execute_tool</code> dispatch arms exist purely so the
+    end-to-end tests can drive the tools directly. The cutover is a single, atomic,
+    reviewable change in a later phase: add the two names to the registry and emit their
+    schemas, <em>together with</em> the loop drain. Until then, real sessions are
+    byte-for-byte unaffected.
+  </p>
+</div>
+
 <h2 id="philosophy">5. Guardrail philosophy</h2>
 <div class="box callout">
   <strong>Explorative minimalism.</strong> Add <em>only</em> guardrails that are
@@ -402,11 +438,19 @@ MonitorStopped { id, reason, exit_code, time }
     <code>MonitorStderr</code> non-projected in the context fold. Ensure the projection
     merges consecutive user-role events into one API message. Tests: fold invariants,
     projection merge, non-projection of stderr. <em>As built:</em> the merge is a request-assembly step (<code>project_messages()</code>), not a property of <code>context.jsonl</code> on disk — see §7. §12 decisions locked: monitor-only delivery items; <code>AgentStopped</code> not projected, other stop reasons projected; <code>MonitorStarted</code> not resurfaced.</li>
-  <li><strong>Phase 1 — Monitor runtime.</strong> Process manager: spawn shell command,
-    stdout line → queue, stderr → (chatty) <code>MonitorStderr</code> events, process-tree
-    track + kill. Ephemeral roster (id, description, command, status, start time,
-    event-fired count, stderr tail). Tools <code>monitor()</code> / <code>stop_monitor()</code>
-    (returns immediately).</li>
+  <li><strong>Phase 1 — Monitor runtime. <span class="keep">✔ DONE</span>.</strong> Process manager (<code>MonitorManager</code>,
+    <small class="path">crates/omega-tools/src/monitors.rs</small>): spawn shell command in its own
+    process group, stdout line → in-memory pending queue, stderr line → queue (chatty; becomes
+    <code>MonitorStderr</code> on Phase 2 drain) + bounded roster tail, process-tree track + kill
+    (<code>kill_group</code>) on <code>stop()</code> and <code>shutdown()</code> (session-end reaping; no orphans).
+    Ephemeral roster (id, description, command, status, start time, event-fired count, stderr tail).
+    Tools <code>monitor(description, command)</code> / <code>stop_monitor(id)</code> &mdash; both return
+    immediately; <code>MonitorStarted</code> / <code>MonitorStopped(AgentStopped)</code> are emitted via the
+    tool result&rsquo;s <code>extra_events</code> (single-writer: the agent appends, the monitor never does);
+    stopping a dead/unknown monitor is a no-op. <em>Ownership + clean-cutover decisions: see the Phase 1
+    build note in &sect;4.</em> The tools are intentionally <strong>not</strong> exposed to the model yet
+    (clean cutover). E2E tests via <code>execute_tool</code>; mutation recipes <code>mutants-monitors</code> /
+    <code>mutants-monitor-tools</code> (all caught/unviable).</li>
   <li><strong>Phase 2 — Loop integration.</strong> Unified pending queue (monitor lines +
     human input). Drain at the two seams. Parking select over
     <code>{human, queue, roster-changed}</code>. Terminate condition. Route human input

@@ -115,6 +115,7 @@ fn ctx_protecting(protected: &std::path::Path) -> omega_tools::ToolCtx {
         system_prompt_paths: Arc::new(paths),
         python_repl: None,
         tool_selection: Vec::new(),
+        monitors: None,
     }
 }
 

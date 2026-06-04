@@ -263,6 +263,25 @@ mutants-process-util:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/process_util.rs"
 
+# Run cargo-mutants targeted at the async-monitor runtime (Monitors Phase 1).
+# Mutates the MonitorManager (spawn / stop / shutdown / queue + roster
+# mutations) and runs the omega-tools suite incl. the 9 monitor E2E tests.
+# Spawns real bash subprocesses (printf / sleep / seq) — requires bash.
+# Template: mutants-process-util (see AGENTS.md).
+mutants-monitors:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/monitors.rs"
+
+# Run cargo-mutants targeted at the two monitor tool wrappers (Monitors Phase 1):
+# monitor() (spawn + MonitorStarted extra_event) and stop_monitor() (kill +
+# MonitorStopped/AgentStopped extra_event, no-op on unknown/dead). Exercised
+# via execute_tool in the monitor E2E tests. Template: mutants-process-util.
+mutants-monitor-tools:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/tools/monitor.rs" \
+        --file "crates/omega-tools/src/tools/stop_monitor.rs"
+
 # Run cargo-mutants targeted at the python3 bootstrap logic in python_repl.rs.
 # Covers is_not_found(), start_inner() branching (AptNotFound / AptFailed /
 # Succeeded), retry logic, and the BootstrapInfo return path.

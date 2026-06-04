@@ -20,6 +20,7 @@ use omega_types::events::PythonReplBootstrappedEvent;
 
 mod cap_and_tee;
 mod format;
+mod monitors;
 mod output_cleaner;
 mod process_util;
 pub mod python_repl;
@@ -30,6 +31,7 @@ mod tools;
 
 pub use cap_and_tee::{CappedOutput, TruncationBias, cap_and_tee};
 pub use format::format_tool_call;
+pub use monitors::{MonitorInfo, MonitorManager, MonitorStatus, PendingItem, SpawnedMonitor};
 pub use python_repl::PythonRepl;
 pub use python_repl::{DEFAULT_TIMEOUT_SECS, MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES, MAX_TIMEOUT_SECS};
 pub use schemas::{
@@ -107,6 +109,7 @@ fn in_system_prompt(path_str: &str, paths: &std::collections::HashSet<std::path:
 /// [`ToolCtx::system_prompt_paths`]). If so it returns a short
 /// `ToolResult::ok` message immediately — the file content is already
 /// present and the round-trip is unnecessary.
+#[allow(clippy::too_many_lines)] // one arm per tool: a long match is inherent
 pub async fn execute_tool(
     name: &str,
     input: Value,
@@ -136,6 +139,9 @@ pub async fn execute_tool(
         "write_stdin" => tools::write_stdin::execute(input, cancel).await,
         "web_search" => tools::web_search::execute(input, cancel).await,
         "fetch_url" => tools::fetch_url::execute(input, cancel, ctx).await,
+        // Monitor tools early-return a `ToolResult` (sync; populate `extra_events`).
+        "monitor" => return tools::monitor::execute(&input, ctx),
+        "stop_monitor" => return tools::stop_monitor::execute(&input, ctx),
         "python_repl" => {
             // The REPL tool requires an active session context with the
             // python_repl Arc.  Early-return ToolResult directly so the
