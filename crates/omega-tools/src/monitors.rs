@@ -646,6 +646,17 @@ mod tests {
             "result should mention id: {}",
             r.content
         );
+        // The result must be neutral data — no stop cue (design §2/#2 and §13).
+        assert!(
+            !r.content.contains("stop_monitor"),
+            "result must not mention stop_monitor: {}",
+            r.content
+        );
+        assert!(
+            !r.content.contains("no longer needed"),
+            "result must not contain stop cue 'no longer needed': {}",
+            r.content
+        );
         // The roster knows about the live monitor.
         assert_eq!(mgr.status(&ev.id), Some(MonitorStatus::Running));
 

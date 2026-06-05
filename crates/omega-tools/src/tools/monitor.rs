@@ -33,13 +33,7 @@ pub fn execute(input: &Value, ctx: Option<&ToolCtx>) -> ToolResult {
 
     match manager.spawn(description, command) {
         Ok(spawned) => {
-            let mut result = ToolResult::ok(format!(
-                "Monitor started with id `{id}`. It runs asynchronously: its \
-                 stdout lines arrive later as injected messages at the next \
-                 boundary. Stop it with stop_monitor(\"{id}\") when no longer \
-                 needed.",
-                id = spawned.id,
-            ));
+            let mut result = ToolResult::ok(format!("Monitor `{id}` started.", id = spawned.id));
             result
                 .extra_events
                 .push(OmegaEvent::MonitorStarted(MonitorStartedEvent {

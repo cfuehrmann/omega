@@ -800,6 +800,16 @@ MonitorStopped { id, reason, exit_code, time }
     </ul>
     Behavioral verification is out of automated scope; validate live with a
     <code>monitor(&ldquo;sleep 20 &amp;&amp; echo done&rdquo;)</code> scenario on Sonnet and Opus.</li>
+  <li><strong>MINIMAL TOOL-RESULT (implemented, &sect;2 finding #2).</strong>
+    Sonnet called <code>stop_monitor</code> ~3&nbsp;s after starting a monitor because the
+    <code>monitor()</code> tool result ended with &ldquo;Stop it with stop_monitor when no
+    longer needed&rdquo; &mdash; the exact cue that tipped it into acting. Stripped the result
+    to neutral bare data: <code>"Monitor `{id}` started."</code> All behavioural
+    guidance remains in the tool description (<code>schemas.rs</code>) and the
+    system-prompt addendum (<code>system_prompt.rs</code>). Test coverage: the
+    <code>monitor_returns_immediately_with_id_and_logs_started</code> test now asserts
+    the result (a)&nbsp;contains the monitor id and (b)&nbsp;does <em>not</em> contain
+    <code>stop_monitor</code> or &ldquo;no longer needed&rdquo;.</li>
   <li><strong>Reconsider auto-stop of chatty monitors and line-buffering rails (open):</strong>
     minimal script guidance (line-buffering/flush) has been added to the tool description;
     auto-stop of runaway monitors is still open. &ldquo;Explorative minimalism&rdquo; dropped both;
