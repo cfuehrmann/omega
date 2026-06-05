@@ -267,6 +267,42 @@ pub enum WsMessage {
     PendingChangesWarning {
         intent: PendingChangesIntent,
     },
+
+    /// Ephemeral roster snapshot pushed by the server on connect and
+    /// after every monitor lifecycle event.  **Not** an `OmegaEvent`;
+    /// `into_omega_event` returns `None` and the roster is never
+    /// written to `events.jsonl`.
+    MonitorRoster {
+        monitors: Vec<MonitorRosterEntry>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// MonitorRosterEntry — one entry in a roster snapshot
+// ---------------------------------------------------------------------------
+
+/// One monitor entry in a [`WsMessage::MonitorRoster`] snapshot.
+///
+/// Transport-only projection of
+/// [`omega_tools::MonitorInfo`](crates/omega-tools/src/monitors.rs);
+/// field names are camelCase on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorRosterEntry {
+    /// Stable per-session monitor id.
+    pub id: String,
+    /// Human description supplied to `monitor()`.
+    pub description: String,
+    /// The shell command being run.
+    pub command: String,
+    /// `"running"` or `"stopped"`.
+    pub status: String,
+    /// RFC 3339 start timestamp.
+    pub started_at: String,
+    /// Number of stdout lines delivered so far.
+    pub fired_count: u64,
+    /// Up to 20 most recent stderr lines.
+    pub stderr_tail: Vec<String>,
 }
 
 impl WsMessage {
@@ -284,7 +320,9 @@ impl WsMessage {
             | Self::History(_)
             | Self::SessionDeleted { .. }
             | Self::SessionRenamed { .. }
-            | Self::PendingChangesWarning { .. } => return None,
+            | Self::PendingChangesWarning { .. }
+            // Ephemeral roster snapshot — never an OmegaEvent.
+            | Self::MonitorRoster { .. } => return None,
             // Stream signals — never persisted as events.
             Self::Text { .. }
             | Self::Thinking { .. }

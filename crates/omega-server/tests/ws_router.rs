@@ -206,8 +206,8 @@ async fn send_json(ws: &mut WsClient, v: serde_json::Value) {
     ws.send(TMessage::Text(v.to_string().into())).await.unwrap();
 }
 
-/// Perform reset and drain to `ready`; return the session dir name from the
-/// `session_info` frame that arrives in the batch.
+/// Perform reset and drain to `ready` and the following `monitor_roster`;
+/// return the session dir name from the `session_info` frame.
 async fn reset_and_ready(ws: &mut WsClient) -> String {
     send_json(
         ws,
@@ -215,6 +215,12 @@ async fn reset_and_ready(ws: &mut WsClient) -> String {
     )
     .await;
     let frames = recv_until_type(ws, "ready").await;
+    // Drain the `monitor_roster` snapshot pushed right after `ready`.
+    let roster = recv_json(ws).await;
+    assert_eq!(
+        roster["type"], "monitor_roster",
+        "expected monitor_roster after reset ready; got {roster:?}"
+    );
     frames
         .iter()
         .find(|v| v["type"] == "session_info")

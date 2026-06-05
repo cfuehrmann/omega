@@ -30,7 +30,9 @@ use leptos::prelude::*;
 use omega_types::OmegaEvent;
 use serde::Serialize;
 
-use crate::protocol::{AgentErrorPayload, SessionInfoPayload, TurnState, WsMessage};
+use crate::protocol::{
+    AgentErrorPayload, MonitorRosterEntry, SessionInfoPayload, TurnState, WsMessage,
+};
 
 // ---------------------------------------------------------------------------
 // POD snapshot
@@ -94,6 +96,10 @@ pub struct SessionState {
     /// `"UTC"` until a `SessionStarted` event lands; renders unchanged
     /// from pre-migration behaviour in that case.
     pub agent_time_zone: String,
+    /// Latest ephemeral monitor roster snapshot from the server.
+    /// Updated by [`WsMessage::MonitorRoster`] frames; never persisted.
+    /// See [`SessionStore::roster`].
+    pub roster: Vec<MonitorRosterEntry>,
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +146,10 @@ pub struct SessionStore {
     /// started session doesn't render its first few events in the
     /// previous session's zone before its own `SessionStarted` arrives.
     pub agent_time_zone: RwSignal<String>,
+    /// Latest ephemeral monitor roster snapshot from the server.
+    /// Replaced on every [`WsMessage::MonitorRoster`] frame; never
+    /// persisted to events.  The badge and modal read from this signal.
+    pub roster: RwSignal<Vec<MonitorRosterEntry>>,
 }
 
 impl Default for SessionStore {
@@ -168,6 +178,7 @@ impl SessionStore {
             pre_committed: RwSignal::new(false),
             pending_changes_warning: RwSignal::new(None),
             agent_time_zone: RwSignal::new("UTC".to_owned()),
+            roster: RwSignal::new(Vec::new()),
         }
     }
 
@@ -242,6 +253,10 @@ impl SessionStore {
                 // window of "no events yet" doesn't carry over stale
                 // zone metadata.
                 self.agent_time_zone.set("UTC".to_owned());
+                // Ephemeral roster is per-session; clear it so the badge
+                // disappears immediately on reset before the fresh
+                // MonitorRoster snapshot arrives.
+                self.roster.set(Vec::new());
             }
 
             WsMessage::AgentError(AgentErrorPayload::Envelope { message }) => {
@@ -260,6 +275,14 @@ impl SessionStore {
                 // we just record the intent so the dirty modal can
                 // open and offer Cancel / Proceed.
                 self.pending_changes_warning.set(Some(intent));
+            }
+
+            WsMessage::MonitorRoster { monitors } => {
+                // Ephemeral roster snapshot from the server.  Replace the
+                // stored slice so reactive consumers (badge, modal) see
+                // the latest state.  This frame is NEVER passed to
+                // `into_omega_event` and NEVER appended to `events`.
+                self.roster.set(monitors);
             }
 
             WsMessage::Text { index, text } => {
@@ -350,6 +373,7 @@ impl SessionStore {
             pre_committed: self.pre_committed.get_untracked(),
             pending_changes_warning: self.pending_changes_warning.get_untracked(),
             agent_time_zone: self.agent_time_zone.get_untracked(),
+            roster: self.roster.get_untracked(),
         }
     }
 }

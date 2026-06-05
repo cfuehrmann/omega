@@ -36,6 +36,7 @@ use omega_agent::{Agent, AgentConfig};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_server::{ActiveSession, AppState, build_router};
 use omega_store::{ContextStore, EventStore, SessionPaths};
+use omega_tools::MonitorManager;
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
 use omega_types::{FeatureFlags, LlmResponseUsage, OmegaEvent, StreamSignal};
 use tempfile::TempDir;
@@ -747,6 +748,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
         info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
         features: FeatureFlags::default(),
+        monitor_manager: MonitorManager::new(),
     };
 
     let state = make_test_state(Arc::clone(&provider), sessions_root);
@@ -922,6 +924,12 @@ async fn rename_session_updates_metadata_for_active_session() {
     )
     .await;
     let _ = recv_until_type(&mut ws, "ready").await;
+    // Drain the monitor_roster snapshot pushed right after ready.
+    let roster_after_reset = recv_json(&mut ws).await;
+    assert_eq!(
+        roster_after_reset["type"], "monitor_roster",
+        "expected monitor_roster after ready; got {roster_after_reset:?}"
+    );
 
     // The active session's directory is the only one in `sessions_root`.
     let active_dir = sessions_root
@@ -1020,6 +1028,12 @@ async fn rename_session_targets_client_provided_dir_not_active_session() {
     )
     .await;
     let _ = recv_until_type(&mut ws, "ready").await;
+    // Drain the monitor_roster snapshot pushed right after ready.
+    let roster_after_reset = recv_json(&mut ws).await;
+    assert_eq!(
+        roster_after_reset["type"], "monitor_roster",
+        "expected monitor_roster after ready; got {roster_after_reset:?}"
+    );
     let session_a_name = std::fs::read_dir(&sessions_root)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -1267,5 +1281,118 @@ async fn resume_session_with_dirty_tree_and_no_allow_dirty_sends_pending_changes
     assert!(
         extra.is_err(),
         "no further message expected after pending_changes_warning, got: {extra:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Monitor roster snapshot tests.
+//
+// The server pushes an ephemeral `monitor_roster` frame after every `ready`
+// when an active session exists, and after each monitor lifecycle event in
+// the streaming task.  The roster frame MUST NOT be persisted to
+// `events.jsonl` — it is transport-only.
+// ---------------------------------------------------------------------------
+
+/// On initial connect with NO session the server sends only `ready` — no
+/// `monitor_roster`.  Once a session is created (via `reset`) and a *second*
+/// client connects, the server should push `monitor_roster` right after `ready`.
+#[tokio::test]
+async fn roster_sent_on_reconnect_after_session_created() {
+    let tmp = TempDir::new().unwrap();
+    let provider = Arc::new(MockProvider::new());
+    let state = make_test_state(provider, tmp.path().join("sessions"));
+    let addr = spawn_server(state).await;
+
+    // ws1: initial connect (no session) — only `ready`, no `monitor_roster`.
+    let mut ws1 = connect(addr).await;
+    let initial_frame = recv_json(&mut ws1).await;
+    assert_eq!(
+        initial_frame["type"], "ready",
+        "first frame must be ready; got {initial_frame:?}"
+    );
+    // On a fresh server with no session, the next read must time out
+    // (no monitor_roster is pushed when there is no active session).
+    let no_roster = tokio::time::timeout(Duration::from_millis(200), recv_json(&mut ws1)).await;
+    assert!(
+        no_roster.is_err(),
+        "no monitor_roster expected when no session exists; got {no_roster:?}"
+    );
+
+    // Create a session via reset.
+    send_json(
+        &mut ws1,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
+    let _ = recv_until_type(&mut ws1, "ready").await;
+    // Drain the roster pushed after reset's ready.
+    let roster_after_reset = recv_json(&mut ws1).await;
+    assert_eq!(
+        roster_after_reset["type"], "monitor_roster",
+        "expected monitor_roster after reset ready; got {roster_after_reset:?}"
+    );
+    ws1.close(None).await.ok();
+    drop(ws1);
+    // Give the server a moment to process the close.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // ws2: reconnect — session exists → ready then monitor_roster.
+    let mut ws2 = connect(addr).await;
+    let _ = recv_until_type(&mut ws2, "ready").await;
+    let roster_on_reconnect = recv_json(&mut ws2).await;
+    assert_eq!(
+        roster_on_reconnect["type"], "monitor_roster",
+        "expected monitor_roster after ready on reconnect; got {roster_on_reconnect:?}"
+    );
+    let monitors = roster_on_reconnect["monitors"]
+        .as_array()
+        .expect("monitors must be an array");
+    assert!(
+        monitors.is_empty(),
+        "roster must be empty (no monitors started); got {monitors:?}"
+    );
+}
+
+/// The `monitor_roster` frame is transport-only and must NOT be written to
+/// `events.jsonl`.  This test creates a session, waits for the roster frame,
+/// then reads `events.jsonl` directly and asserts the string "monitor_roster"
+/// is absent.
+#[tokio::test]
+async fn monitor_roster_frame_not_persisted_to_events_jsonl() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    let state = make_test_state(provider, sessions_root.clone());
+    let addr = spawn_server(state).await;
+
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "reset", "allowDirty": true }),
+    )
+    .await;
+    let _ = recv_until_type(&mut ws, "ready").await;
+    let roster = recv_json(&mut ws).await;
+    assert_eq!(
+        roster["type"], "monitor_roster",
+        "sanity: expected monitor_roster here; got {roster:?}"
+    );
+
+    // Allow time for all writes to flush.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let session_dir =
+        latest_session_dir(&sessions_root).expect("a session directory must exist after reset");
+    let events_jsonl = session_dir.join("events.jsonl");
+    assert!(
+        events_jsonl.exists(),
+        "events.jsonl must exist at {events_jsonl:?}"
+    );
+    let content = std::fs::read_to_string(&events_jsonl).unwrap();
+    assert!(
+        !content.contains("monitor_roster"),
+        "monitor_roster must NOT appear in events.jsonl; content: {content:?}"
     );
 }

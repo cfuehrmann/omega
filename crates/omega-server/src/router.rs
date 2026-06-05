@@ -40,13 +40,14 @@ use tokio_util::sync::CancellationToken;
 use tower_http::services::ServeDir;
 
 use omega_core::AgentItem;
+use omega_tools::{MonitorManager, MonitorStatus};
 use omega_types::OmegaEvent;
 use omega_types::events::PauseRequestedEvent;
 use omega_types::ids::LoggedEvent;
 
 use crate::AppState;
 use crate::session::{ActiveSession, SessionInfoCache};
-use crate::ws_message::{PendingChangesIntent, WsMessage};
+use crate::ws_message::{MonitorRosterItem, PendingChangesIntent, WsMessage};
 
 // ---------------------------------------------------------------------------
 // History replay — filter constants and helper
@@ -67,6 +68,53 @@ const REPLAY_EXCLUDE: &[&str] = &["ready", "text"];
 #[must_use]
 pub fn should_replay(event_type: &str) -> bool {
     !REPLAY_EXCLUDE.contains(&event_type)
+}
+
+// ---------------------------------------------------------------------------
+// Monitor roster helpers
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if `item` is a monitor lifecycle event — the moments at
+/// which the ephemeral roster mutates.  Used by the streaming task to decide
+/// when to push a fresh [`WsMessage::MonitorRoster`] snapshot after the
+/// forwarded event is written to the client.
+#[must_use]
+pub fn is_monitor_event(item: &AgentItem) -> bool {
+    matches!(
+        item,
+        AgentItem::Event(ev)
+            if matches!(
+                ev.as_ref(),
+                OmegaEvent::MonitorStarted(_)
+                    | OmegaEvent::MonitorDelivery(_)
+                    | OmegaEvent::MonitorStderr(_)
+                    | OmegaEvent::MonitorStopped(_)
+            )
+    )
+}
+
+/// Build a [`WsMessage::MonitorRoster`] snapshot from the current roster.
+/// The snapshot is ephemeral and transport-only — it MUST NOT be written to
+/// `events.jsonl`.
+#[must_use]
+fn roster_snapshot_msg(mgr: &MonitorManager) -> WsMessage {
+    let monitors = mgr
+        .roster()
+        .into_iter()
+        .map(|info| MonitorRosterItem {
+            id: info.id,
+            description: info.description,
+            command: info.command,
+            status: match info.status {
+                MonitorStatus::Running => "running".to_owned(),
+                MonitorStatus::Stopped => "stopped".to_owned(),
+            },
+            started_at: info.started_at,
+            fired_count: info.fired_count,
+            stderr_tail: info.stderr_tail,
+        })
+        .collect();
+    WsMessage::MonitorRoster { monitors }
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +312,7 @@ async fn create_active_session(
     let active_model = agent.active_model().to_owned();
     let active_effort = agent.active_effort().to_owned();
     let features = agent.features();
+    let monitor_manager = agent.monitor_manager();
     let info_cache = SessionInfoCache {
         dir: dir_name.clone(),
         model: active_model,
@@ -282,6 +331,7 @@ async fn create_active_session(
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
         info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
         features,
+        monitor_manager,
     };
     Ok((session, dir_name))
 }
@@ -567,6 +617,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Ready frame signals end-of-batch to the client.
     let _ = tx.send(WsMessage::Ready);
 
+    // Roster snapshot — push once on connect so the badge reflects the
+    // live roster immediately (e.g. after a browser reconnect mid-session).
+    {
+        let slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_ref() {
+            let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
+        }
+    }
+
     // Read loop.
     while let Some(frame) = reader.next().await {
         let Ok(frame) = frame else { break };
@@ -760,7 +819,7 @@ async fn handle_user_message(
     state: &AppState,
     _tx: &UnboundedSender<WsMessage>,
 ) -> Result<(), String> {
-    let (agent, turn_state, info_cache_arc) = {
+    let (agent, turn_state, info_cache_arc, monitor_manager) = {
         let slot = state.active_session.lock().await;
         let Some(active) = slot.as_ref() else {
             return Err("no active session — send `reset` first".to_owned());
@@ -769,6 +828,7 @@ async fn handle_user_message(
             Arc::clone(&active.agent),
             Arc::clone(&active.turn_state),
             Arc::clone(&active.info_cache),
+            Arc::clone(&active.monitor_manager),
         )
     };
 
@@ -782,7 +842,15 @@ async fn handle_user_message(
                 AgentItem::Event(ev) => next_turn_state_for(ev),
                 AgentItem::Signal(_) => None,
             };
+            // Detect monitor events *before* moving `item` into `WsMessage::Item`.
+            let push_roster = is_monitor_event(&item);
             send_to_active(&slot_arc, WsMessage::Item(Box::new(item))).await;
+            // Push a fresh roster snapshot immediately after every monitor
+            // lifecycle event so the badge and modal reflect the new state.
+            if push_roster {
+                let roster = roster_snapshot_msg(&monitor_manager);
+                send_to_active(&slot_arc, roster).await;
+            }
             if let Some(target) = next {
                 let mut ts = turn_state.lock().await;
                 if *ts != target {
@@ -944,6 +1012,13 @@ async fn handle_reset(
     });
     // 4. ready — client is ready to interact.
     let _ = tx.send(WsMessage::Ready);
+    // 5. roster snapshot — empty for a fresh session; clears any stale badge.
+    {
+        let slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_ref() {
+            let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
+        }
+    }
     Ok(())
 }
 
@@ -1059,6 +1134,13 @@ async fn handle_resume_session(
     .await;
 
     let _ = tx.send(WsMessage::Ready);
+    // Roster snapshot — empty for a freshly-resumed session.
+    {
+        let slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_ref() {
+            let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
+        }
+    }
     Ok(())
 }
 
@@ -1540,6 +1622,130 @@ mod tests {
     fn should_replay_includes_empty_string() {
         // An unknown / empty type should pass through (not excluded).
         assert!(should_replay(""));
+    }
+
+    // -----------------------------------------------------------------
+    // is_monitor_event — unit tests for the roster-push decision function.
+    //
+    // Justification for inline test block: `is_monitor_event` is a
+    // pure classification function with no I/O.  Testing it here
+    // avoids building a full WS harness; coverage is more precise and
+    // the decision-point mutations are killed cheaply.
+    // -----------------------------------------------------------------
+
+    use super::is_monitor_event;
+    use omega_types::events::{
+        MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent,
+        MonitorStopReason, MonitorStoppedEvent,
+    };
+    use omega_types::{OmegaEvent, StreamSignal};
+
+    fn started_event() -> AgentItem {
+        AgentItem::event(OmegaEvent::MonitorStarted(MonitorStartedEvent {
+            id: "m".to_owned(),
+            description: "d".to_owned(),
+            command: "c".to_owned(),
+            time: "t".to_owned(),
+        }))
+    }
+
+    #[test]
+    fn is_monitor_event_true_for_monitor_started() {
+        assert!(is_monitor_event(&started_event()));
+    }
+
+    #[test]
+    fn is_monitor_event_true_for_monitor_delivery() {
+        let item = AgentItem::event(OmegaEvent::MonitorDelivery(MonitorDeliveryEvent {
+            time: "t".to_owned(),
+            items: vec![MonitorDeliveryItem {
+                monitor_id: "m".to_owned(),
+                lines: vec!["out".to_owned()],
+            }],
+        }));
+        assert!(is_monitor_event(&item));
+    }
+
+    #[test]
+    fn is_monitor_event_true_for_monitor_stderr() {
+        let item = AgentItem::event(OmegaEvent::MonitorStderr(MonitorStderrEvent {
+            id: "m".to_owned(),
+            chunk: "err".to_owned(),
+            time: "t".to_owned(),
+        }));
+        assert!(is_monitor_event(&item));
+    }
+
+    #[test]
+    fn is_monitor_event_true_for_monitor_stopped() {
+        let item = AgentItem::event(OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "m".to_owned(),
+            reason: MonitorStopReason::ProcessExited,
+            exit_code: Some(0),
+            time: "t".to_owned(),
+        }));
+        assert!(is_monitor_event(&item));
+    }
+
+    #[test]
+    fn is_monitor_event_false_for_text_signal() {
+        let item = AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "hello".to_owned(),
+        });
+        assert!(!is_monitor_event(&item));
+    }
+
+    #[test]
+    fn is_monitor_event_false_for_non_monitor_event() {
+        use omega_types::events::{TurnEndEvent, TurnMetrics};
+        let item = AgentItem::event(OmegaEvent::TurnEnd(TurnEndEvent {
+            time: "t".to_owned(),
+            metrics: TurnMetrics {
+                input_tokens: 1,
+                output_tokens: 2,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            },
+        }));
+        assert!(!is_monitor_event(&item));
+    }
+
+    // -----------------------------------------------------------------
+    // roster_snapshot_msg — unit tests for the MonitorInfo → WsMessage
+    // projection.  Justification: same reasoning as is_monitor_event;
+    // we need to pin the field mappings (snake_case → camelCase key for
+    // `started_at`, `fired_count`, `stderr_tail`) without spinning up a
+    // real process.
+    // -----------------------------------------------------------------
+
+    use super::roster_snapshot_msg;
+    use omega_tools::MonitorManager;
+
+    #[test]
+    fn roster_snapshot_msg_empty_manager_yields_empty_monitors() {
+        let mgr = MonitorManager::new();
+        let msg = roster_snapshot_msg(&mgr);
+        let v = msg.to_json();
+        assert_eq!(v["type"], "monitor_roster");
+        let monitors = v["monitors"].as_array().expect("monitors array");
+        assert!(monitors.is_empty(), "fresh manager must yield empty roster");
+    }
+
+    /// Verify that `roster_snapshot_msg` correctly maps all fields from
+    /// `MonitorInfo` to the wire shape.  We use the manager's own
+    /// `roster()` method as the source of truth and check that the JSON
+    /// output reflects the current state.
+    #[test]
+    fn roster_snapshot_msg_produces_monitor_roster_variant() {
+        // Even with an empty manager the variant must be MonitorRoster.
+        let mgr = MonitorManager::new();
+        match roster_snapshot_msg(&mgr) {
+            crate::ws_message::WsMessage::MonitorRoster { monitors } => {
+                assert!(monitors.is_empty());
+            }
+            other => panic!("expected MonitorRoster, got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------

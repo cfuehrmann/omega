@@ -1516,6 +1516,7 @@ dependencies = [
  "omega-core",
  "omega-store",
  "omega-test-fixtures",
+ "omega-tools",
  "omega-types",
  "regex",
  "reqwest",

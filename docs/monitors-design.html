@@ -482,9 +482,9 @@ const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows
   <tr><td><strong>Persistence</strong></td>
     <td><code>events.jsonl</code> = <em>all</em> events. <code>context.jsonl</code> = <em>derived projection</em>: a <strong>per-record</strong> log (each record keyed by its own <code>ContextHash</code>) that <strong>excludes</strong> <code>MonitorStderr</code>. (<code>events.jsonl</code> ⊋ <code>context.jsonl</code>.) The <strong>merge of consecutive <code>user</code>-role records into one API message is a separate request-assembly step</strong> — <code>project_messages()</code> in <small class="path">crates/omega-agent/src/agent.rs</small>, applied when the <code>LlmRequest</code> is built, not when <code>context.jsonl</code> is written. (Anthropic combines consecutive same-role messages server-side anyway; doing it client-side just makes the local view match.) The per-record log is left un-merged so the <code>ContextHash</code> foreign keys stay stable.</td></tr>
   <tr><td><strong><code>WsMessage</code></strong> (ephemeral; may carry extra fields)</td>
-    <td>Live roster (per-monitor status, start time, runtime, event-fired count, stderr tail); pending-queue contents tagged by source; UI→server <code>KillMonitor(id)</code> control frame.</td></tr>
+    <td><p><strong>Phase&nbsp;3 (done):</strong> <code>WsMessage::MonitorRoster { monitors: Vec&lt;MonitorRosterItem&gt; }</code> &mdash; a transport-only projection of <code>MonitorManager::roster()</code>. <strong>NOT an <code>OmegaEvent</code></strong>; never written to <code>events.jsonl</code>. Pushed (a)&nbsp;on client connect/reconnect when a session is active, (b)&nbsp;after reset, (c)&nbsp;after resume, (d)&nbsp;right after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event is forwarded in the streaming task (seam-aligned updates, not per-line streaming). Wire shape: <code>{ type: &ldquo;monitor_roster&rdquo;, monitors: [ { id, description, command, status: &ldquo;running&rdquo;|&ldquo;stopped&rdquo;, startedAt, firedCount, stderrTail: string[] } ] }</code>.</p><p><strong>Deferred:</strong> pending-queue contents tagged by source; UI&rarr;server <code>KillMonitor(id)</code> control frame.</p></td></tr>
   <tr><td><strong>UI</strong></td>
-    <td>Collapsed badge (active count + activity) → modal (roster); pending-queue visualization; later: per-monitor detail + kill button.</td></tr>
+    <td><p><strong>Phase&nbsp;3 (done):</strong> Badge hidden when roster empty; shows <code>N running</code> + <code>M fired</code> (total <code>fired_count</code> across all monitors); click opens modal with roster table (id, description, command, status chip, started_at, fired_count, stderr tail &le;20 lines). Components: <code>MonitorsBadge</code> / <code>MonitorsModal</code> (<small class="path">frontends/leptos/src/monitors_panel.rs</small>); <code>roster</code> signal in <code>SessionStore</code> updated by the new WS message; reset on <code>ResetDone</code>.</p><p><strong>Deferred (next session):</strong> Kill button, pending-queue visualization, real-time per-line badge updates. See &sect;11 Phase 3 for deferred implementation notes.</p></td></tr>
 </table>
 
 <h2 id="schema">8. Proposed event schema (sketch — finalize in events.rs first)</h2>
@@ -511,12 +511,20 @@ MonitorStopped { id, reason, exit_code, time }
 </ul>
 
 <h2 id="ui">9. UI design</h2>
+<div class="box ok"><strong>Phase 3 &mdash; read-only roster surface implemented. Server-authoritative push.</strong></div>
 <ul>
-  <li><strong>Collapsed badge</strong> — shows the active-monitor count. First enhancement: events-fired / recent activity (so a single spewing monitor is visible at a glance). This <em>is</em> the runaway backstop.</li>
-  <li><strong>Modal</strong> — roster of active monitors. Later: per-monitor start time, run time, events fired, stderr tail.</li>
-  <li><strong>Pending-queue visualization</strong> — what the agent will see at the next seam, each item tagged human / monitor-id.</li>
-  <li><strong>Kill button</strong> (longer-term) — per-monitor kill. Killing = terminate process tree immediately (server-side, urgent) + enqueue a <code>MonitorStopped(UserKilled)</code> notice drained at the next seam (no preempt). If the agent was parked on the last live monitor, the kill must <em>wake</em> the park (roster-changed wake reason) so the loop re-evaluates/terminates rather than hangs.</li>
+  <li><strong>Collapsed badge</strong> (<strong>done</strong>) &mdash; hidden when roster is empty; shows active-monitor count (<code>N running</code>) + total events-fired count (<code>M fired</code>), so a single spewing monitor is visible at a glance (the runaway backstop). Click opens the modal. Implemented in <code>MonitorsBadge</code> (<small class="path">frontends/leptos/src/monitors_panel.rs</small>).</li>
+  <li><strong>Modal</strong> (<strong>done</strong>) &mdash; roster table showing, for each monitor: id, description, command, status chip (running/stopped), started_at, fired_count, and a scrollable stderr tail (&le;20 lines). Closes on click-outside or the &times; button. Implemented in <code>MonitorsModal</code>.</li>
+  <li><strong>Server-authoritative push</strong> (<strong>done</strong>) &mdash; the server pushes a fresh roster snapshot (<code>WsMessage::MonitorRoster</code>) on client connect (when a session is active), after reset, after resume, and right after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event is forwarded. The frontend stores it in a <code>roster: RwSignal&lt;Vec&lt;MonitorRosterEntry&gt;&gt;</code> in <code>SessionStore</code>, reset on <code>ResetDone</code>. No client polling; no separate query endpoint.</li>
 </ul>
+<div class="box warn">
+  <h4>Deferred to the next session &mdash; do NOT implement in Phase 3</h4>
+  <ul>
+    <li><strong>Kill button / <code>KillMonitor</code> control frame.</strong> When picked up it needs: a new <code>MonitorManager</code> method that does the Running&rarr;Stopped status CAS, kills the process tree, enqueues a <code>PendingItem::Stopped{ reason: UserKilled, &hellip; }</code> (so the loop drains it into <code>MonitorStopped(UserKilled)</code> &mdash; single-writer preserved), and fires the roster-changed notify (so a loop parked on the last monitor wakes). Note <code>MonitorStopReason::UserKilled</code> exists in the schema but is currently unused. A <code>ClientFrame::KillMonitor{id}</code> would dispatch to it (mirror <code>handle_abort</code>).</li>
+    <li><strong>Live pending-queue visualization</strong> (sub-seam state; would need per-enqueue streaming).</li>
+    <li><strong>Real-time (per-line) badge updates</strong> &mdash; seam-aligned updates are sufficient now.</li>
+  </ul>
+</div>
 
 <h2 id="lifecycle">10. Lifecycle, shutdown, resume, headless</h2>
 <ul>
@@ -592,9 +600,9 @@ MonitorStopped { id, reason, exit_code, time }
     <code>ControlHandle</code> (continue = interjection, abort = terminate). Routing
     free-typed input through the queue and surfacing the parked state in the UI is folded
     into Phase 3; the three logical wake sources all exist today.</li>
-  <li><strong>Phase 3 — WS + UI.</strong> Push ephemeral roster + pending-queue over WS;
-    <code>KillMonitor</code> control frame. Badge + modal + queue visualization. Later:
-    per-monitor detail + kill button.</li>
+  <li><strong>Phase 3 &mdash; WS + UI. <span class="keep">&#x2714; DONE</span> (read-only roster surface).</strong>
+    <p><strong>Scope:</strong> server-authoritative ephemeral roster push. <code>WsMessage::MonitorRoster</code> variant added to the transport layer (never an <code>OmegaEvent</code>; never persisted to <code>events.jsonl</code>). The server stashes <code>Arc&lt;MonitorManager&gt;</code> in <code>ActiveSession</code> and pushes a fresh snapshot (a)&nbsp;on client connect/reconnect, (b)&nbsp;after reset/resume, and (c)&nbsp;after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event in the streaming task. Frontend: <code>roster: RwSignal</code> in <code>SessionStore</code>; <code>MonitorsBadge</code> (header badge, hidden when empty, shows running count + total fired count) + <code>MonitorsModal</code> (roster table with all fields) in <small class="path">frontends/leptos/src/monitors_panel.rs</small>. Tests: WS-level tests (roster sent on connect-with-session; roster not in events.jsonl), unit tests for <code>is_monitor_event</code> and <code>roster_snapshot_msg</code>, snapshot tests for badge/modal. Mutation recipes: <code>mutants-monitor-roster-push</code> (3 mutants, 2 caught, 1 unviable), <code>mutants-monitor-ws-message</code> (0 mutants &mdash; <code>serde_json::json!</code> macros are not mutated; wire-format covered by unit tests that snapshot the exact JSON output).</p>
+    <p><strong>Deferred (see &sect;9):</strong> Kill button / <code>KillMonitor</code> control frame; live pending-queue visualization; real-time per-line badge updates.</p></li>
   <li><strong>Phase 4 — Shutdown / resume / headless.</strong> Clean shutdown kills + logs
     <code>MonitorStopped</code>. Verify resume does not revive monitors. Headless relies on
     session end + external time limit.</li>

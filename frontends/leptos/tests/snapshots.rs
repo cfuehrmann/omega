@@ -39,8 +39,10 @@ use omega_types::events::{
 use omega_types::ids::{Origin, SessionId};
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
+use omega_web::monitors_panel::{MonitorsBadge, MonitorsModal, MonitorsPanelOpen};
 use omega_web::picker::PickerOpen;
-use omega_web::protocol::{SessionInfoPayload, TurnState};
+use omega_web::protocol::{MonitorRosterEntry, SessionInfoPayload, TurnState};
+use omega_web::store::SessionStore;
 use omega_web::text_modal::TextModalState;
 use omega_web::usage_panel::UsagePanelOpen;
 
@@ -963,6 +965,155 @@ mod tool_picker_states {
             install_picker_context(sel);
             view! { <ToolSelectionPanel /> }
         });
+        insta::assert_snapshot!(html);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MonitorsBadge + MonitorsModal
+// ---------------------------------------------------------------------------
+//
+// Coverage:
+//   - Badge hidden when roster is empty.
+//   - Badge visible with running count when monitors exist.
+//   - Badge shows fired-count span when total_fired > 0.
+//   - Modal closed (empty output).
+//   - Modal open with a running monitor row.
+//   - Modal open with a stopped monitor row (no stderr).
+
+mod monitors_panel_snapshots {
+    use super::*;
+
+    fn entry(id: &str, status: &str, fired: u64, stderr: &[&str]) -> MonitorRosterEntry {
+        MonitorRosterEntry {
+            id: id.into(),
+            description: format!("desc-{id}"),
+            command: format!("cmd {id}"),
+            status: status.into(),
+            started_at: "2025-01-01T00:00:00Z".into(),
+            fired_count: fired,
+            stderr_tail: stderr.iter().map(|s| (*s).into()).collect(),
+        }
+    }
+
+    /// Install the contexts that `MonitorsBadge` and `MonitorsModal` require.
+    /// Returns the `MonitorsPanelOpen` so tests can toggle the modal.
+    fn install_monitors_context(roster: Vec<MonitorRosterEntry>) -> MonitorsPanelOpen {
+        let store = SessionStore::new();
+        store.roster.set(roster);
+        provide_context(store);
+        let panel = MonitorsPanelOpen::new();
+        provide_context(panel);
+        panel
+    }
+
+    // ── Badge ────────────────────────────────────────────────────────────
+
+    /// Empty roster — the outer `<Show when=has_any>` must suppress the
+    /// entire badge (no button, no modal).
+    #[test]
+    fn snap_monitors_badge_hidden_when_empty() {
+        let html = render(|| {
+            install_monitors_context(vec![]);
+            view! { <MonitorsBadge /> }
+        });
+        assert!(
+            !html.contains("data-testid=\"monitors-badge\""),
+            "badge must be absent when roster is empty; got: {html}"
+        );
+        insta::assert_snapshot!(html);
+    }
+
+    /// One running monitor, no events fired yet — badge present, no
+    /// fired-count span.
+    #[test]
+    fn snap_monitors_badge_one_running_no_fired() {
+        let html = render(|| {
+            install_monitors_context(vec![entry("m1", "running", 0, &[])]);
+            view! { <MonitorsBadge /> }
+        });
+        assert!(
+            html.contains("data-testid=\"monitors-badge\""),
+            "badge must be visible when monitors exist; got: {html}"
+        );
+        assert!(
+            !html.contains("data-testid=\"monitors-badge-fired\""),
+            "fired span must be absent when total_fired == 0; got: {html}"
+        );
+        insta::assert_snapshot!(html);
+    }
+
+    /// Mixed roster (one running, one stopped) with total fired events
+    /// — badge present, fired-count span visible.
+    #[test]
+    fn snap_monitors_badge_mixed_with_fired() {
+        let html = render(|| {
+            install_monitors_context(vec![
+                entry("m1", "running", 5, &[]),
+                entry("m2", "stopped", 3, &[]),
+            ]);
+            view! { <MonitorsBadge /> }
+        });
+        assert!(
+            html.contains("data-testid=\"monitors-badge-fired\""),
+            "fired span must be present when total_fired > 0; got: {html}"
+        );
+        insta::assert_snapshot!(html);
+    }
+
+    // ── Modal ────────────────────────────────────────────────────────────
+
+    /// Modal closed (default) — `<Show when=is_open>` must emit nothing.
+    #[test]
+    fn snap_monitors_modal_closed() {
+        let html = render(|| {
+            install_monitors_context(vec![entry("m1", "running", 1, &[])]);
+            // Panel stays closed (is_open() == false by default).
+            view! { <MonitorsModal /> }
+        });
+        assert!(
+            !html.contains("data-testid=\"monitors-modal\""),
+            "modal DOM must be absent when closed; got: {html}"
+        );
+        insta::assert_snapshot!(html);
+    }
+
+    /// Modal open with a running monitor that has stderr output.
+    #[test]
+    fn snap_monitors_modal_running_with_stderr() {
+        let html = render(|| {
+            let panel = install_monitors_context(vec![entry(
+                "m1",
+                "running",
+                7,
+                &["stderr line 1", "stderr line 2"],
+            )]);
+            panel.0.set(true); // open the modal
+            view! { <MonitorsModal /> }
+        });
+        assert!(
+            html.contains("data-testid=\"monitors-modal\""),
+            "modal DOM must be present when open; got: {html}"
+        );
+        assert!(
+            html.contains("data-testid=\"monitors-row\""),
+            "roster row must be present; got: {html}"
+        );
+        insta::assert_snapshot!(html);
+    }
+
+    /// Modal open with a stopped monitor and no stderr.
+    #[test]
+    fn snap_monitors_modal_stopped_no_stderr() {
+        let html = render(|| {
+            let panel = install_monitors_context(vec![entry("m2", "stopped", 0, &[])]);
+            panel.0.set(true);
+            view! { <MonitorsModal /> }
+        });
+        assert!(
+            html.contains("data-testid=\"monitors-row\""),
+            "roster row must be present; got: {html}"
+        );
         insta::assert_snapshot!(html);
     }
 }

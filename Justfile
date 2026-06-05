@@ -395,6 +395,29 @@ mutants-python-repl-23:
     mkdir -p {{mutants-tmp}}
     cd frontends/leptos && TMPDIR={{justfile_directory()}}/{{mutants-tmp}}         cargo mutants --cap-lints=true         --file "src/event_view.rs"
 
+# Phase 3 (UI: roster badge + modal) — is_monitor_event and roster_snapshot_msg
+# in router.rs.  These are the two non-trivial decision functions that govern
+# (a) WHICH events trigger a follow-up roster push, and (b) HOW MonitorInfo is
+# projected into the MonitorRosterItem wire format.  All mutations must be
+# caught or unviable; the connect-time and per-event WS tests + router.rs unit
+# tests provide coverage.
+mutants-monitor-roster-push:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+        --file "crates/omega-server/src/router.rs" --re 'is_monitor_event|roster_snapshot_msg'
+
+# Phase 3 (UI: roster badge + modal) — MonitorRoster serialisation in
+# ws_message.rs.  NOTE: cargo-mutants finds 0 mutants here because
+# serde_json::json!{...} is a macro call, not a regular function body.
+# Coverage is provided instead by the ws_message unit tests that snapshot
+# the exact JSON output (type field, monitors array, every item field);
+# any change to the wire format immediately breaks those tests.
+# This recipe is kept as documentation of the decision.
+mutants-monitor-ws-message:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+        --file "crates/omega-server/src/ws_message.rs" --re 'MonitorRoster|monitor_roster'
+
 # Phase 2.3 — feed.rs: ToolUseBlock dispatch (timeout chip + expansion body).
 # Scoped to the ToolUseBlock-related logic via --regex to keep runtime
 # manageable.  feed.rs is otherwise mostly JS-interop glue exempt from

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use omega_agent::{Agent, ControlHandle};
 use omega_store::SessionPaths;
+use omega_tools::MonitorManager;
 use omega_types::FeatureFlags;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
@@ -82,4 +83,10 @@ pub struct ActiveSession {
     /// future branching code can check `active_session.features.repl` etc.
     /// directly.
     pub features: FeatureFlags,
+    /// Live monitor roster manager.  Stashed here so the WebSocket handler
+    /// can push ephemeral [`WsMessage::MonitorRoster`] snapshots on client
+    /// connect and after each monitor lifecycle event (Phase 3 badge/modal).
+    /// The manager is the same `Arc` the agent holds, so reads reflect the
+    /// latest state without any extra synchronisation.
+    pub monitor_manager: Arc<MonitorManager>,
 }

@@ -38,6 +38,7 @@ pub mod event_view;
 pub mod feed;
 pub mod http;
 pub mod markdown;
+pub mod monitors_panel;
 pub mod picker;
 pub mod protocol;
 pub mod sessions;
@@ -52,6 +53,7 @@ use crate::composer::Composer;
 use crate::context_modal::{ContextModal, ContextModalState};
 use crate::dirty_modal::DirtyModal;
 use crate::feed::ConversationFeed;
+use crate::monitors_panel::{MonitorsBadge, MonitorsPanelOpen};
 use crate::picker::{PickerOpen, SessionPicker};
 use crate::protocol::TurnState;
 use crate::sessions::SessionListStore;
@@ -77,12 +79,14 @@ pub fn App() -> impl IntoView {
     let text_modal_state = TextModalState::new();
     let picker_open = PickerOpen::new();
     let usage_panel_open = UsagePanelOpen::new();
+    let monitors_panel_open = MonitorsPanelOpen::new();
     provide_context(store);
     provide_context(list_store);
     provide_context(modal_state);
     provide_context(text_modal_state);
     provide_context(picker_open);
     provide_context(usage_panel_open);
+    provide_context(monitors_panel_open);
 
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {
@@ -139,6 +143,7 @@ pub fn App() -> impl IntoView {
             <SessionPicker />
             <ConversationFeed />
             <UsagePanel />
+            <MonitorsBadge />
             <Show when=move || session_has_loaded(store.session_info.with(Option::is_some)) fallback=|| ()>
                 <Composer />
             </Show>

@@ -21,6 +21,26 @@ use omega_core::AgentItem;
 use omega_types::FeatureFlags;
 use omega_types::ids::LoggedEvent;
 
+/// One entry in an ephemeral roster snapshot.
+/// Transport-only projection — never written to `events.jsonl`.
+#[derive(Debug, Clone)]
+pub struct MonitorRosterItem {
+    /// Stable per-session monitor id.
+    pub id: String,
+    /// Human description supplied to `monitor()`.
+    pub description: String,
+    /// The shell command being run.
+    pub command: String,
+    /// `"running"` or `"stopped"`.
+    pub status: String,
+    /// RFC 3339 start timestamp.
+    pub started_at: String,
+    /// Number of stdout lines delivered to the queue so far.
+    pub fired_count: u64,
+    /// Up to 20 most recent stderr lines.
+    pub stderr_tail: Vec<String>,
+}
+
 /// One WebSocket frame the server can emit.
 ///
 /// Constructed by the request handler, sent through the per-connection
@@ -94,6 +114,18 @@ pub enum WsMessage {
     ///
     /// Mirrors the CLI's deny-by-default `--allow-dirty` semantics.
     PendingChangesWarning { intent: PendingChangesIntent },
+
+    /// Ephemeral roster snapshot — pushed on client connect and after
+    /// each monitor lifecycle event (Started/Delivery/Stderr/Stopped).
+    ///
+    /// **NOT** persisted to `events.jsonl`; this is a transport-only
+    /// projection of [`omega_tools::MonitorManager::roster()`].  The
+    /// client stores the latest snapshot in a reactive signal; the
+    /// badge and modal read from it.
+    MonitorRoster {
+        /// All monitors registered in the current session, in insertion order.
+        monitors: Vec<MonitorRosterItem>,
+    },
 }
 
 /// What the operator was about to do when the dirty-tree gate fired.
@@ -211,6 +243,26 @@ impl WsMessage {
                 "type": "pending_changes_warning",
                 "intent": intent.to_json(),
             }),
+            Self::MonitorRoster { monitors } => {
+                let items: Vec<serde_json::Value> = monitors
+                    .iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "id": m.id,
+                            "description": m.description,
+                            "command": m.command,
+                            "status": m.status,
+                            "startedAt": m.started_at,
+                            "firedCount": m.fired_count,
+                            "stderrTail": m.stderr_tail,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "type": "monitor_roster",
+                    "monitors": items,
+                })
+            }
         }
     }
 
@@ -571,6 +623,107 @@ mod tests {
             obj.get("effort").is_none() || obj["effort"].is_null(),
             "effort must be absent when None"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // MonitorRoster — pin the ephemeral roster snapshot wire shape.
+    // These tests are unit-level because: (1) the wire shape must be pinned
+    // precisely (camelCase keys, exact nesting), (2) integration tests in
+    // tests/ws.rs assert on message *type* but not on every field, and
+    // (3) no process spawning is needed to construct a `MonitorRosterItem`.
+    // -----------------------------------------------------------------------
+
+    use super::MonitorRosterItem;
+
+    fn sample_roster_item(status: &str) -> MonitorRosterItem {
+        MonitorRosterItem {
+            id: "mon-1".to_owned(),
+            description: "check health".to_owned(),
+            command: "curl http://localhost/health".to_owned(),
+            status: status.to_owned(),
+            started_at: "2024-01-01T00:00:00.000Z".to_owned(),
+            fired_count: 42,
+            stderr_tail: vec!["err line 1".to_owned(), "err line 2".to_owned()],
+        }
+    }
+
+    #[test]
+    fn monitor_roster_empty_serialises_with_type_and_empty_array() {
+        let v = WsMessage::MonitorRoster { monitors: vec![] }.to_json();
+        assert_eq!(v["type"], "monitor_roster");
+        assert_eq!(
+            v["monitors"],
+            serde_json::json!([]),
+            "empty monitors array must serialise as []"
+        );
+        assert_eq!(v.as_object().unwrap().len(), 2, "only type + monitors");
+    }
+
+    #[test]
+    fn monitor_roster_item_fields_use_camel_case_keys() {
+        let item = sample_roster_item("running");
+        let v = WsMessage::MonitorRoster {
+            monitors: vec![item],
+        }
+        .to_json();
+        let entry = &v["monitors"][0];
+        assert_eq!(entry["id"], "mon-1");
+        assert_eq!(entry["description"], "check health");
+        assert_eq!(entry["command"], "curl http://localhost/health");
+        assert_eq!(entry["status"], "running");
+        assert_eq!(entry["startedAt"], "2024-01-01T00:00:00.000Z");
+        assert_eq!(entry["firedCount"], 42);
+        assert_eq!(
+            entry["stderrTail"],
+            serde_json::json!(["err line 1", "err line 2"])
+        );
+        // Ensure snake_case keys do NOT appear.
+        let obj = entry.as_object().unwrap();
+        for forbidden in &["started_at", "fired_count", "stderr_tail"] {
+            assert!(
+                !obj.contains_key(*forbidden),
+                "snake_case key '{forbidden}' must not appear on the wire"
+            );
+        }
+    }
+
+    #[test]
+    fn monitor_roster_stopped_status_preserved_verbatim() {
+        let v = WsMessage::MonitorRoster {
+            monitors: vec![sample_roster_item("stopped")],
+        }
+        .to_json();
+        assert_eq!(v["monitors"][0]["status"], "stopped");
+    }
+
+    #[test]
+    fn monitor_roster_multiple_items_preserves_insertion_order() {
+        let items = vec![
+            sample_roster_item("running"),
+            MonitorRosterItem {
+                id: "mon-2".to_owned(),
+                description: "second".to_owned(),
+                command: "sleep 1".to_owned(),
+                status: "stopped".to_owned(),
+                started_at: "2024-01-01T00:01:00.000Z".to_owned(),
+                fired_count: 0,
+                stderr_tail: vec![],
+            },
+        ];
+        let v = WsMessage::MonitorRoster { monitors: items }.to_json();
+        let arr = v["monitors"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], "mon-1");
+        assert_eq!(arr[1]["id"], "mon-2");
+    }
+
+    #[test]
+    fn monitor_roster_to_text_round_trips_through_json() {
+        let m = WsMessage::MonitorRoster {
+            monitors: vec![sample_roster_item("running")],
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&m.to_text()).unwrap();
+        assert_eq!(parsed, m.to_json());
     }
 
     #[test]
