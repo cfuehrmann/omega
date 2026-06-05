@@ -187,6 +187,27 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   tool description and teaching copy must (1) state monitor output is not the human, (2) forbid
   fabricating/guessing output, (3) tell the model to end its turn and wait, and (4) carry coverage +
   minimal script guidance. See &sect;13 for the open item.</p>
+
+  <p><strong>Two further findings</strong> (first-party: npm
+  <code>@anthropic-ai/claude-code</code> v2.1.165 type defs
+  <code>sdk-tools.d.ts</code>, obtained via <code>npm pack</code> &mdash; download
+  only, no install/run):</p>
+  <ul>
+    <li><strong>The tool <em>result</em> (what <code>monitor()</code> returns)
+      should be minimal.</strong> Claude's <code>MonitorOutput</code> is bare
+      structured data (<code>{ taskId, timeoutMs, persistent }</code>) &mdash; no
+      prose. Omega's result is a sentence ending &ldquo;Stop it with stop_monitor
+      when no longer needed,&rdquo; which is the exact cue that tips Sonnet into
+      stopping a monitor immediately (Opus reasons past it). <strong>Fix: strip
+      Omega's monitor tool-result to neutral data; keep all behavioural guidance
+      in the tool description.</strong></li>
+    <li><strong>Claude has no system-prompt section for monitors.</strong> All
+      guidance lives in the tool description; there is no
+      <code>monitor_addendum</code> analogue in Claude's system prompt. Omega
+      duplicates (rich tool description <em>and</em> a tool-gated system-prompt
+      addendum). Candidate for consolidation &mdash; observe whether the addendum
+      earns its keep once the tool description carries the load.</li>
+  </ul>
 </div>
 
 <h2 id="seams">3. The seam rules (Anthropic Messages API — correctness, not opinion)</h2>
@@ -743,6 +764,16 @@ MonitorStopped { id, reason, exit_code, time }
 
 <h2 id="open">13. Open items (deferred, non-blocking)</h2>
 <ul>
+<li><strong>One-shot vs streaming split (deferred design discussion).</strong>
+  Claude routes &ldquo;notify me once&rdquo; (e.g. <code>sleep 20 &amp;&amp; echo
+  done</code> &mdash; a single completion) to <code>Bash run_in_background</code>,
+  and reserves the <em>Monitor</em> tool for per-occurrence streaming
+  (<code>tail -f</code>, watchers). Omega collapses both into one
+  <code>monitor</code> tool, so our <code>sleep&hellip;echo</code> test case is a
+  one-shot Claude would <em>not</em> run via Monitor. Revisit whether Omega should
+  split the two, plus Claude's default <code>timeout_ms</code> (5&nbsp;min) +
+  <code>persistent</code> opt-out (ties to &sect;5's dropped timeout/auto-stop
+  rails). Not now &mdash; observe first.</li>
   <li><strong>NUDGING REVAMP (implemented).</strong>
     Real sessions showed the model mis-attributing monitor output to the human and fabricating
     output (&sect;2 note). Implemented in Omega's own wording:
