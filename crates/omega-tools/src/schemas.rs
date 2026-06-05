@@ -7,106 +7,13 @@
 use omega_core::ToolDefinition;
 use serde_json::{Value, json};
 
-/// The default toolset — twelve tools, no `python_repl`.
-///
-/// Used when [`AgentConfig::tool_selection`] is `None`.  Order is canonical
-/// and matches the order `tool_definitions` emits.
-///
-/// [`AgentConfig::tool_selection`]: ../../omega_agent/struct.AgentConfig.html#structfield.tool_selection
-pub const DEFAULT_TOOL_NAMES: &[&str] = &[
-    "read_file",
-    "write_file",
-    "run_command",
-    "edit_file",
-    "list_files",
-    "web_search",
-    "fetch_url",
-    "grep_files",
-    "find_files",
-    "run_background",
-    "wait_for_output",
-    "write_stdin",
-];
-
-/// Every tool Omega knows how to expose, in canonical order.
-///
-/// `python_repl`, `monitor`, and `stop_monitor` are in `ALL_TOOL_NAMES` but
-/// not in [`DEFAULT_TOOL_NAMES`] — each must be requested explicitly via
-/// `AgentConfig::tool_selection` (the `all` preset includes them).  The two
-/// monitor tools are opt-in together (clean cutover, §5 teaching-copy
-/// prerequisite): a session is either monitor-unaware or fully monitor-wired.
-///
-/// Names not present in this list are rejected by the agent at session
-/// creation time.
-pub const ALL_TOOL_NAMES: &[&str] = &[
-    "read_file",
-    "write_file",
-    "run_command",
-    "edit_file",
-    "list_files",
-    "web_search",
-    "fetch_url",
-    "grep_files",
-    "find_files",
-    "run_background",
-    "wait_for_output",
-    "write_stdin",
-    "python_repl",
-    "monitor",
-    "stop_monitor",
-];
-
-/// Tools in the REPL-centric preset: Python REPL plus web tools.  Everything
-/// else (file I/O, subprocess work) is done inside the REPL.
-const REPL_CENTRIC_TOOLS: &[&str] = &["python_repl", "web_search", "fetch_url"];
-
-/// A named tool-selection preset.
-///
-/// Single source of truth for the CLI (`omega run --preset <id>`) and the UI
-/// tool-picker chips (label + description).  Adding a new preset requires
-/// extending only [`PRESETS`] — both surfaces pick it up automatically.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Preset {
-    /// CLI identifier (kebab-case, lowercase).  Stable wire value.
-    pub id: &'static str,
-    /// UI chip label.  May contain Unicode and punctuation.
-    pub label: &'static str,
-    /// Tools enabled by this preset, in canonical order.
-    pub tools: &'static [&'static str],
-    /// Short description — used in `--help` and (later) UI tooltips.
-    pub description: &'static str,
-}
-
-/// All known presets, in display order.  See [`Preset`].
-///
-/// Order is the order the UI shows preset chips and the CLI lists
-/// `--preset` choices in `--help`.
-pub const PRESETS: &[Preset] = &[
-    Preset {
-        id: "standard",
-        label: "Standard",
-        tools: DEFAULT_TOOL_NAMES,
-        description: "12 tools — file ops, shell, web (no Python REPL)",
-    },
-    Preset {
-        id: "all",
-        label: "+ Python REPL & monitors",
-        tools: ALL_TOOL_NAMES,
-        description: "All 15 tools — standard plus python_repl and async monitors",
-    },
-    Preset {
-        id: "repl-centric",
-        label: "REPL-centric",
-        tools: REPL_CENTRIC_TOOLS,
-        description: "Python REPL plus web tools; everything else inside the REPL",
-    },
-];
-
-/// Look up a preset by its CLI id.  Returns `None` for unknown ids.
-#[must_use]
-pub fn preset_by_id(id: &str) -> Option<&'static Preset> {
-    PRESETS.iter().find(|p| p.id == id)
-}
+// Re-export the canonical tool-name constants, Preset registry, and
+// preset_by_id from omega-types so existing call sites
+// (`omega_tools::DEFAULT_TOOL_NAMES`, `::ALL_TOOL_NAMES`, `::PRESETS`,
+// `::preset_by_id`, `::Preset`) keep compiling without change.
+// The actual data now lives in `omega-types::tools` — the single source
+// of truth shared with the wasm-only frontend.
+pub use omega_types::tools::{ALL_TOOL_NAMES, DEFAULT_TOOL_NAMES, PRESETS, Preset, preset_by_id};
 
 /// Build the tool definitions exposed to the LLM for this session.
 ///
@@ -617,43 +524,8 @@ mod tests {
         sel(&["web_search", "fetch_url", "python_repl"])
     }
 
-    #[test]
-    fn default_tool_names_are_twelve_in_canonical_order() {
-        assert_eq!(DEFAULT_TOOL_NAMES.len(), 12);
-        assert_eq!(
-            DEFAULT_TOOL_NAMES,
-            &[
-                "read_file",
-                "write_file",
-                "run_command",
-                "edit_file",
-                "list_files",
-                "web_search",
-                "fetch_url",
-                "grep_files",
-                "find_files",
-                "run_background",
-                "wait_for_output",
-                "write_stdin",
-            ]
-        );
-    }
-
-    #[test]
-    fn all_tool_names_is_default_plus_repl_and_monitors() {
-        // ALL = 12 defaults + python_repl + monitor + stop_monitor.
-        assert_eq!(ALL_TOOL_NAMES.len(), DEFAULT_TOOL_NAMES.len() + 3);
-        assert_eq!(ALL_TOOL_NAMES[DEFAULT_TOOL_NAMES.len()], "python_repl");
-        assert_eq!(*ALL_TOOL_NAMES.last().unwrap(), "stop_monitor");
-        assert_eq!(ALL_TOOL_NAMES[DEFAULT_TOOL_NAMES.len() + 1], "monitor");
-        // Defaults appear in `ALL` in the same order.
-        for (i, name) in DEFAULT_TOOL_NAMES.iter().enumerate() {
-            assert_eq!(ALL_TOOL_NAMES[i], *name);
-        }
-        // The monitor tools are opt-in: absent from the default set.
-        assert!(!DEFAULT_TOOL_NAMES.contains(&"monitor"));
-        assert!(!DEFAULT_TOOL_NAMES.contains(&"stop_monitor"));
-    }
+    // Constants / preset data tests moved to omega-types::tools (the single
+    // source of truth).  Only tool_definitions()-level tests live here.
 
     #[test]
     fn monitor_tools_are_selectable_via_tool_definitions() {
@@ -665,13 +537,14 @@ mod tests {
     }
 
     #[test]
-    fn default_selection_excludes_monitor_tools() {
+    fn default_selection_includes_monitor_tools() {
+        // monitors are now in DEFAULT_TOOL_NAMES (promoted from opt-in).
         let names: Vec<String> = tool_definitions(&sel_default())
             .into_iter()
             .map(|d| d.name)
             .collect();
-        assert!(!names.contains(&"monitor".to_owned()));
-        assert!(!names.contains(&"stop_monitor".to_owned()));
+        assert!(names.contains(&"monitor".to_owned()));
+        assert!(names.contains(&"stop_monitor".to_owned()));
     }
 
     #[test]
@@ -680,16 +553,17 @@ mod tests {
     }
 
     #[test]
-    fn twelve_tools_for_default_selection() {
+    fn fourteen_tools_for_default_selection() {
         let names: Vec<String> = tool_definitions(&sel_default())
             .into_iter()
             .map(|d| d.name)
             .collect();
         assert_eq!(names, sel_default());
+        assert_eq!(names.len(), 14);
     }
 
     #[test]
-    fn thirteen_tools_for_default_plus_python_repl() {
+    fn fifteen_tools_for_default_plus_python_repl() {
         let names: Vec<String> = tool_definitions(&sel_default_plus_repl())
             .into_iter()
             .map(|d| d.name)
@@ -697,6 +571,7 @@ mod tests {
         let mut expected = sel_default();
         expected.push("python_repl".into());
         assert_eq!(names, expected);
+        assert_eq!(names.len(), 15);
     }
 
     #[test]
@@ -950,71 +825,6 @@ mod tests {
         assert!(def.description.contains("2000") || def.description.contains("50"));
     }
 
-    // ---------------------------------------------------------------
-    // Presets
-    // ---------------------------------------------------------------
-
-    /// Kills: `replace PRESETS with &[]` (every lookup goes away).
-    #[test]
-    fn presets_has_three_entries_in_display_order() {
-        let ids: Vec<&str> = PRESETS.iter().map(|p| p.id).collect();
-        assert_eq!(ids, vec!["standard", "all", "repl-centric"]);
-    }
-
-    /// Kills: `replace PRESETS[0].tools with DEFAULT_TOOL_NAMES` mutated to
-    /// anything else — `standard` MUST be the 12-tool default set verbatim,
-    /// otherwise omitting `--preset` and passing `--preset standard` would
-    /// silently mean different things.
-    #[test]
-    fn standard_preset_matches_default_tool_names() {
-        let p = preset_by_id("standard").expect("standard exists");
-        assert_eq!(p.tools, DEFAULT_TOOL_NAMES);
-        assert_eq!(p.label, "Standard");
-    }
-
-    /// Kills: `replace ALL_TOOL_NAMES with DEFAULT_TOOL_NAMES` for the `all`
-    /// preset — `all` MUST cover the 15-tool superset.
-    #[test]
-    fn all_preset_matches_all_tool_names() {
-        let p = preset_by_id("all").expect("all exists");
-        assert_eq!(p.tools, ALL_TOOL_NAMES);
-        assert!(p.tools.contains(&"python_repl"));
-    }
-
-    /// Kills: shrinking `REPL_CENTRIC_TOOLS` to e.g. `["python_repl"]` — the
-    /// web tools are part of the contract because nothing else exposes HTTP.
-    #[test]
-    fn repl_centric_preset_is_python_repl_plus_web_tools() {
-        let p = preset_by_id("repl-centric").expect("repl-centric exists");
-        assert_eq!(p.tools, &["python_repl", "web_search", "fetch_url"]);
-    }
-
-    /// Kills: `replace preset_by_id -> Option<&Preset> with Some(&PRESETS[0])`
-    /// or similar always-Some mutants.
-    #[test]
-    fn preset_by_id_returns_none_for_unknown() {
-        assert!(preset_by_id("nope").is_none());
-        assert!(preset_by_id("").is_none());
-        assert!(
-            preset_by_id("Standard").is_none(),
-            "id lookup is case-sensitive"
-        );
-    }
-
-    /// Every tool in every preset must be a known tool name — otherwise the
-    /// preset would produce an unknown-tool validation error at session
-    /// start.  This is the cross-check that keeps the two consts in sync.
-    #[test]
-    fn every_preset_tool_is_known() {
-        for p in PRESETS {
-            for t in p.tools {
-                assert!(
-                    ALL_TOOL_NAMES.contains(t),
-                    "preset {} references unknown tool {}",
-                    p.id,
-                    t
-                );
-            }
-        }
-    }
+    // Preset data tests (counts, membership, preset_by_id) moved to
+    // omega-types::tools where the data now lives.
 }

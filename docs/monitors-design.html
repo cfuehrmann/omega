@@ -608,7 +608,43 @@ MonitorStopped { id, reason, exit_code, time }
     session end + external time limit.</li>
 </ol>
 
-<h2 id="open">12. Open items (deferred, non-blocking)</h2>
+<h2 id="ssr">12. Single-source-of-truth refactor &amp; monitor promotion (implemented)</h2>
+<p>Phase 4 completed the following structural changes:</p>
+<ul>
+  <li><strong>Single source of truth — tool registry moved to <small class="path">crates/omega-types/src/tools.rs</small>.</strong>
+    Previously, tool-name lists (<code>DEFAULT_TOOL_NAMES</code>, <code>ALL_TOOL_NAMES</code>,
+    <code>REPL_CENTRIC_TOOLS</code>), the <code>Preset</code> struct, <code>PRESETS</code>,
+    <code>preset_by_id</code>, and the pure selection helpers
+    (<code>default_tool_selection</code>, <code>resolve_preset</code>,
+    <code>serialize_selection</code>, <code>parse_stored_selection</code>) existed in
+    <em>three</em> places: <small class="path">omega-tools/src/schemas.rs</small>,
+    <small class="path">frontends/leptos/src/protocol.rs</small>, and
+    <small class="path">frontends/leptos/src/picker.rs</small>.  They are now in
+    <small class="path">omega-types/src/tools.rs</small> only, with
+    <code>pub use</code> re-exports in the other two files so existing call sites
+    continue to compile.  Structural drift (like the Phase-2 bug where monitors
+    were added to the backend but not the frontend) is now structurally impossible
+    — there is exactly one list.</li>
+  <li><strong>Monitors promoted to default across all three presets.</strong>
+    <code>DEFAULT_TOOL_NAMES</code> grew from 12 to 14 tools
+    (<code>monitor</code> and <code>stop_monitor</code> added).  <code>REPL_CENTRIC_TOOLS</code>
+    grew from 3 to 5 tools (same additions).  <code>ALL_TOOL_NAMES</code> stays at 15
+    (= default 14 + <code>python_repl</code>).  All three presets now include monitor tools:
+    Standard (14), All (15), REPL-centric (5).</li>
+  <li><strong>Off-switch: Monitors category in the UI picker.</strong>
+    A new &ldquo;Monitors&rdquo; category was added to <code>TOOL_CATEGORIES</code> in
+    <small class="path">frontends/leptos/src/picker.rs</small>, exposing
+    <code>monitor</code> and <code>stop_monitor</code> as per-tool checkboxes.  Users can
+    deselect them to create a Custom preset without monitors.</li>
+  <li><strong>Consistency guard test.</strong> A suite of structural invariant tests was added
+    to <small class="path">crates/omega-types/src/tools.rs</small>: every preset’s tools
+    are a subset of <code>ALL_TOOL_NAMES</code>; <code>ALL_TOOL_NAMES</code> equals
+    <code>DEFAULT_TOOL_NAMES</code> plus <code>python_repl</code>; both monitor tools are
+    present in all three presets; every picker category tool is known.  These tests
+    would have caught the original Phase-2 drift at CI time.</li>
+</ul>
+
+<h2 id="open">13. Open items (deferred, non-blocking)</h2>
 <ul>
   <li><strong>stderr coalescing granularity</strong> — by-lines vs by-time. Decided: accept chatty log for now, optimize later; no stable format required.</li>
   <li><strong>Human-in-delivery representation</strong> — does <code>MonitorDelivery</code> aggregate human + monitor items in one event, or does the human message stay its existing user-message event drained <em>alongside</em> a monitor delivery? Lean: keep them as <em>separate</em> canonical events; the projection merges them. (Either way the UI tags by source.)</li>
@@ -624,9 +660,24 @@ MonitorStopped { id, reason, exit_code, time }
     non-blocking waits. Decision deferred until we observe whether the agent still
     reaches for the blocking tool with monitors available. (Closely tied to the
     prompt/tool-description prerequisite in &sect;5.)</li>
+  <li><strong>PLANNED: General per-tool toggle mechanism (CLI/non-UI).</strong>
+    Today the only server-side mechanism to change the active tool set is
+    <code>--preset &lt;id&gt;</code> (three coarse presets).  Per-tool toggling is currently
+    UI-only (the picker checkboxes).  A future <code>--tool &lt;name&gt;</code> /
+    <code>--no-tool &lt;name&gt;</code> CLI flag — or a config-file equivalent — would
+    allow headless/scripted sessions to selectively enable or disable individual
+    tools without writing a custom preset.  Out of scope for now.</li>
+  <li><strong>OPEN QUESTION: Should monitors be controllable from inside the Python REPL?</strong>
+    The REPL-centric preset includes <code>monitor</code> and <code>stop_monitor</code>;
+    the agent can call them as normal tools.  A deeper integration would expose
+    the monitor queue as a Python API inside the REPL (e.g.,
+    <code>omega.start_monitor(...)</code>) so that REPL code can react to monitor
+    events within the same Python session.  This is architecturally interesting
+    but out of scope — the tool-call boundary is the correct level of abstraction
+    for now.</li>
 </ul>
 
-<h2 id="codefacts">13. Codebase facts gathered (Omega = Rust workspace)</h2>
+<h2 id="codefacts">14. Codebase facts gathered (Omega = Rust workspace)</h2>
 <ul>
   <li>Canonical events: <small class="path">crates/omega-types/src/events.rs</small> — <code>OmegaEvent</code> enum. Already has <code>SessionResumedEvent</code> / <code>SessionResumed</code> variant (<code>resumed_from</code> field, camelCase <code>resumedFrom</code>).</li>
   <li>Server router: <small class="path">crates/omega-server/src/router.rs</small> — <code>handle_resume_session</code> forks a new session via <code>create_active_session</code>, using <code>extract_resumption_basis</code> + <code>extract_tool_selection</code> from the prior log, recording <code>resumed_from</code>. <code>should_replay</code> / <code>REPLAY_EXCLUDE = ["ready","text"]</code> govern WS replay to reconnecting clients. <code>ClientFrame::ResumeSession</code>. <code>request_abort()</code> exists (winds down an in-flight cycle — the existing transport-level interrupt).</li>
@@ -636,7 +687,7 @@ MonitorStopped { id, reason, exit_code, time }
 </ul>
 
 <hr/>
-<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: §6 is settled, §12 lists the only soft spots. If implementing: start at §11 Phase 0 (schema in <small class="path">events.rs</small>), contract-first.</p>
+<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: §6 is settled, §13 lists the only soft spots. If implementing: start at §11 Phase 0 (schema in <small class="path">events.rs</small>), contract-first.</p>
 
 </main>
 </body>

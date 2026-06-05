@@ -20,6 +20,7 @@ pub mod events;
 pub mod feature_flags;
 pub mod ids;
 pub mod stream_signal;
+pub mod tools;
 
 pub use conversation::{ContentBlock, Role};
 pub use events::{

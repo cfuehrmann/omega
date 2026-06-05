@@ -205,6 +205,15 @@ mutants-events:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/events.rs"
 
+# Run cargo-mutants targeted at the canonical tools module in omega-types.
+# Tests the tool-name constants, Preset registry, preset_by_id, and all
+# pure selection helpers (default_tool_selection / resolve_preset /
+# serialize_selection / parse_stored_selection).
+# All mutations must be CAUGHT or UNVIABLE — no survivors.
+mutants-tools:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/tools.rs"
+
 # Run cargo-mutants targeted at the Phase 0 context projection logic.
 # Mutates agent.rs (project_messages, monitor injection methods) and runs
 # the full omega-agent test suite including the Phase 0 monitor projection tests.

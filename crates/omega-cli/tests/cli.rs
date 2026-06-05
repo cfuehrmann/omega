@@ -236,16 +236,16 @@ fn run_preset_and_collect_tools(preset: &str) -> Vec<String> {
 
 /// Kills: `replace preset.map(...) with None` in `omega-cli` — would drop the
 /// explicit `tool_selection` and fall back to the server default, which happens
-/// to also be 12 tools, BUT in a different identity sense (None vs Some).
+/// to also be 14 tools, BUT in a different identity sense (None vs Some).
 /// The `session_started` event carries the materialised list either way, so we
 /// pin the exact contents.
 #[tokio::test(flavor = "multi_thread")]
-async fn preset_standard_yields_twelve_tools() {
+async fn preset_standard_yields_fourteen_tools() {
     let tools = run_preset_and_collect_tools("standard");
     assert_eq!(
         tools.len(),
-        12,
-        "standard preset should give 12 tools, got: {tools:?}"
+        14,
+        "standard preset should give 14 tools, got: {tools:?}"
     );
     assert!(
         !tools.contains(&"python_repl".to_owned()),
@@ -255,9 +255,8 @@ async fn preset_standard_yields_twelve_tools() {
     assert!(tools.contains(&"run_command".to_owned()));
 }
 
-/// Kills: swapping `all` with `standard` in the PRESETS const — `all` is the
-/// only preset that exposes the opt-in tools (`python_repl` + the async
-/// `monitor`/`stop_monitor` pair) alongside the standard 12.
+/// Kills: swapping `all` with `standard` in the PRESETS const — `all` adds
+/// `python_repl` on top of the standard 14 (which already includes monitors).
 #[tokio::test(flavor = "multi_thread")]
 async fn preset_all_yields_fifteen_tools_including_repl_and_monitors() {
     let tools = run_preset_and_collect_tools("all");
@@ -280,14 +279,16 @@ async fn preset_all_yields_fifteen_tools_including_repl_and_monitors() {
 
 /// Kills: shrinking `REPL_CENTRIC_TOOLS` or adding stray tools to it.
 #[tokio::test(flavor = "multi_thread")]
-async fn preset_repl_centric_yields_three_tools() {
+async fn preset_repl_centric_yields_five_tools() {
     let mut tools = run_preset_and_collect_tools("repl-centric");
     tools.sort();
     assert_eq!(
         tools,
         vec![
             "fetch_url".to_owned(),
+            "monitor".to_owned(),
             "python_repl".to_owned(),
+            "stop_monitor".to_owned(),
             "web_search".to_owned()
         ],
         "repl-centric preset must be exactly python_repl + web_search + fetch_url"

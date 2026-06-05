@@ -840,7 +840,8 @@ mod tests {
         xs.iter().map(|s| (*s).to_owned()).collect()
     }
 
-    /// Default selection: the 12 base tools, no `python_repl`.
+    /// Default selection: 14 base tools (file ops + shell + web + monitors),
+    /// no `python_repl`.  Matches `omega_types::tools::DEFAULT_TOOL_NAMES`.
     fn selection_default() -> Vec<String> {
         names(&[
             "read_file",
@@ -855,22 +856,35 @@ mod tests {
             "run_background",
             "wait_for_output",
             "write_stdin",
+            "monitor",
+            "stop_monitor",
         ])
     }
 
-    /// Default 12 + `python_repl`.
+    /// Default 14 + `python_repl` (= the `all` preset).
     fn selection_default_plus_repl() -> Vec<String> {
         let mut v = selection_default();
         v.push("python_repl".to_owned());
         v
     }
 
-    /// Default 12 + the two monitor tools.
-    fn selection_default_plus_monitors() -> Vec<String> {
-        let mut v = selection_default();
-        v.push("monitor".to_owned());
-        v.push("stop_monitor".to_owned());
-        v
+    /// Explicit 12-tool selection without monitor tools — for tests that
+    /// verify the monitors block is absent when the tools are not selected.
+    fn selection_no_monitors() -> Vec<String> {
+        names(&[
+            "read_file",
+            "write_file",
+            "run_command",
+            "edit_file",
+            "list_files",
+            "web_search",
+            "fetch_url",
+            "grep_files",
+            "find_files",
+            "run_background",
+            "wait_for_output",
+            "write_stdin",
+        ])
     }
 
     /// Shell tools + web tools + `python_repl` (no file-op tools).
@@ -927,11 +941,14 @@ mod tests {
     }
 
     #[test]
-    fn no_instruction_files_yields_exactly_two_blocks() {
+    fn no_instruction_files_yields_exactly_three_blocks_with_monitors() {
+        // monitors are now in the default selection, so the monitors block is
+        // always emitted even for a plain no-files session.
         let blocks = build_system_blocks("/x", 1000, false, &[], &selection_default());
-        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks.len(), 3);
         assert_eq!(blocks[0].label, "core");
         assert_eq!(blocks[1].label, "runtime");
+        assert_eq!(blocks[2].label, "monitors");
     }
 
     #[test]
@@ -949,7 +966,8 @@ mod tests {
             },
         ];
         let blocks = build_system_blocks("/repo", 1000, false, &files, &selection_default());
-        assert_eq!(blocks.len(), 4);
+        // core + runtime + global-agents-md + repo-agents-md + monitors = 5
+        assert_eq!(blocks.len(), 5);
         assert_eq!(blocks[2].label, "global-agents-md");
         assert!(
             blocks[2]
@@ -962,6 +980,7 @@ mod tests {
                 .content
                 .starts_with("Instructions from: /repo/AGENTS.md\n\nREPO")
         );
+        assert_eq!(blocks[4].label, "monitors");
     }
 
     #[test]
@@ -972,7 +991,8 @@ mod tests {
             content: "   \n  ".to_owned(),
         }];
         let blocks = build_system_blocks("/repo", 1000, false, &files, &selection_default());
-        assert_eq!(blocks.len(), 2, "whitespace-only file should be ignored");
+        // core + runtime + monitors (whitespace-only file is skipped)
+        assert_eq!(blocks.len(), 3, "whitespace-only file should be ignored");
     }
 
     #[test]
@@ -996,13 +1016,21 @@ mod tests {
     #[test]
     fn repl_flag_true_appends_repl_block() {
         let blocks = build_system_blocks("/x", 1000, false, &[], &selection_default_plus_repl());
-        let repl_block = blocks.iter().find(|b| b.label == "repl");
+        let repl_idx = blocks.iter().position(|b| b.label == "repl");
         assert!(
-            repl_block.is_some(),
-            "repl block must be present when repl=true"
+            repl_idx.is_some(),
+            "repl block must be present when python_repl is selected"
         );
-        // Repl block must be last when file tools are present.
-        assert_eq!(blocks.last().unwrap().label, "repl");
+        // monitors are in the default selection, so the monitors block follows repl.
+        let monitor_idx = blocks.iter().position(|b| b.label == "monitors");
+        assert!(
+            monitor_idx.is_some(),
+            "monitors block must be present (monitors are now in the default selection)"
+        );
+        assert!(
+            repl_idx < monitor_idx,
+            "repl block must come before monitors block"
+        );
     }
 
     #[test]
@@ -1025,7 +1053,10 @@ mod tests {
 
     #[test]
     fn monitor_tools_absent_adds_no_monitor_block() {
-        let blocks = build_system_blocks("/x", 1000, false, &[], &selection_default());
+        // Use an explicit selection without monitors to verify the block is
+        // absent.  (The default selection NOW includes monitors; this test
+        // exercises the opt-out path.)
+        let blocks = build_system_blocks("/x", 1000, false, &[], &selection_no_monitors());
         assert!(
             blocks.iter().all(|b| b.label != "monitors"),
             "monitors block must not be present when the monitor tools are absent"
@@ -1034,8 +1065,8 @@ mod tests {
 
     #[test]
     fn monitor_tools_present_appends_monitor_block() {
-        let blocks =
-            build_system_blocks("/x", 1000, false, &[], &selection_default_plus_monitors());
+        // Default selection includes monitors — no special selection needed.
+        let blocks = build_system_blocks("/x", 1000, false, &[], &selection_default());
         assert!(
             blocks.iter().any(|b| b.label == "monitors"),
             "monitors block must be present when the monitor tools are selected"
@@ -1078,9 +1109,17 @@ mod tests {
             content: "REPO".to_owned(),
         }];
         let blocks = build_system_blocks("/x", 1000, false, &files, &selection_default_plus_repl());
-        // core + runtime + repo-agents-md + repl = 4
-        assert_eq!(blocks.len(), 4);
-        assert_eq!(blocks.last().unwrap().label, "repl");
+        // core + runtime + repo-agents-md + repl + monitors = 5
+        assert_eq!(blocks.len(), 5);
+        let repl_idx = blocks
+            .iter()
+            .position(|b| b.label == "repl")
+            .expect("repl block");
+        let monitor_idx = blocks
+            .iter()
+            .position(|b| b.label == "monitors")
+            .expect("monitors block");
+        assert!(repl_idx < monitor_idx, "repl must precede monitors block");
     }
 
     // ---- Reduced-toolset (no-file-tools) addendum ---------------------------

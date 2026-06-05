@@ -110,6 +110,10 @@ const TOOL_CATEGORIES: &[ToolCategory] = &[
         label: "REPL",
         tools: &["python_repl"],
     },
+    ToolCategory {
+        label: "Monitors",
+        tools: &["monitor", "stop_monitor"],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1157,8 +1161,35 @@ pub fn ToolSelectionPanel() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::session_at_path;
+    use super::{TOOL_CATEGORIES, session_at_path};
+    use crate::protocol::PRESETS;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// Structural invariant: every tool that appears in any preset must be
+    /// covered by exactly one [`TOOL_CATEGORIES`] entry.  If a tool is
+    /// missing from the grid the picker silently drops it.  If a tool
+    /// appears in two categories, the checkbox renders twice.
+    #[test]
+    fn every_preset_tool_appears_in_exactly_one_category() {
+        for preset in PRESETS {
+            for tool in preset.tools {
+                let matches: Vec<&str> = TOOL_CATEGORIES
+                    .iter()
+                    .filter(|cat| cat.tools.contains(tool))
+                    .map(|cat| cat.label)
+                    .collect();
+                assert_eq!(
+                    matches.len(),
+                    1,
+                    "tool '{}' (in preset '{}') appears in {} categories: {:?}",
+                    tool,
+                    preset.id,
+                    matches.len(),
+                    matches,
+                );
+            }
+        }
+    }
 
     #[wasm_bindgen_test]
     fn session_at_path_wraps_absolute_path_with_at_and_trailing_slash() {
