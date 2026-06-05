@@ -2133,3 +2133,157 @@ main > h1 {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ── Monitors panel: badge + modal + roster table ──────────────────────── */
+/*
+ * Phase 5 (Monitors UI) — the MonitorsBadge and MonitorsModal components
+ * use the class names below.  The roster table (.monitors-table / .mt-*)
+ * is modelled on .usage-table so column alignment is consistent.
+ */
+
+/* Badge in the composer header strip. */
+.monitors-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: none;
+  color: var(--ctp-subtext0);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.monitors-badge:hover {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+.monitors-badge-count {
+  white-space: nowrap;
+}
+.monitors-badge-fired {
+  color: var(--ctp-yellow);
+  white-space: nowrap;
+}
+
+/* Full-viewport modal overlay. */
+.monitors-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 60px;
+  z-index: 300;
+}
+
+/* Modal panel. */
+.monitors-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px 20px;
+  width: min(90vw, 900px);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+/* Modal header bar: title + close button. */
+.monitors-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+.monitors-modal-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--fg);
+}
+.monitors-modal-close {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: none;
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 1px 6px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.monitors-modal-close:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* Empty-state message when no monitors have been started. */
+.monitors-empty-state {
+  color: var(--dim);
+  font-size: 13px;
+  font-style: italic;
+  margin: 12px 0;
+}
+
+/* Roster table — modelled on .usage-table for consistent column alignment. */
+.monitors-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+/* Header cells: bold, dimmed, bottom border for separation. */
+.mt-header {
+  font-weight: bold;
+  color: var(--dim);
+  text-align: left;
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/* Data cells share the same horizontal padding as headers. */
+.mt-id,
+.mt-description,
+.mt-status,
+.mt-started,
+.mt-fired,
+.mt-stderr {
+  padding: 4px 10px 4px 0;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* Command column may be long — allow wrapping and limit its width. */
+.mt-command {
+  padding: 4px 10px 4px 0;
+  vertical-align: top;
+  white-space: normal;
+  word-break: break-all;
+  max-width: 260px;
+}
+
+/* Zebra stripe for readability. */
+.monitors-row:nth-child(even) {
+  background: color-mix(in srgb, var(--bg2) 60%, var(--ctp-surface0));
+}
+
+/* Status colour chips. */
+.mt-status-running { color: var(--ctp-green); }
+.mt-status-stopped { color: var(--dim); }
+
+/* Stderr pre block — compact mono text, no extra margins. */
+.mt-stderr-pre {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--ctp-red);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-width: 280px;
+}

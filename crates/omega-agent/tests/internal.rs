@@ -2379,3 +2379,95 @@ async fn shutdown_and_log_monitors_does_not_double_log_already_stopped_monitor()
         "shutdown must not double-log an already-stopped monitor; got {logged:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 9. Monitor wrapper format (“strong framing” nudging fix)
+// ---------------------------------------------------------------------------
+//
+// These tests verify that the new `<monitor id="…">…</monitor>` /
+// `<monitor-stopped …/>` wrapper format appears in the projected user
+// message that reaches the LLM API.  They drive the public Agent API
+// (inject_monitor_delivery / inject_monitor_stopped) with a MockProvider so
+// the exact text seen by the model is observable.
+
+/// Monitor delivery wrapper: the `<monitor id="…">…</monitor>` tag must appear
+/// in the user message sent to the LLM, not the legacy `[Monitor …]` bracket.
+#[tokio::test]
+async fn monitor_delivery_wrapper_format_in_llm_context() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    let item = make_monitor_item("mon-99", &["output line"]);
+    agent
+        .inject_monitor_delivery(vec![item])
+        .await
+        .expect("inject_monitor_delivery");
+
+    // Drive a turn so the monitor delivery is included in the LlmRequest.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    let _ = collect_stream(agent.send_message("go".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    let body = serde_json::to_string(&reqs[0].messages).expect("serialize");
+
+    // Must use the new XML-style tag wrapper.
+    assert!(
+        body.contains("<monitor id=\\\"mon-99\\\">"),
+        "delivery must use <monitor id=\"...\"> tag in LLM context, got: {body}"
+    );
+    assert!(
+        body.contains("</monitor>"),
+        "delivery must use </monitor> closing tag in LLM context, got: {body}"
+    );
+    assert!(
+        body.contains("output line"),
+        "delivery must carry the stdout line, got: {body}"
+    );
+    // Must NOT use the old bracket format.
+    assert!(
+        !body.contains("[Monitor"),
+        "delivery must NOT use legacy [Monitor ...] bracket format, got: {body}"
+    );
+}
+
+/// Monitor stopped wrapper: the `<monitor-stopped id="…" reason="…" exit-code="…"/>`
+/// tag must appear in the user message sent to the LLM.
+#[tokio::test]
+async fn monitor_stopped_wrapper_format_in_llm_context() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    agent
+        .inject_monitor_stopped("mon-55".into(), MonitorStopReason::ProcessExited, Some(42))
+        .await
+        .expect("inject_monitor_stopped");
+
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    let _ = collect_stream(agent.send_message("next".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    let body = serde_json::to_string(&reqs[0].messages).expect("serialize");
+
+    // Must use the new self-closing tag.
+    assert!(
+        body.contains("<monitor-stopped"),
+        "stop notification must use <monitor-stopped …/> tag, got: {body}"
+    );
+    assert!(
+        body.contains("mon-55"),
+        "stop notification must include the monitor id, got: {body}"
+    );
+    assert!(
+        body.contains("process_exited"),
+        "stop notification must include the reason, got: {body}"
+    );
+    assert!(
+        body.contains("42"),
+        "stop notification must include the exit code, got: {body}"
+    );
+    // Must NOT use the old bracket format.
+    assert!(
+        !body.contains("[Monitor"),
+        "stop notification must NOT use legacy [Monitor ...] bracket format, got: {body}"
+    );
+}

@@ -584,15 +584,26 @@ pub(crate) fn project_messages(history: &[Message]) -> Vec<Message> {
 }
 
 /// Format monitor stdout lines for injection into the LLM context.
+///
+/// The XML-style tag unambiguously marks the text as automated monitor
+/// output — not a human user message — even when it lands in a merged
+/// `role:user` turn alongside real human text.
 fn format_monitor_lines(monitor_id: &str, lines: &[String]) -> String {
     if lines.is_empty() {
-        format!("[Monitor {monitor_id}]")
+        format!("<monitor id=\"{monitor_id}\">\n</monitor>")
     } else {
-        format!("[Monitor {monitor_id}]\n{}", lines.join("\n"))
+        format!(
+            "<monitor id=\"{monitor_id}\">\n{}\n</monitor>",
+            lines.join("\n")
+        )
     }
 }
 
 /// Format a `MonitorStopped` notification for injection into the LLM context.
+///
+/// The self-closing tag keeps the same unambiguous framing as
+/// [`format_monitor_lines`] and avoids the weaker `[Monitor …]` bracket
+/// syntax that models could mistake for user prose.
 fn format_monitor_stopped(id: &str, reason: &MonitorStopReason, exit_code: Option<i32>) -> String {
     let reason_str = match reason {
         MonitorStopReason::StoppedByAgent => "stopped_by_agent",
@@ -603,9 +614,9 @@ fn format_monitor_stopped(id: &str, reason: &MonitorStopReason, exit_code: Optio
     };
     match exit_code {
         Some(code) => {
-            format!("[Monitor {id} stopped: {reason_str} (exit code: {code})]")
+            format!("<monitor-stopped id=\"{id}\" reason=\"{reason_str}\" exit-code=\"{code}\"/>")
         }
-        None => format!("[Monitor {id} stopped: {reason_str}]"),
+        None => format!("<monitor-stopped id=\"{id}\" reason=\"{reason_str}\"/>"),
     }
 }
 
@@ -3471,5 +3482,140 @@ mod abandonment_closer_tests {
         assert!(matches!(events[1], OmegaEvent::ThinkingBlock(_)));
         assert!(matches!(events[2], OmegaEvent::ToolUseBlock(_)));
         expect_discarded(&events[3]);
+    }
+}
+
+#[cfg(test)]
+mod format_monitor_tests {
+    //! Inline carve-out tests for [`format_monitor_lines`] and
+    //! [`format_monitor_stopped`].
+    //!
+    //! Justification for carve-out: these are private pure functions whose
+    //! exact output format is the load-bearing nudging mechanism (the
+    //! `<monitor …>` / `<monitor-stopped …/>` tags).  The integration tests in
+    //! `tests/internal.rs` verify that the text reaches the LLM API, but
+    //! cannot easily pin the exact wrapper format without inspecting the raw
+    //! string — which is done here so a mutation to the tag shape is caught
+    //! immediately rather than via a text-contains search.
+
+    use super::*;
+    use omega_types::events::MonitorStopReason;
+
+    // ── format_monitor_lines ──────────────────────────────────────────────
+
+    /// Non-empty lines: output must be wrapped in `<monitor id="…">…</monitor>`.
+    #[test]
+    fn format_monitor_lines_wraps_in_monitor_tag() {
+        let out = format_monitor_lines("mon-1", &["line A".to_owned(), "line B".to_owned()]);
+        assert!(
+            out.starts_with("<monitor id=\"mon-1\">"),
+            "must start with opening monitor tag, got: {out}"
+        );
+        assert!(
+            out.ends_with("</monitor>"),
+            "must end with closing monitor tag, got: {out}"
+        );
+        assert!(
+            out.contains("line A"),
+            "must contain first line, got: {out}"
+        );
+        assert!(
+            out.contains("line B"),
+            "must contain second line, got: {out}"
+        );
+    }
+
+    /// Monitor id must appear in the opening tag attribute.
+    #[test]
+    fn format_monitor_lines_id_in_tag_attribute() {
+        let out = format_monitor_lines("abc-42", &["x".to_owned()]);
+        assert!(
+            out.contains("id=\"abc-42\""),
+            "monitor id must appear as an attribute in the opening tag, got: {out}"
+        );
+    }
+
+    /// Empty lines: output must still use `<monitor …>` tags, not brackets.
+    #[test]
+    fn format_monitor_lines_empty_no_bracket_marker() {
+        let out = format_monitor_lines("mon-2", &[]);
+        assert!(
+            out.starts_with("<monitor id=\"mon-2\">"),
+            "empty delivery must still use opening monitor tag, got: {out}"
+        );
+        assert!(
+            out.ends_with("</monitor>"),
+            "empty delivery must still end with closing monitor tag, got: {out}"
+        );
+        assert!(
+            !out.contains("[Monitor"),
+            "output must NOT use legacy bracket markers, got: {out}"
+        );
+    }
+
+    // ── format_monitor_stopped ───────────────────────────────────────────
+
+    /// With exit code: must emit `<monitor-stopped id="…" reason="…" exit-code="…"/>`.
+    #[test]
+    fn format_monitor_stopped_with_exit_code() {
+        let out = format_monitor_stopped("mon-3", &MonitorStopReason::ProcessExited, Some(0));
+        assert!(
+            out.starts_with("<monitor-stopped"),
+            "must use self-closing monitor-stopped tag, got: {out}"
+        );
+        assert!(out.ends_with("/>"), "must be self-closing, got: {out}");
+        assert!(
+            out.contains("id=\"mon-3\""),
+            "must contain id attribute, got: {out}"
+        );
+        assert!(
+            out.contains("reason=\"process_exited\""),
+            "must contain reason attribute, got: {out}"
+        );
+        assert!(
+            out.contains("exit-code=\"0\""),
+            "must contain exit-code attribute, got: {out}"
+        );
+        assert!(
+            !out.contains("[Monitor"),
+            "must NOT use legacy bracket markers, got: {out}"
+        );
+    }
+
+    /// Without exit code: `exit-code` attribute must be absent.
+    #[test]
+    fn format_monitor_stopped_without_exit_code() {
+        let out = format_monitor_stopped("mon-4", &MonitorStopReason::ProcessCrashed, None);
+        assert!(
+            out.starts_with("<monitor-stopped"),
+            "must use monitor-stopped tag, got: {out}"
+        );
+        assert!(out.ends_with("/>"), "must be self-closing, got: {out}");
+        assert!(
+            !out.contains("exit-code"),
+            "exit-code attribute must be absent when None, got: {out}"
+        );
+    }
+
+    /// Reason enum variants map to the correct kebab-case strings.
+    #[test]
+    fn format_monitor_stopped_reason_variants() {
+        let cases = [
+            (MonitorStopReason::StoppedByAgent, "stopped_by_agent"),
+            (MonitorStopReason::StoppedByUser, "stopped_by_user"),
+            (MonitorStopReason::ProcessExited, "process_exited"),
+            (MonitorStopReason::ProcessCrashed, "process_crashed"),
+            (
+                MonitorStopReason::StoppedBySessionEnd,
+                "stopped_by_session_end",
+            ),
+        ];
+        for (reason, expected) in &cases {
+            let out = format_monitor_stopped("id", reason, None);
+            assert!(
+                out.contains(&format!("reason=\"{expected}\"")),
+                "reason {expected} must appear in output, got: {out}"
+            );
+        }
     }
 }

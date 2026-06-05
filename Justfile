@@ -215,8 +215,12 @@ mutants-tools:
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/tools.rs"
 
 # Run cargo-mutants targeted at the Phase 0 context projection logic.
-# Mutates agent.rs (project_messages, monitor injection methods) and runs
-# the full omega-agent test suite including the Phase 0 monitor projection tests.
+# Mutates agent.rs (project_messages, monitor injection methods, and the
+# XML-wrapper formatters format_monitor_lines / format_monitor_stopped that
+# emit <monitor id="…">…</monitor> / <monitor-stopped …/> — the framing that
+# prevents mis-attribution and fabrication of monitor output) and runs the
+# full omega-agent test suite including the format_monitor unit tests and
+# the Phase 0 monitor projection tests.
 # Template: mutants-system-prompt-guard (see AGENTS.md).
 mutants-agent-projection:
     mkdir -p {{mutants-tmp}}
@@ -404,6 +408,14 @@ mutants-system-prompt-221:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
 
+# Nudging revamp — system_prompt.rs: monitor_addendum behavioral rules.
+# Scoped to monitor_addendum: verifies that mutations weakening the
+# not-the-user / don't-fabricate / end-turn-and-wait rules are caught by
+# the monitor_addendum_contains_* tests.
+mutants-monitor-addendum:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true \
+        --file "crates/omega-agent/src/system_prompt.rs" --re 'monitor_addendum'
 
 # Phase 2.3 — event_view.rs: python_repl arm in tool_call_preview.
 # Must be run from the frontends/leptos directory since omega-web is

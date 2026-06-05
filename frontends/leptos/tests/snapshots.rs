@@ -1148,3 +1148,41 @@ mod monitors_panel_snapshots {
         insta::assert_snapshot!(html);
     }
 }
+
+// ---------------------------------------------------------------------------
+// CSS guard — .monitors-table is defined in style.css
+// ---------------------------------------------------------------------------
+//
+// Justification for carve-out: the CSS lives in a static asset file, not in
+// Rust.  There is no type-checked link between the class name used in Rust
+// (monitors_panel.rs) and the CSS definition.  An SSR snapshot test verifies
+// that the HTML *contains* the class attribute, but cannot verify that the
+// browser will actually find a matching CSS rule.  This unit test reads the
+// raw CSS file and asserts the rule exists, closing the "shipped HTML but
+// forgot the CSS" failure mode.
+
+#[test]
+#[cfg(feature = "ssr")]
+fn monitors_table_css_is_defined_in_style_css() {
+    // Walk up from the test output directory to the workspace root.
+    // The CSS file lives at `frontends/leptos/style.css` relative to the
+    // repo root, which is two levels above `frontends/leptos/`.
+    let manifest =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set during tests");
+    let css_path = std::path::Path::new(&manifest).join("style.css");
+    let css = std::fs::read_to_string(&css_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", css_path.display()));
+
+    assert!(
+        css.contains(".monitors-table"),
+        "style.css must define .monitors-table; add the rule or the roster table will be unstyled"
+    );
+    assert!(
+        css.contains(".mt-header"),
+        "style.css must define .mt-header; add the rule for column header styling"
+    );
+    assert!(
+        css.contains(".mt-command"),
+        "style.css must define .mt-command; add the rule for Command column word-wrap"
+    );
+}

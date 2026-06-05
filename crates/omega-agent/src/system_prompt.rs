@@ -417,10 +417,10 @@ available), keep the handle in a REPL variable, and read from it incrementally."
 /// System-prompt addendum injected when the `monitor` / `stop_monitor` tools
 /// are in the selection (§5 teaching-copy prerequisite).
 ///
-/// Conceptual, not nannying: it explains the async out-of-band channel, the
-/// seam/no-preemption guarantee, when to reach for a monitor vs the
-/// synchronous `wait_for_output`, and stop discipline — without micro-advice
-/// about specific shell flags.
+/// Reinforces the three critical behavioral rules from the tool description:
+/// output is not from the user / never fabricate / end turn and wait.
+/// References the `<monitor …>` tag so the model recognises it on arrival.
+/// Avoids duplicating the full tool-description prose.
 #[must_use]
 pub fn monitor_addendum() -> String {
     "## Background monitors\n\n\
@@ -429,29 +429,28 @@ pub fn monitor_addendum() -> String {
      blocking your turn.\n\n\
      - `monitor` starts a shell command in the background and returns \
        IMMEDIATELY with a monitor id. It does not wait for output.\n\
-     - The command's stdout lines arrive LATER, out of band, as injected \
-       user messages tagged with the monitor id. You react to them on a \
-       future cycle, the same way you would react to anything a human says.\n\
-     - Delivery happens only at safe seams: after you finish a response and \
-       go idle, or right after a tool result. A monitor NEVER interrupts a \
-       reply you are part-way through composing, and never splits a tool \
-       call from its result. There is no preemption \u{2014} lines wait for the \
-       next seam.\n\
-     - If everything you could still do depends on a monitor, the session \
-       waits (parks) for the next line instead of ending. When a monitor \
-       stops, you are told (with its exit status) so you never block on a \
-       channel that can no longer speak.\n\n\
+     - The command's stdout lines arrive LATER, out of band, wrapped in \
+       `<monitor id=\"…\">…</monitor>` tags. These are AUTOMATED SYSTEM \
+       MESSAGES, NOT messages from the human user — even if they land \
+       while you are waiting for the user. Never attribute them to the user \
+       or confuse them with human speech.\n\
+     - FABRICATION IS FORBIDDEN: never write, guess, or role-play a \
+       monitor's output. Do not claim a monitor has finished until a real \
+       `<monitor …>` or `<monitor-stopped …/>` tag has arrived.\n\
+     - After starting a monitor, if nothing else is pending, END YOUR TURN. \
+       The session parks and will wake you when the next delivery or human \
+       message arrives. Do not keep talking while waiting for output.\n\
+     - Delivery happens only at safe seams: after you finish a response or \
+       right after a tool result — never mid-reply, never between a tool \
+       call and its result.\n\n\
      When to use which:\n\
      - Use `wait_for_output` (synchronous) when you need a specific result \
-       NOW and have nothing useful to do until it appears \u{2014} you block and \
-       read it inline.\n\
+       NOW and have nothing useful to do until it appears.\n\
      - Use a `monitor` when a process should keep producing output over \
-       time while you do other work, and you want to be informed as lines \
-       arrive rather than sitting and waiting.\n\n\
+       time while you stay available for other work.\n\n\
      Stop discipline: call `stop_monitor` as soon as a monitor has served \
      its purpose. Monitors are reaped automatically at session end, but \
-     that is a backstop, not a licence to leak \u{2014} a forgotten monitor keeps \
-     a process alive and keeps waking you with output you no longer need.\n"
+     that is a backstop, not a licence to leak.\n"
         .to_owned()
 }
 
@@ -1088,7 +1087,7 @@ mod tests {
             "must explain the async/out-of-band channel"
         );
         assert!(
-            m.contains("seam") && m.contains("preemption"),
+            m.contains("seam"),
             "must explain the no-preemption seam guarantee"
         );
         assert!(
@@ -1096,8 +1095,53 @@ mod tests {
             "must contrast with the synchronous wait_for_output"
         );
         assert!(
-            m.contains("reaped") && m.contains("backstop"),
+            m.contains("backstop"),
             "must explain stop discipline and session-end reaping backstop"
+        );
+    }
+
+    /// Not-the-user reinforcement: the addendum must explicitly state that
+    /// monitor output is NOT from the human user.
+    ///
+    /// This closes the mis-attribution failure mode observed in real sessions
+    /// (see §2 post-implementation note). Asserting the exact phrase also
+    /// functions as a body-replacement mutation guard.
+    #[test]
+    fn monitor_addendum_contains_not_the_user_language() {
+        let m = monitor_addendum();
+        assert!(
+            m.contains("NOT") && m.contains("human user"),
+            "addendum must state monitor output is NOT from the human user; got: {m}"
+        );
+        // The tag format must be referenced so the model recognises it on arrival.
+        assert!(
+            m.contains("<monitor id="),
+            "addendum must reference the <monitor id=…> tag format; got: {m}"
+        );
+    }
+
+    /// Don't-fabricate reinforcement: the addendum must forbid writing/guessing
+    /// a monitor's output.
+    ///
+    /// This closes the fabrication failure mode observed in real sessions
+    /// (see §2 post-implementation note).
+    #[test]
+    fn monitor_addendum_contains_dont_fabricate_language() {
+        let m = monitor_addendum();
+        assert!(
+            m.contains("FABRICATION") || m.contains("fabricate") || m.contains("guess"),
+            "addendum must forbid fabricating monitor output; got: {m}"
+        );
+    }
+
+    /// End-turn-and-wait reinforcement: the addendum must tell the model to
+    /// end its turn rather than keep talking while waiting for output.
+    #[test]
+    fn monitor_addendum_contains_end_turn_language() {
+        let m = monitor_addendum();
+        assert!(
+            m.contains("END YOUR TURN") || m.contains("end your turn"),
+            "addendum must instruct the model to end its turn after starting a monitor; got: {m}"
         );
     }
 

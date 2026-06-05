@@ -743,20 +743,36 @@ MonitorStopped { id, reason, exit_code, time }
 
 <h2 id="open">13. Open items (deferred, non-blocking)</h2>
 <ul>
-  <li><strong>NUDGING REVAMP (active &mdash; goal: Sonnet &amp; Opus use monitors correctly).</strong>
+  <li><strong>NUDGING REVAMP (implemented).</strong>
     Real sessions showed the model mis-attributing monitor output to the human and fabricating
-    output (&sect;2 note). The <code>monitor</code>/<code>stop_monitor</code> tool descriptions and
-    the system-prompt teaching copy must, in Omega's own wording: (1) state that monitor output
-    arrives on its own schedule and is <em>not</em> a message from the human user; (2) forbid
-    writing/guessing/role-playing a monitor's output &mdash; it only arrives as a real injected
-    message; (3) instruct the model to end its turn and wait (the session parks) rather than
-    continue as if output arrived; (4) add the "silence is not success" coverage principle.
-    Put the not-from-the-user line in the <em>tool description</em> (always present), not just the
-    system prompt. Grounded in verified Claude behavior; wording is ours.</li>
-  <li><strong>Reconsider the two &sect;5 rails the verified prior art keeps:</strong> minimal
-    script guidance (line-buffering/flush) and auto-stop of runaway monitors. "Explorative
-    minimalism" dropped both; Claude&nbsp;Code keeps both. Re-add on this evidence, or keep
-    observing &mdash; decide deliberately.</li>
+    output (&sect;2 note). Implemented in Omega's own wording:
+    <ul>
+      <li><strong>Injected-message framing (<code>agent.rs</code>):</strong> replaced the weak
+        <code>[Monitor &hellip;]</code> bracket markers with
+        <code>&lt;monitor id=&ldquo;&hellip;&rdquo;&gt;&hellip;&lt;/monitor&gt;</code> for stdout deliveries
+        and the self-closing
+        <code>&lt;monitor-stopped id=&ldquo;&hellip;&rdquo; reason=&ldquo;&hellip;&rdquo; [exit-code=&ldquo;N&rdquo;]/&gt;</code>
+        for stop notifications. These survive merging into a user turn next to real human text.
+        The <code>OmegaEvent</code> schema is unchanged; this is a presentation change only.</li>
+      <li><strong>Tool description (<code>schemas.rs</code>):</strong> rewrote the <code>monitor</code>
+        description to carry: (1) output is NOT from the human user; (2) FABRICATION IS FORBIDDEN;
+        (3) after starting, END YOUR TURN and let the session park; (4) &ldquo;silence is not
+        success&rdquo; + line-buffering guidance. Updated <code>stop_monitor</code> to reference
+        the <code>&lt;monitor-stopped&hellip;/&gt;</code> tag.</li>
+      <li><strong>System-prompt addendum (<code>system_prompt.rs</code>):</strong> reinforced
+        <code>monitor_addendum()</code> with the three behavioral rules
+        (not-the-user / don't-fabricate / end-turn-and-wait) and the
+        <code>&lt;monitor id=&hellip;&gt;</code> tag reference. <code>has_monitor_tools</code> gating retained.</li>
+      <li><strong>Roster table CSS (<code>style.css</code>):</strong> added
+        <code>.monitors-table</code> + <code>.mt-*</code> cell rules (100&nbsp;% width, border-collapse,
+        padding, header emphasis, Command-column word-wrap) so columns align in the modal.</li>
+    </ul>
+    Behavioral verification is out of automated scope; validate live with a
+    <code>monitor(&ldquo;sleep 20 &amp;&amp; echo done&rdquo;)</code> scenario on Sonnet and Opus.</li>
+  <li><strong>Reconsider auto-stop of chatty monitors and line-buffering rails (open):</strong>
+    minimal script guidance (line-buffering/flush) has been added to the tool description;
+    auto-stop of runaway monitors is still open. &ldquo;Explorative minimalism&rdquo; dropped both;
+    Claude&nbsp;Code keeps both. Re-add on this evidence, or keep observing &mdash; decide deliberately.</li>
   <li><strong>stderr coalescing granularity</strong> — by-lines vs by-time. Decided: accept chatty log for now, optimize later; no stable format required.</li>
   <li><strong>Human-in-delivery representation</strong> — does <code>MonitorDelivery</code> aggregate human + monitor items in one event, or does the human message stay its existing user-message event drained <em>alongside</em> a monitor delivery? Lean: keep them as <em>separate</em> canonical events; the projection merges them. (Either way the UI tags by source.)</li>
   <li><strong>Exact <code>reason</code> enum</strong> for <code>MonitorStopped</code> and which reasons project into context (lean: all "unexpected" ones do).</li>

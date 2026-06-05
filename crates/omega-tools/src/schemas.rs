@@ -424,22 +424,27 @@ fn monitor() -> ToolDefinition {
         name: "monitor".into(),
         description: "Start a long-lived background command as an ASYNCHRONOUS \
                       MONITOR and return immediately — you do NOT wait for it. \
-                      A monitor is an out-of-band channel: its stdout lines arrive \
-                      LATER, on their own schedule, injected into the conversation \
-                      as user messages tagged with the monitor id. They never \
-                      interrupt you mid-thought — a delivery only lands at a safe \
-                      seam (after you finish a message, or right after a tool \
-                      result), never between a tool call and its result. While \
-                      monitors are live the session stays awake waiting for them; \
-                      a quiet monitor simply parks the loop until it speaks. \
-                      Use a monitor when you want to keep working (or wait for a \
-                      human) while something streams in the background — a dev \
-                      server's logs, a file watcher, a long test run you want to \
-                      glance at. Prefer the synchronous `wait_for_output` instead \
-                      when you need to BLOCK for a specific line before doing the \
-                      next step. Stop discipline: call `stop_monitor` once a \
-                      monitor has served its purpose. Session end reaps any \
-                      survivors, but that is a backstop, not licence to leak."
+                      HOW OUTPUT ARRIVES: stdout lines come later, on their own \
+                      schedule, as injected messages tagged \
+                      `<monitor id=\"…\">…</monitor>`. These are AUTOMATED \
+                      SYSTEM MESSAGES — they are NEVER from the human user, even \
+                      if they arrive while you are waiting for the user. Never \
+                      attribute them to the user; never confuse them with human \
+                      speech. FABRICATION IS FORBIDDEN: do NOT write, guess, or \
+                      role-play a monitor's output, and do not claim it finished \
+                      until a real `<monitor …>` or `<monitor-stopped …/>` has \
+                      arrived. AFTER STARTING: if nothing else needs doing, END \
+                      YOUR TURN — the session parks and will wake you when the \
+                      next delivery or user message arrives. SILENCE IS NOT \
+                      SUCCESS: the command must emit a line on both completion \
+                      AND failure; for streamed sources keep output line-buffered \
+                      (`grep --line-buffered`, `stdbuf -oL`, `awk` + `fflush()`). \
+                      Deliveries land only at safe seams (never mid-tool-call). \
+                      Use a monitor when you want to observe a long-running \
+                      process while staying available — a dev server's logs, a \
+                      file watcher, a long test run. Prefer synchronous \
+                      `wait_for_output` when you need to BLOCK for a specific \
+                      line before the next step."
             .into(),
         input_schema: json!({
             "type": "object",
@@ -456,11 +461,12 @@ fn stop_monitor() -> ToolDefinition {
     ToolDefinition {
         name: "stop_monitor".into(),
         description: "Stop a running monitor by id and reap its whole process \
-                      tree. Use this as soon as a monitor has done its job — \
-                      leaving idle monitors live keeps the session awake waiting \
-                      on them and clutters the roster. A monitor that exits on its \
-                      own reports its own stop, so you only need this for ones that \
-                      would otherwise run forever (servers, watchers, tails)."
+                      tree. Call this as soon as a monitor has served its \
+                      purpose — idle monitors keep the session awake and clutter \
+                      the roster. A monitor that exits on its own emits a \
+                      `<monitor-stopped …/>` automatically, so you only need \
+                      this for ones that would otherwise run forever (servers, \
+                      watchers, tails)."
             .into(),
         input_schema: json!({
             "type": "object",
@@ -827,4 +833,51 @@ mod tests {
 
     // Preset data tests (counts, membership, preset_by_id) moved to
     // omega-types::tools where the data now lives.
+
+    // ---- monitor tool description nudging tests ---------------------------
+    //
+    // These tests verify that the load-bearing nudging guidance is present in
+    // the `monitor` tool description (always present when the tool is loaded).
+    // Each test pins one behavioral rule; a body-replacement mutation on the
+    // description string would break exactly one of these.
+
+    fn monitor_desc() -> String {
+        tool_definitions(&sel(&["monitor"]))
+            .into_iter()
+            .find(|d| d.name == "monitor")
+            .expect("monitor tool must be present")
+            .description
+    }
+
+    /// Not-the-user rule: the description must explicitly state that monitor
+    /// output is NOT from the human user.
+    #[test]
+    fn monitor_tool_description_contains_not_the_user_language() {
+        let desc = monitor_desc();
+        assert!(
+            desc.contains("NOT") && desc.contains("human user"),
+            "monitor description must state output is NOT from the human user; got: {desc}"
+        );
+    }
+
+    /// End-turn rule: the description must tell the model to end its turn
+    /// after starting a monitor when nothing else is pending.
+    #[test]
+    fn monitor_tool_description_contains_end_turn_language() {
+        let desc = monitor_desc();
+        assert!(
+            desc.contains("END YOUR TURN") || desc.contains("end your turn"),
+            "monitor description must instruct the model to end its turn; got: {desc}"
+        );
+    }
+
+    /// Fabrication rule: the description must forbid writing/guessing output.
+    #[test]
+    fn monitor_tool_description_contains_fabrication_forbidden() {
+        let desc = monitor_desc();
+        assert!(
+            desc.contains("FORBIDDEN") || desc.contains("forbidden") || desc.contains("do NOT"),
+            "monitor description must forbid fabricating output; got: {desc}"
+        );
+    }
 }
