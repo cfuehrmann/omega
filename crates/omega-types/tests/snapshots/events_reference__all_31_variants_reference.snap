@@ -255,7 +255,7 @@ expression: events
   {
     "type": "monitor_stopped",
     "id": "mon-1",
-    "reason": "crashed",
+    "reason": "process_crashed",
     "exitCode": null,
     "time": "2024-01-15T12:00:00.000Z"
   }

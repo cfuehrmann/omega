@@ -109,7 +109,7 @@ pub enum PendingItem {
         /// Id of the monitor that exited.
         monitor_id: String,
         /// Classified outcome: `ProcessExited` (normal exit, any code) or
-        /// `Crashed` (killed by a signal).
+        /// `ProcessCrashed` (killed by a signal).
         reason: MonitorStopReason,
         /// Process exit code when it exited normally; `None` when killed by
         /// a signal (the signal number is not carried in the frozen schema).
@@ -348,11 +348,11 @@ impl MonitorManager {
                         // No code => terminated by a signal (e.g. SIGSEGV,
                         // SIGKILL). `signal()` is the carrier; the frozen
                         // schema has no field for it, so exit_code stays None.
-                        None => (MonitorStopReason::Crashed, None),
+                        None => (MonitorStopReason::ProcessCrashed, None),
                     },
                     // `wait()` itself failed (should not happen for a child we
                     // spawned); treat conservatively as a crash.
-                    Err(_) => (MonitorStopReason::Crashed, None),
+                    Err(_) => (MonitorStopReason::ProcessCrashed, None),
                 };
                 // Only the natural Running->Stopped transition enqueues. If the
                 // agent/shutdown already set Stopped, the exit we observe here
@@ -835,7 +835,7 @@ mod tests {
         match r.extra_events.as_slice() {
             [OmegaEvent::MonitorStopped(e)] => {
                 assert_eq!(e.id, id);
-                assert_eq!(e.reason, MonitorStopReason::AgentStopped);
+                assert_eq!(e.reason, MonitorStopReason::StoppedByAgent);
                 assert!(e.time.contains('T') && e.time.ends_with('Z'));
             }
             other => panic!("expected one MonitorStopped, got {other:?}"),
@@ -946,8 +946,8 @@ mod tests {
     #[tokio::test]
     async fn natural_exit_enqueues_stopped_with_exit_code() {
         let (_tmp, ctx, mgr) = ctx_with_manager();
-        // Exit with a specific non-zero code; the waiter must classify it as a
-        // normal `ProcessExited` and carry the code through the queue.
+        // Exit with a specific non-zero code; the waiter must classify it as
+        // a normal `ProcessExited` and carry the code through the queue.
         let id = spawn_mon(&ctx, "exit 7").await;
         let items = accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
         let stopped: Vec<_> = items
@@ -963,15 +963,15 @@ mod tests {
             .collect();
         assert_eq!(stopped.len(), 1, "exactly one Stopped item");
         assert_eq!(stopped[0].0, &id);
-        assert_eq!(stopped[0].1, MonitorStopReason::ProcessExited);
+        assert_eq!(stopped[0].1, MonitorStopReason::ProcessExited); // unchanged variant
         assert_eq!(stopped[0].2, Some(7), "normal exit carries its code");
         assert_eq!(mgr.status(&id), Some(MonitorStatus::Stopped));
     }
 
     #[tokio::test]
-    async fn signal_death_enqueues_crashed_without_code() {
+    async fn signal_death_enqueues_process_crashed_without_code() {
         let (_tmp, ctx, mgr) = ctx_with_manager();
-        // Kill the shell with SIGKILL: no exit code => `Crashed`.
+        // Kill the shell with SIGKILL: no exit code => `ProcessCrashed`.
         let _id = spawn_mon(&ctx, "kill -9 $$").await;
         let items = accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
         let stopped = items
@@ -983,7 +983,7 @@ mod tests {
                 _ => None,
             })
             .expect("a Stopped item");
-        assert_eq!(stopped.0, MonitorStopReason::Crashed);
+        assert_eq!(stopped.0, MonitorStopReason::ProcessCrashed);
         assert_eq!(stopped.1, None, "signal death carries no exit code");
     }
 
@@ -993,7 +993,7 @@ mod tests {
         let id = spawn_mon(&ctx, "sleep 100").await;
         // Let the process come up, then stop it. The SIGKILL the waiter later
         // observes must NOT be reported as a `Stopped` item (single-writer: the
-        // agent already logged MonitorStopped(AgentStopped) via the tool).
+        // agent already logged MonitorStopped(StoppedByAgent) via the tool).
         assert!(
             poll_until(DL, || mgr.live_count() == 1).await,
             "monitor should be live"

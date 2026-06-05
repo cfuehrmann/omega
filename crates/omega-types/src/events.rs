@@ -546,38 +546,57 @@ pub struct TurnContinuedEvent {
 
 /// Reason a monitor process stopped.
 ///
-/// Used by [`MonitorStoppedEvent`].  Unexpected reasons (`UserKilled`,
-/// `ProcessExited`, `Crashed`) are projected into the LLM context so
-/// the agent learns and does not wait forever.  `AgentStopped` is NOT
-/// projected — the agent issued the stop itself, so a notice would be
-/// redundant noise.
+/// Used by [`MonitorStoppedEvent`].  Unexpected reasons
+/// (`StoppedByUser`, `ProcessExited`, `ProcessCrashed`) are projected
+/// into the LLM context so the agent learns and does not wait forever.
+/// `StoppedByAgent` is NOT projected — the agent issued the stop
+/// itself, so a notice would be redundant noise.
+/// `StoppedBySessionEnd` is also NOT projected — the session is
+/// terminating, so there is no agent loop left to notify.
 ///
-/// §12 locked decision: `AgentStopped` → not projected;  all other
-/// variants → projected.
+/// §12 locked decision:  `StoppedByAgent` → not projected;  all other
+/// variants → projected, EXCEPT `StoppedBySessionEnd` which is also not
+/// projected (session teardown, no running agent loop).
+///
+/// Loud-schema-change note: variants are renamed (not aliased) so that
+/// old log files that still carry `agent_stopped` / `user_killed` /
+/// `crashed` fail loudly on deserialization rather than silently mapping
+/// to the wrong variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MonitorStopReason {
     /// The agent stopped the monitor explicitly via `stop_monitor`.
-    AgentStopped,
+    /// Wire value: `stopped_by_agent`.
+    StoppedByAgent,
     /// The user killed the monitor via the UI.
-    UserKilled,
+    /// Wire value: `stopped_by_user`.
+    StoppedByUser,
     /// The monitor process exited naturally (ran to completion).
+    /// Wire value: `process_exited`.
     ProcessExited,
-    /// The monitor process crashed unexpectedly.
-    Crashed,
+    /// The monitor process crashed unexpectedly (signal or wait error).
+    /// Wire value: `process_crashed`.
+    ProcessCrashed,
+    /// The session ended with the monitor still running; the shutdown
+    /// path reaped the process tree and wrote this event so the log
+    /// has a matching `MonitorStopped` for every `MonitorStarted`.
+    /// Wire value: `stopped_by_session_end`.
+    StoppedBySessionEnd,
 }
 
 impl MonitorStopReason {
     /// Returns `true` for stop reasons that should be projected into the
     /// LLM context.
     ///
-    /// `AgentStopped` returns `false` — the agent already knows because
-    /// it issued the stop.  Every other reason returns `true` so the
-    /// agent learns about unexpected terminations and does not wait
-    /// forever on a dead monitor.
+    /// `StoppedByAgent` returns `false` — the agent already knows
+    /// because it issued the stop.  `StoppedBySessionEnd` also returns
+    /// `false` — the session is terminating and there is no agent loop
+    /// left to notify.  Every other reason returns `true` so the agent
+    /// learns about unexpected terminations and does not wait forever
+    /// on a dead monitor.
     #[must_use]
     pub fn should_project(&self) -> bool {
-        !matches!(self, Self::AgentStopped)
+        !matches!(self, Self::StoppedByAgent | Self::StoppedBySessionEnd)
     }
 }
 
@@ -636,9 +655,10 @@ pub struct MonitorStderrEvent {
 
 /// A monitor process stopped.
 ///
-/// `reason` determines projection: `AgentStopped` is NOT projected;
-/// `UserKilled`, `ProcessExited`, and `Crashed` ARE projected into the
-/// LLM context so the agent learns and does not block waiting on a dead
+/// `reason` determines projection: `StoppedByAgent` and
+/// `StoppedBySessionEnd` are NOT projected; `StoppedByUser`,
+/// `ProcessExited`, and `ProcessCrashed` ARE projected into the LLM
+/// context so the agent learns and does not block waiting on a dead
 /// monitor.  See [`MonitorStopReason::should_project`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -717,9 +737,9 @@ pub enum OmegaEvent {
     /// present in `events.jsonl`, never in `context.jsonl` or history.
     MonitorStderr(MonitorStderrEvent),
 
-    /// A monitor process stopped.  Unexpected reasons (`UserKilled`,
-    /// `ProcessExited`, `Crashed`) are projected into LLM context;
-    /// `AgentStopped` is not.
+    /// A monitor process stopped.  Unexpected reasons (`StoppedByUser`,
+    /// `ProcessExited`, `ProcessCrashed`) are projected into LLM context;
+    /// `StoppedByAgent` and `StoppedBySessionEnd` are not.
     MonitorStopped(MonitorStoppedEvent),
 }
 
@@ -1513,21 +1533,32 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Phase 0 — Async Monitors: MonitorStopReason::should_project()
+    // Phase 4 — adds StoppedBySessionEnd (not projected) and renames
+    //            AgentStopped→StoppedByAgent, UserKilled→StoppedByUser,
+    //            Crashed→ProcessCrashed.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn monitor_stop_reason_agent_stopped_is_not_projected() {
+    fn monitor_stop_reason_stopped_by_agent_is_not_projected() {
         assert!(
-            !MonitorStopReason::AgentStopped.should_project(),
-            "AgentStopped must NOT project — agent already knows it stopped the monitor"
+            !MonitorStopReason::StoppedByAgent.should_project(),
+            "StoppedByAgent must NOT project — agent already knows it stopped the monitor"
         );
     }
 
     #[test]
-    fn monitor_stop_reason_user_killed_is_projected() {
+    fn monitor_stop_reason_stopped_by_session_end_is_not_projected() {
         assert!(
-            MonitorStopReason::UserKilled.should_project(),
-            "UserKilled must project so agent learns the monitor was killed by the user"
+            !MonitorStopReason::StoppedBySessionEnd.should_project(),
+            "StoppedBySessionEnd must NOT project — session is terminating, no loop to notify"
+        );
+    }
+
+    #[test]
+    fn monitor_stop_reason_stopped_by_user_is_projected() {
+        assert!(
+            MonitorStopReason::StoppedByUser.should_project(),
+            "StoppedByUser must project so agent learns the monitor was killed by the user"
         );
     }
 
@@ -1540,10 +1571,10 @@ mod tests {
     }
 
     #[test]
-    fn monitor_stop_reason_crashed_is_projected() {
+    fn monitor_stop_reason_process_crashed_is_projected() {
         assert!(
-            MonitorStopReason::Crashed.should_project(),
-            "Crashed must project so agent learns the monitor crashed"
+            MonitorStopReason::ProcessCrashed.should_project(),
+            "ProcessCrashed must project so agent learns the monitor crashed"
         );
     }
 
@@ -1610,47 +1641,65 @@ mod tests {
     }
 
     #[test]
-    fn monitor_stopped_serde_round_trip_agent_stopped() {
+    fn monitor_stopped_serde_round_trip_stopped_by_agent() {
         let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
             id: "mon-1".into(),
-            reason: MonitorStopReason::AgentStopped,
+            reason: MonitorStopReason::StoppedByAgent,
             exit_code: Some(0),
             time: "2024-01-15T12:00:00.000Z".into(),
         });
         let json = serde_json::to_value(&ev).unwrap();
         assert_eq!(json["type"], "monitor_stopped");
         assert_eq!(json["id"], "mon-1");
-        assert_eq!(json["reason"], "agent_stopped");
+        assert_eq!(json["reason"], "stopped_by_agent");
         assert_eq!(json["exitCode"], 0);
         let back: OmegaEvent = serde_json::from_value(json).unwrap();
         assert_eq!(ev, back);
     }
 
     #[test]
-    fn monitor_stopped_serde_round_trip_crashed_no_exit_code() {
+    fn monitor_stopped_serde_round_trip_stopped_by_session_end() {
         let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
-            id: "mon-2".into(),
-            reason: MonitorStopReason::Crashed,
+            id: "mon-99".into(),
+            reason: MonitorStopReason::StoppedBySessionEnd,
             exit_code: None,
             time: "2024-01-15T12:00:00.000Z".into(),
         });
         let json = serde_json::to_value(&ev).unwrap();
-        assert_eq!(json["reason"], "crashed");
+        assert_eq!(json["reason"], "stopped_by_session_end");
+        assert!(
+            json["exitCode"].is_null(),
+            "session-end stop has no exit code"
+        );
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn monitor_stopped_serde_round_trip_process_crashed_no_exit_code() {
+        let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id: "mon-2".into(),
+            reason: MonitorStopReason::ProcessCrashed,
+            exit_code: None,
+            time: "2024-01-15T12:00:00.000Z".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["reason"], "process_crashed");
         assert!(json["exitCode"].is_null(), "absent exit code must be null");
         let back: OmegaEvent = serde_json::from_value(json).unwrap();
         assert_eq!(ev, back);
     }
 
     #[test]
-    fn monitor_stopped_user_killed_wire_format() {
+    fn monitor_stopped_stopped_by_user_wire_format() {
         let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
             id: "mon-3".into(),
-            reason: MonitorStopReason::UserKilled,
+            reason: MonitorStopReason::StoppedByUser,
             exit_code: Some(137),
             time: "2024-01-15T12:00:00.000Z".into(),
         });
         let json = serde_json::to_value(&ev).unwrap();
-        assert_eq!(json["reason"], "user_killed");
+        assert_eq!(json["reason"], "stopped_by_user");
         assert_eq!(json["exitCode"], 137);
         let back: OmegaEvent = serde_json::from_value(json).unwrap();
         assert_eq!(ev, back);
@@ -1708,7 +1757,7 @@ mod tests {
         let ts = "2025-04-01T00:00:00.000Z";
         let ev = OmegaEvent::MonitorStopped(MonitorStoppedEvent {
             id: "m".into(),
-            reason: MonitorStopReason::Crashed,
+            reason: MonitorStopReason::ProcessCrashed,
             exit_code: None,
             time: ts.into(),
         });

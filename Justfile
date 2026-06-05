@@ -222,6 +222,14 @@ mutants-agent-projection:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/agent.rs"
 
+# Run cargo-mutants targeted at the Phase 4 shutdown-logging logic.
+# Scoped to format_monitor_lines, format_monitor_stopped, and
+# shutdown_and_log_monitors in agent.rs.  Uses --in-place to avoid
+# copying the large target directory (6 GB) to TMPDIR.
+mutants-agent-shutdown:
+    cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
+        -F "shutdown_and_log_monitors|format_monitor_stopped|format_monitor_lines"
+
 # Run cargo-mutants targeted at the strict-resume fold logic (Phase 2.1-2.4).
 # Mutates session_resume.rs (resumable-boundary predicate, context-hash
 # reconstruction, model/effort folding, strict event reader).
@@ -283,7 +291,7 @@ mutants-monitors:
 
 # Run cargo-mutants targeted at the two monitor tool wrappers (Monitors Phase 1):
 # monitor() (spawn + MonitorStarted extra_event) and stop_monitor() (kill +
-# MonitorStopped/AgentStopped extra_event, no-op on unknown/dead). Exercised
+# MonitorStopped/StoppedByAgent extra_event, no-op on unknown/dead). Exercised
 # via execute_tool in the monitor E2E tests. Template: mutants-process-util.
 mutants-monitor-tools:
     mkdir -p {{mutants-tmp}}

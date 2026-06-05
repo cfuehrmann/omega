@@ -58,8 +58,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h1>Async Monitors for Omega</h1>
 <p class="meta">
-  <span class="tag tag-status">PHASE 0 IMPLEMENTED — PHASES 1–4 PENDING</span><br/>
-  <span class="meta">Phase 0 (event schema + context projection) landed in commit <code>0edc8d5</code>; the four <code>OmegaEvent</code> variants and the §12 decisions are now locked in <small class="path">crates/omega-types/src/events.rs</small> and <small class="path">crates/omega-agent/src/agent.rs</small>. The rest of this doc remains the design of record for Phases 1–4.</span><br/>
+  <span class="tag tag-status">ALL PHASES (0–4) IMPLEMENTED</span><br/>
+  <span class="meta">Phase 0 (event schema + context projection) landed in commit <code>0edc8d5</code>; Phase 4 (shutdown/resume/headless teardown + <code>MonitorStopReason</code> rename) completed the feature. The four <code>OmegaEvent</code> variants and the §12 decisions are locked in <small class="path">crates/omega-types/src/events.rs</small> and <small class="path">crates/omega-agent/src/agent.rs</small>. §12 documents the single-source-of-truth interlude refactor (between Phases 3 and 4).</span><br/>
   Design &amp; cold-start resume document. Self-contained: a future session with
   <em>no prior context</em> should be able to read this and either start
   implementing or continue the discussion. Written because the authoring session
@@ -318,13 +318,13 @@ const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows
     <strong>Event emission = single writer, via <code>extra_events</code>.</strong> The
     tools do not append events. <code>monitor()</code> returns
     <code>MonitorStarted</code> and <code>stop_monitor()</code> returns
-    <code>MonitorStopped{reason: AgentStopped}</code> on the
+    <code>MonitorStopped{reason: StoppedByAgent}</code> on the
     <code>ToolResult.extra_events</code> vec; the agent&rsquo;s dispatch loop persists those
     (same mechanism as <code>python_repl</code>&rsquo;s <code>PythonReplBootstrapped</code>).
     Phase 0&rsquo;s <code>Agent::append_monitor_started</code> /
     <code>inject_monitor_delivery</code> / <code>inject_monitor_stopped</code> remain unused for
     now &mdash; they are the hooks for the <em>loop-driven</em> paths Phase 2 adds (delivery
-    on drain; <code>ProcessExited</code>/<code>Crashed</code> stops).
+    on drain; <code>ProcessExited</code>/<code>ProcessCrashed</code> stops).
   </p>
   <div class="box ok">
     <strong>Phase 2 wiring checklist (no re-architecting needed):</strong>
@@ -356,7 +356,7 @@ const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows
         silently leaks the exact orphans the process-group design exists to prevent. The
         SIGKILL the waiter observes for an <em>agent</em>-killed monitor is suppressed (the
         entry is already <code>Stopped</code>), so this never double-classifies as
-        <code>Crashed</code>.</li>
+        <code>ProcessCrashed</code>.</li>
       <li><strong>DEFAULT / preset: opt-in, not default.</strong> <code>monitor</code> and
         <code>stop_monitor</code> join <code>ALL_TOOL_NAMES</code> and the <code>all</code>
         preset only — <em>not</em> <code>DEFAULT_TOOL_NAMES</code>/<code>standard</code>
@@ -372,7 +372,7 @@ const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows
     <strong>Deliberate Phase 1/2 boundary (not an oversight).</strong> In Phase 1 the
     waiter task only reaped the child and flipped the roster entry to <code>Stopped</code>
     &mdash; it did <em>not</em> capture the exit code, distinguish
-    <code>ProcessExited</code> vs <code>Crashed</code>, or enqueue a stop item, so
+    <code>ProcessExited</code> vs <code>ProcessCrashed</code>, or enqueue a stop item, so
     <em>projected</em> stop delivery for self-terminating monitors was unwired. <strong>Phase 2
     wired this</strong> (see the Phase 2 entry in &sect;11): the waiter now classifies the
     <code>ExitStatus</code> and enqueues <code>PendingItem::Stopped</code>, and on the
@@ -498,16 +498,18 @@ MonitorDelivery {                       // drained at a seam; projects role:user
                                          //  event, drained alongside — see open item)
 MonitorStderr  { id, chunk, time }       // DIAGNOSTIC: in events.jsonl, NOT in context.jsonl
 MonitorStopped { id, reason, exit_code, time }
-                                         // reason = AgentStopped | UserKilled | ProcessExited | Crashed
+                                         // reason = StoppedByAgent | StoppedByUser | ProcessExited | ProcessCrashed | StoppedBySessionEnd
 </code></pre>
 <ul>
   <li>The context fold must <strong>skip</strong> <code>MonitorStderr</code>.</li>
   <li><code>MonitorDelivery</code> (and any human user message drained with it) projects to
     <code>role:user</code>; consecutive user-role events merge into one API message at
     the projection boundary (satisfies role alternation + "batch at seam").</li>
-  <li>Unexpected <code>MonitorStopped</code> (<code>UserKilled</code>/<code>Crashed</code>/
+  <li>Unexpected <code>MonitorStopped</code> (<code>StoppedByUser</code>/<code>ProcessCrashed</code>/
     <code>ProcessExited</code> while the agent depends on it) should be projected into
-    context so the agent learns; clean <code>AgentStopped</code> need not.</li>
+    context so the agent learns; <code>StoppedByAgent</code> need not (agent already
+    knows it called <code>stop_monitor</code>), and <code>StoppedBySessionEnd</code>
+    need not (session is terminating — no loop to notify).</li>
 </ul>
 
 <h2 id="ui">9. UI design</h2>
@@ -520,7 +522,7 @@ MonitorStopped { id, reason, exit_code, time }
 <div class="box warn">
   <h4>Deferred to the next session &mdash; do NOT implement in Phase 3</h4>
   <ul>
-    <li><strong>Kill button / <code>KillMonitor</code> control frame.</strong> When picked up it needs: a new <code>MonitorManager</code> method that does the Running&rarr;Stopped status CAS, kills the process tree, enqueues a <code>PendingItem::Stopped{ reason: UserKilled, &hellip; }</code> (so the loop drains it into <code>MonitorStopped(UserKilled)</code> &mdash; single-writer preserved), and fires the roster-changed notify (so a loop parked on the last monitor wakes). Note <code>MonitorStopReason::UserKilled</code> exists in the schema but is currently unused. A <code>ClientFrame::KillMonitor{id}</code> would dispatch to it (mirror <code>handle_abort</code>).</li>
+    <li><strong>Kill button / <code>KillMonitor</code> control frame.</strong> When picked up it needs: a new <code>MonitorManager</code> method that does the Running&rarr;Stopped status CAS, kills the process tree, enqueues a <code>PendingItem::Stopped{ reason: StoppedByUser, &hellip; }</code> (so the loop drains it into <code>MonitorStopped(StoppedByUser)</code> &mdash; single-writer preserved), and fires the roster-changed notify (so a loop parked on the last monitor wakes). Note <code>MonitorStopReason::StoppedByUser</code> exists in the schema but is currently unused. A <code>ClientFrame::KillMonitor{id}</code> would dispatch to it (mirror <code>handle_abort</code>).</li>
     <li><strong>Live pending-queue visualization</strong> (sub-seam state; would need per-enqueue streaming).</li>
     <li><strong>Real-time (per-line) badge updates</strong> &mdash; seam-aligned updates are sufficient now.</li>
   </ul>
@@ -543,7 +545,7 @@ MonitorStopped { id, reason, exit_code, time }
     <small class="path">crates/omega-types/src/events.rs</small>. Mark
     <code>MonitorStderr</code> non-projected in the context fold. Ensure the projection
     merges consecutive user-role events into one API message. Tests: fold invariants,
-    projection merge, non-projection of stderr. <em>As built:</em> the merge is a request-assembly step (<code>project_messages()</code>), not a property of <code>context.jsonl</code> on disk — see §7. §12 decisions locked: monitor-only delivery items; <code>AgentStopped</code> not projected, other stop reasons projected; <code>MonitorStarted</code> not resurfaced.</li>
+    projection merge, non-projection of stderr. <em>As built:</em> the merge is a request-assembly step (<code>project_messages()</code>), not a property of <code>context.jsonl</code> on disk — see §7. §12 decisions locked: monitor-only delivery items; <code>StoppedByAgent</code> not projected, other stop reasons projected; <code>MonitorStarted</code> not resurfaced.</li>
   <li><strong>Phase 1 — Monitor runtime. <span class="keep">✔ DONE</span>.</strong> Process manager (<code>MonitorManager</code>,
     <small class="path">crates/omega-tools/src/monitors.rs</small>): spawn shell command in its own
     process group, stdout line → in-memory pending queue, stderr line → queue (chatty; becomes
@@ -551,7 +553,7 @@ MonitorStopped { id, reason, exit_code, time }
     (<code>kill_group</code>) on <code>stop()</code> and <code>shutdown()</code> (session-end reaping; no orphans).
     Ephemeral roster (id, description, command, status, start time, event-fired count, stderr tail).
     Tools <code>monitor(description, command)</code> / <code>stop_monitor(id)</code> &mdash; both return
-    immediately; <code>MonitorStarted</code> / <code>MonitorStopped(AgentStopped)</code> are emitted via the
+    immediately; <code>MonitorStarted</code> / <code>MonitorStopped(StoppedByAgent)</code> are emitted via the
     tool result&rsquo;s <code>extra_events</code> (single-writer: the agent appends, the monitor never does);
     stopping a dead/unknown monitor is a no-op. <em>Ownership + clean-cutover decisions: see the Phase 1
     build note in &sect;4.</em> The tools are intentionally <strong>not</strong> exposed to the model yet
@@ -569,14 +571,14 @@ MonitorStopped { id, reason, exit_code, time }
     tool_use/tool_result pair is never split); stderr becomes a non-projected
     <code>MonitorStderr</code>. <strong>Exit-status capture</strong> (now in scope): the
     waiter classifies <code>ProcessExited</code> (normal exit, any code) vs
-    <code>Crashed</code> (signal death, no exit code) and enqueues a new
+    <code>ProcessCrashed</code> (signal death, no exit code) and enqueues a new
     <code>PendingItem::Stopped{monitor_id, reason, exit_code}</code> — single-writer
     preserved: the waiter only enqueues, the loop injects via
     <code>inject_monitor_stopped</code> (projects per <code>should_project()</code>). A
     natural Running→Stopped transition also calls <code>kill_group</code> to reap
     orphaned grandchildren (decision below); the SIGKILL the waiter then observes for an
     agent-/shutdown-killed monitor is suppressed (it was already <code>Stopped</code>), so
-    no spurious <code>Crashed</code>. <strong>Parking select</strong>: when a cycle would
+    no spurious <code>ProcessCrashed</code>. <strong>Parking select</strong>: when a cycle would
     end, the loop parks iff a live monitor or queued item exists, else terminates (never
     hangs when nothing can fire). While parked it blocks on a select over
     <code>{human (ControlHandle continue/abort), queue (item-notify), roster-changed}</code>;
@@ -603,13 +605,52 @@ MonitorStopped { id, reason, exit_code, time }
   <li><strong>Phase 3 &mdash; WS + UI. <span class="keep">&#x2714; DONE</span> (read-only roster surface).</strong>
     <p><strong>Scope:</strong> server-authoritative ephemeral roster push. <code>WsMessage::MonitorRoster</code> variant added to the transport layer (never an <code>OmegaEvent</code>; never persisted to <code>events.jsonl</code>). The server stashes <code>Arc&lt;MonitorManager&gt;</code> in <code>ActiveSession</code> and pushes a fresh snapshot (a)&nbsp;on client connect/reconnect, (b)&nbsp;after reset/resume, and (c)&nbsp;after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event in the streaming task. Frontend: <code>roster: RwSignal</code> in <code>SessionStore</code>; <code>MonitorsBadge</code> (header badge, hidden when empty, shows running count + total fired count) + <code>MonitorsModal</code> (roster table with all fields) in <small class="path">frontends/leptos/src/monitors_panel.rs</small>. Tests: WS-level tests (roster sent on connect-with-session; roster not in events.jsonl), unit tests for <code>is_monitor_event</code> and <code>roster_snapshot_msg</code>, snapshot tests for badge/modal. Mutation recipes: <code>mutants-monitor-roster-push</code> (3 mutants, 2 caught, 1 unviable), <code>mutants-monitor-ws-message</code> (0 mutants &mdash; <code>serde_json::json!</code> macros are not mutated; wire-format covered by unit tests that snapshot the exact JSON output).</p>
     <p><strong>Deferred (see &sect;9):</strong> Kill button / <code>KillMonitor</code> control frame; live pending-queue visualization; real-time per-line badge updates.</p></li>
-  <li><strong>Phase 4 — Shutdown / resume / headless.</strong> Clean shutdown kills + logs
-    <code>MonitorStopped</code>. Verify resume does not revive monitors. Headless relies on
-    session end + external time limit.</li>
+  <li><strong>Phase 4 — Shutdown / resume / headless. <span class="keep">&#x2714; DONE</span>.</strong>
+    <p><strong>Scope:</strong> (a) <code>MonitorStopReason</code> rename + new variant; (b) shutdown logging; (c) resume-safety proof; (d) headless CLI teardown.</p>
+    <p><strong>(a) <code>MonitorStopReason</code> rename + <code>StoppedBySessionEnd</code>.</strong>
+    The original variant names (<code>AgentStopped</code>, <code>UserKilled</code>, <code>Crashed</code>)
+    were renamed to <code>StoppedByAgent</code>, <code>StoppedByUser</code>, <code>ProcessCrashed</code>
+    to disambiguate actor vs event.  A new variant <code>StoppedBySessionEnd</code>
+    was added (wire value: <code>stopped_by_session_end</code>).
+    Per the loud-schema-change rule: the teardown path is a <em>different actor</em>
+    (session lifecycle) from an explicit <code>stop_monitor</code> call (<code>StoppedByAgent</code>)
+    — they must not share a variant.  Old logs with the previous wire values
+    (<code>agent_stopped</code>, <code>user_killed</code>, <code>crashed</code>) fail loudly on
+    deserialization (no defensive <code>#[serde(alias)]</code>) as intended.
+    <code>should_project()</code> returns <code>false</code> for both <code>StoppedByAgent</code> (agent
+    already knows) and <code>StoppedBySessionEnd</code> (session is terminating, no loop to
+    notify); <code>true</code> for <code>StoppedByUser</code>, <code>ProcessExited</code>, <code>ProcessCrashed</code>.</p>
+    <p><strong>(b) Shutdown logging.</strong>
+    <code>Agent::shutdown_and_log_monitors()</code> kills every live monitor's process tree
+    (via the existing <code>MonitorManager::shutdown()</code> CAS) and persists a
+    <code>MonitorStopped(StoppedBySessionEnd)</code> event for each.  Single-writer
+    preserved: the server calls <code>request_abort()</code> first, ensuring the agent loop
+    has stopped writing before teardown writes.  Wired at
+    <small class="path">omega-server/src/router.rs</small> (<code>handle_reset</code> and
+    <code>handle_resume_session</code>, before the slot is replaced) and
+    <small class="path">crates/omega-cli/src/main.rs</small> (after the stream drains,
+    before returning the exit code).  <code>Agent::drop</code> remains a kill-only backstop
+    (no logging — Drop is synchronous and has no access to the event store).</p>
+    <p><strong>(c) Resume-safety proof.</strong>
+    A resumed session always gets a fresh empty <code>MonitorManager</code>;
+    <code>handle_resume_session</code> only replays prior events into LLM context,
+    never calls <code>monitor_start</code> or spawns processes.
+    Two tests in <small class="path">omega-server/src/router.rs</small> prove this:
+    <code>resume_does_not_revive_completed_monitor</code> (prior session has
+    <code>MonitorStarted</code>+<code>MonitorStopped</code>) and
+    <code>resume_does_not_revive_dangling_monitor</code> (prior session has only
+    <code>MonitorStarted</code>, simulating a crash before clean shutdown).
+    Both assert an empty roster after resume.</p>
+    <p><strong>(d) Headless CLI teardown.</strong>
+    Tests in <small class="path">crates/omega-agent/tests/internal.rs</small>:
+    <code>shutdown_and_log_monitors_kills_process_and_persists_session_end_stop</code>
+    (process killed + event logged) and
+    <code>shutdown_and_log_monitors_does_not_double_log_already_stopped_monitor</code>
+    (CAS guard prevents double-logging for naturally-exited monitors).</p></li>
 </ol>
 
 <h2 id="ssr">12. Single-source-of-truth refactor &amp; monitor promotion (implemented)</h2>
-<p>Phase 4 completed the following structural changes:</p>
+<p>This was an unscheduled interlude refactor between Phases 3 and 4 — NOT Phase 4 itself. It completed the following structural changes:</p>
 <ul>
   <li><strong>Single source of truth — tool registry moved to <small class="path">crates/omega-types/src/tools.rs</small>.</strong>
     Previously, tool-name lists (<code>DEFAULT_TOOL_NAMES</code>, <code>ALL_TOOL_NAMES</code>,

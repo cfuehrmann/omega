@@ -25,11 +25,11 @@
 //!
 //! - **Kill button / KillMonitor control frame** — when picked up it needs:
 //!   a new `MonitorManager` method doing the Running→Stopped CAS, killing
-//!   the process tree, enqueuing `PendingItem::Stopped { reason: UserKilled }`
-//!   (so the drain loop emits `MonitorStopped(UserKilled)` via the
+//!   the process tree, enqueuing `PendingItem::Stopped { reason: StoppedByUser }`
+//!   (so the drain loop emits `MonitorStopped(StoppedByUser)` via the
 //!   single-writer path), and firing the roster-changed notify.  A
 //!   `ClientFrame::KillMonitor { id }` would dispatch to it (mirror
-//!   `handle_abort`).  `MonitorStopReason::UserKilled` exists in the schema
+//!   `handle_abort`).  `MonitorStopReason::StoppedByUser` exists in the schema
 //!   but is currently unused.
 //! - **Live pending-queue visualisation** (sub-seam state; would need
 //!   per-enqueue streaming).

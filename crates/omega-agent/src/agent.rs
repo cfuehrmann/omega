@@ -595,10 +595,11 @@ fn format_monitor_lines(monitor_id: &str, lines: &[String]) -> String {
 /// Format a `MonitorStopped` notification for injection into the LLM context.
 fn format_monitor_stopped(id: &str, reason: &MonitorStopReason, exit_code: Option<i32>) -> String {
     let reason_str = match reason {
-        MonitorStopReason::AgentStopped => "agent_stopped",
-        MonitorStopReason::UserKilled => "user_killed",
+        MonitorStopReason::StoppedByAgent => "stopped_by_agent",
+        MonitorStopReason::StoppedByUser => "stopped_by_user",
         MonitorStopReason::ProcessExited => "process_exited",
-        MonitorStopReason::Crashed => "crashed",
+        MonitorStopReason::ProcessCrashed => "process_crashed",
+        MonitorStopReason::StoppedBySessionEnd => "stopped_by_session_end",
     };
     match exit_code {
         Some(code) => {
@@ -1099,9 +1100,10 @@ impl Agent {
     /// into the LLM context.
     ///
     /// Projection rule (§12 locked decision):
-    /// - `AgentStopped` → **not projected** (agent already knows).
-    /// - `UserKilled`, `ProcessExited`, `Crashed` → **projected** as
-    ///   `role: user` so the agent learns and does not block waiting on
+    /// - `StoppedByAgent` → **not projected** (agent already knows).
+    /// - `StoppedBySessionEnd` → **not projected** (session ending).
+    /// - `StoppedByUser`, `ProcessExited`, `ProcessCrashed` → **projected**
+    ///   as `role: user` so the agent learns and does not block waiting on
     ///   a dead monitor.
     ///
     /// # Errors
@@ -1157,6 +1159,34 @@ impl Agent {
     #[must_use]
     pub fn shutdown_monitors(&self) -> Vec<String> {
         self.monitors.shutdown()
+    }
+
+    /// Kill every live monitor AND persist a
+    /// `MonitorStopped(StoppedBySessionEnd)` event for each one.
+    ///
+    /// Safe to call after the agent loop has terminated: the loop is the
+    /// only other writer, so calling this from a teardown path preserves
+    /// the single-writer rule.
+    ///
+    /// Reuses the `shutdown` CAS so monitors that already reached a
+    /// terminal state are not double-logged.  Best-effort: individual
+    /// store failures are silently discarded (session is ending anyway).
+    ///
+    /// Returns the `MonitorStopped` events that were written.
+    pub async fn shutdown_and_log_monitors(&mut self) -> Vec<OmegaEvent> {
+        let killed = self.monitors.shutdown();
+        let mut logged = Vec::with_capacity(killed.len());
+        for id in killed {
+            // Best-effort: silently discard individual store failures
+            // (session is ending anyway).
+            if let Ok(ev) = self
+                .inject_monitor_stopped(id, MonitorStopReason::StoppedBySessionEnd, None)
+                .await
+            {
+                logged.push(ev);
+            }
+        }
+        logged
     }
 
     /// Drain the monitor pending-queue once and persist every drained item

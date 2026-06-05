@@ -1301,7 +1301,8 @@ async fn tool_selection_drives_request_tools_and_system_prompt() {
 //
 // Additionally:
 //   (e) MonitorStopped with an unexpected reason IS projected.
-//   (f) MonitorStopped with AgentStopped is NOT projected.
+//   (f) MonitorStopped with StoppedByAgent is NOT projected.
+//   (g) MonitorStopped with StoppedBySessionEnd is NOT projected.
 //
 // All tests drive the public Agent API and observe effects via
 // history() / MockProvider.take_requests().
@@ -1516,14 +1517,14 @@ async fn monitor_started_not_projected_into_context() {
 
 /// (e) MonitorStopped with an unexpected reason projects into context.
 ///
-/// Unexpected reasons (UserKilled, ProcessExited, Crashed) must add a
-/// role:user notification to history so the agent learns.
+/// Unexpected reasons (StoppedByUser, ProcessExited, ProcessCrashed) must add
+/// a role:user notification to history so the agent learns.
 #[tokio::test]
 async fn monitor_stopped_unexpected_projected_into_context() {
     for reason in [
-        MonitorStopReason::UserKilled,
+        MonitorStopReason::StoppedByUser,
         MonitorStopReason::ProcessExited,
-        MonitorStopReason::Crashed,
+        MonitorStopReason::ProcessCrashed,
     ] {
         let (mut agent, provider, _tmp) = make_test_agent();
         agent.init().await.expect("init");
@@ -1564,7 +1565,7 @@ async fn monitor_stopped_unexpected_projected_into_context() {
     }
 }
 
-/// (f) MonitorStopped with AgentStopped is NOT projected into context.
+/// (f) MonitorStopped with StoppedByAgent is NOT projected into context.
 ///
 /// The agent already knows it stopped the monitor; no notification needed.
 #[tokio::test]
@@ -1573,14 +1574,14 @@ async fn monitor_stopped_agent_stopped_not_projected() {
     agent.init().await.expect("init");
 
     agent
-        .inject_monitor_stopped("mon-1".into(), MonitorStopReason::AgentStopped, Some(0))
+        .inject_monitor_stopped("mon-1".into(), MonitorStopReason::StoppedByAgent, Some(0))
         .await
         .expect("inject_monitor_stopped");
 
     assert_eq!(
         agent.history().len(),
         0,
-        "AgentStopped must NOT add to in-memory history"
+        "StoppedByAgent must NOT add to in-memory history"
     );
 
     // Drive a turn — only the user text must reach the API.
@@ -1592,7 +1593,42 @@ async fn monitor_stopped_agent_stopped_not_projected() {
     let body = serde_json::to_string(&reqs[0].messages[0].content).unwrap();
     assert!(
         !body.contains("mon-1"),
-        "AgentStopped must NOT inject into API context, got: {body}"
+        "StoppedByAgent must NOT inject into API context, got: {body}"
+    );
+}
+
+/// (g) MonitorStopped with StoppedBySessionEnd is NOT projected into context.
+///
+/// Session teardown writes this reason; no running loop to notify.
+#[tokio::test]
+async fn monitor_stopped_by_session_end_not_projected() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    agent
+        .inject_monitor_stopped(
+            "mon-se".into(),
+            MonitorStopReason::StoppedBySessionEnd,
+            None,
+        )
+        .await
+        .expect("inject_monitor_stopped");
+
+    assert_eq!(
+        agent.history().len(),
+        0,
+        "StoppedBySessionEnd must NOT add to in-memory history"
+    );
+
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    let _ = collect_stream(agent.send_message("hi".into(), CancellationToken::new())).await;
+
+    let reqs = provider.take_requests();
+    assert_eq!(reqs[0].messages.len(), 1, "only user 'hi' must appear");
+    let body = serde_json::to_string(&reqs[0].messages[0].content).unwrap();
+    assert!(
+        !body.contains("mon-se"),
+        "StoppedBySessionEnd must NOT inject into API context, got: {body}"
     );
 }
 
@@ -1994,7 +2030,7 @@ async fn crashed_stop_is_classified_from_signal() {
             _ => None,
         })
         .expect("a MonitorStopped event");
-    assert_eq!(stopped.reason, MonitorStopReason::Crashed);
+    assert_eq!(stopped.reason, MonitorStopReason::ProcessCrashed);
     assert_eq!(stopped.exit_code, None, "signal death carries no exit code");
 }
 
@@ -2232,5 +2268,114 @@ async fn seam_a_batches_multiple_lines_from_one_monitor() {
         delivery[0].lines,
         vec!["l1".to_owned(), "l2".to_owned()],
         "batched lines must preserve order"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Task 4 (Phase 4): headless / session-end shutdown logging
+// ---------------------------------------------------------------------------
+//
+// `shutdown_and_log_monitors` must:
+//  1. Kill every still-running monitor's process tree.
+//  2. Persist exactly one `MonitorStopped(StoppedBySessionEnd)` event per
+//     killed monitor to events.jsonl.
+//  3. Respect the CAS: monitors that already have a terminal status (naturally
+//     exited before the call) must NOT be double-logged.
+
+/// `shutdown_and_log_monitors` kills a live monitor and writes
+/// `MonitorStopped(StoppedBySessionEnd)` to events.jsonl.
+#[tokio::test]
+async fn shutdown_and_log_monitors_kills_process_and_persists_session_end_stop() {
+    use omega_types::events::{MonitorStopReason, MonitorStoppedEvent};
+
+    let work = tempfile::tempdir().expect("tempdir");
+    let pidfile = work.path().join("pid");
+
+    let (mut agent, _provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    // Spawn a long-lived monitor so it is still running at teardown.
+    let cmd = format!("echo $$ > {}; sleep 300", pidfile.display());
+    let mgr = agent.monitor_manager();
+    let spawned = mgr.spawn("teardown-mon", &cmd).expect("spawn");
+    let monitor_id = spawned.id.clone();
+    drop(mgr); // release the Arc clone; agent owns the canonical one
+
+    // Wait for the PID to appear.
+    let pid = read_pid(&pidfile)
+        .await
+        .expect("monitor PID should appear within deadline");
+    assert!(
+        proc_dir_exists(pid),
+        "monitor must be running before teardown"
+    );
+
+    // ---------- teardown ----------
+    let logged = agent.shutdown_and_log_monitors().await;
+
+    // 1. Exactly one event was logged (the one live monitor).
+    assert_eq!(
+        logged.len(),
+        1,
+        "shutdown must log exactly one event for the one live monitor"
+    );
+
+    // 2. The logged event carries the correct reason and id.
+    match &logged[0] {
+        OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+            id,
+            reason,
+            exit_code,
+            ..
+        }) => {
+            assert_eq!(id, &monitor_id);
+            assert_eq!(*reason, MonitorStopReason::StoppedBySessionEnd);
+            assert_eq!(
+                *exit_code, None,
+                "exit_code must be None for session-end stop"
+            );
+        }
+        other => panic!("expected MonitorStopped, got {other:?}"),
+    }
+
+    // 3. The monitor process was killed.
+    assert!(
+        poll_proc_gone(pid).await,
+        "shutdown must kill the monitor process tree (pid {pid})"
+    );
+}
+
+/// `shutdown_and_log_monitors` does NOT double-log a monitor that already
+/// has a terminal event (naturally exited before teardown fires).
+#[tokio::test]
+async fn shutdown_and_log_monitors_does_not_double_log_already_stopped_monitor() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    // Spawn a monitor that exits immediately.
+    let mgr = agent.monitor_manager();
+    let spawned = mgr.spawn("instant-exit", "true").expect("spawn");
+    let monitor_id = spawned.id.clone();
+
+    // Wait until the manager CAS advances to Stopped.
+    poll_until(
+        || mgr.status(&monitor_id) == Some(MonitorStatus::Stopped),
+        "instant-exit monitor must reach Stopped status",
+    )
+    .await;
+
+    // Run a turn so the agent drains the stop item via Seam A (which advances
+    // the CAS and logs MonitorStopped).
+    for _ in 0..4 {
+        provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    }
+    drop(mgr); // release extra Arc clone before the mutable borrow below
+    let _ = collect_stream(agent.send_message("hi".into(), CancellationToken::new())).await;
+
+    // Now call shutdown — the monitor is already terminal; must return empty.
+    let logged = agent.shutdown_and_log_monitors().await;
+    assert!(
+        logged.is_empty(),
+        "shutdown must not double-log an already-stopped monitor; got {logged:?}"
     );
 }

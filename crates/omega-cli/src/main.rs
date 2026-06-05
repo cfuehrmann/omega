@@ -324,6 +324,13 @@ async fn run(
         }
     }
 
+    // Phase 4: drop the stream (releases the mutable borrow on `agent`),
+    // then kill any still-running monitors and persist
+    // MonitorStopped(StoppedBySessionEnd) for each.  The stream has already
+    // drained, so the agent loop is done writing — single-writer preserved.
+    drop(stream);
+    agent.shutdown_and_log_monitors().await;
+
     exit_code
 }
 

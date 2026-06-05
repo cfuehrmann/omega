@@ -310,10 +310,10 @@ fn all_31_events() -> Vec<OmegaEvent> {
             chunk: "tail: inotify resources exhausted".into(),
             time: T.into(),
         }),
-        // 31. MonitorStopped — unexpected stop (Crashed) projects into context.
+        // 31. MonitorStopped — unexpected stop (ProcessCrashed) projects into context.
         OmegaEvent::MonitorStopped(MonitorStoppedEvent {
             id: "mon-1".into(),
-            reason: MonitorStopReason::Crashed,
+            reason: MonitorStopReason::ProcessCrashed,
             exit_code: None,
             time: T.into(),
         }),

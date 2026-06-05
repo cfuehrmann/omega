@@ -1,7 +1,7 @@
 //! `stop_monitor(id)` — stop an async monitor.
 //!
 //! Returns **immediately**.  Kills the monitor's whole process tree (no
-//! orphans) and emits a `MonitorStopped` event with reason `AgentStopped`
+//! orphans) and emits a `MonitorStopped` event with reason `StoppedByAgent`
 //! via `extra_events` (single-writer rule — the agent loop records it).
 //!
 //! Stopping a **dead or unknown** monitor is a **no-op**, not an error: the
@@ -35,7 +35,7 @@ pub fn execute(input: &Value, ctx: Option<&ToolCtx>) -> ToolResult {
             .extra_events
             .push(OmegaEvent::MonitorStopped(MonitorStoppedEvent {
                 id: id.to_owned(),
-                reason: MonitorStopReason::AgentStopped,
+                reason: MonitorStopReason::StoppedByAgent,
                 exit_code: None,
                 time: now_iso(),
             }));

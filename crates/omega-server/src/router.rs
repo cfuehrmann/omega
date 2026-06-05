@@ -987,6 +987,18 @@ async fn handle_reset(
         }
     }
 
+    // Phase 4: kill every live monitor on the outgoing session AND persist
+    // MonitorStopped(StoppedBySessionEnd) for each.  The abort above ensures
+    // the agent loop has stopped writing so the single-writer rule is
+    // preserved.  Best-effort (failures are silently discarded).
+    {
+        let slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_ref() {
+            let mut agent = active.agent.lock().await;
+            agent.shutdown_and_log_monitors().await;
+        }
+    }
+
     let (mut session, _dir_name) =
         create_active_session(state, model, effort, tool_selection).await?;
     session.ws_tx = Some(tx.clone());
@@ -1051,6 +1063,18 @@ async fn handle_resume_session(
         let slot = state.active_session.lock().await;
         if let Some(active) = slot.as_ref() {
             active.controls.request_abort();
+        }
+    }
+
+    // Phase 4: kill every live monitor on the outgoing session AND persist
+    // MonitorStopped(StoppedBySessionEnd) for each.  The abort above ensures
+    // the agent loop has stopped writing so the single-writer rule is
+    // preserved.  Best-effort (failures are silently discarded).
+    {
+        let slot = state.active_session.lock().await;
+        if let Some(active) = slot.as_ref() {
+            let mut agent = active.agent.lock().await;
+            agent.shutdown_and_log_monitors().await;
         }
     }
 
@@ -1549,9 +1573,10 @@ mod tests {
     use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
     use tempfile::TempDir;
 
-    use super::{clear_ws_tx, create_active_session, install_ws_tx};
+    use super::{clear_ws_tx, create_active_session, handle_resume_session, install_ws_tx};
     use crate::AppState;
     use crate::ws_message::WsMessage;
+    use omega_store;
 
     /// Provider stub yielding an empty stream — fine for `Agent::init`,
     /// which never invokes the provider.
@@ -1680,8 +1705,8 @@ mod tests {
     fn is_monitor_event_true_for_monitor_stopped() {
         let item = AgentItem::event(OmegaEvent::MonitorStopped(MonitorStoppedEvent {
             id: "m".to_owned(),
-            reason: MonitorStopReason::ProcessExited,
-            exit_code: Some(0),
+            reason: MonitorStopReason::ProcessCrashed,
+            exit_code: None,
             time: "t".to_owned(),
         }));
         assert!(is_monitor_event(&item));
@@ -1939,6 +1964,99 @@ mod tests {
         assert_eq!(
             dir_first_then_alpha("abc", true, "abc", true),
             Ordering::Equal,
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Task 3 (Phase 4): resume does NOT revive monitors
+    //
+    // Justification for inline test block: `handle_resume_session`
+    // assembles a fresh session (new MonitorManager) and replays prior
+    // events only into LLM context; it never calls `monitor_start` or
+    // spawns any processes.  These tests prove the invariant for both
+    // the completed-monitor and dangling-monitor (simulated-crash)
+    // scenarios end-to-end through the real server path.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn resume_does_not_revive_completed_monitor() {
+        // Prior session: MonitorStarted + MonitorStopped (clean shutdown).
+        // Resumed roster must be empty — no process should be spawned.
+        let tmp = TempDir::new().unwrap();
+        let state = test_state(&tmp);
+
+        // Build prior session dir with a completed monitor.
+        let prior_id = "2025-01-01T00-00-00-000-deadbeef";
+        let prior_dir = tmp.path().join("sessions").join(prior_id);
+        std::fs::create_dir_all(&prior_dir).unwrap();
+        let prior_store = omega_store::EventStore::new(prior_dir.join("events.jsonl"));
+        prior_store
+            .append(&OmegaEvent::MonitorStarted(MonitorStartedEvent {
+                id: "m1".to_owned(),
+                description: "test monitor".to_owned(),
+                command: "sleep 9999".to_owned(),
+                time: "2025-01-01T00:00:00.000Z".to_owned(),
+            }))
+            .await
+            .unwrap();
+        prior_store
+            .append(&OmegaEvent::MonitorStopped(MonitorStoppedEvent {
+                id: "m1".to_owned(),
+                reason: MonitorStopReason::ProcessExited,
+                exit_code: Some(0),
+                time: "2025-01-01T00:01:00.000Z".to_owned(),
+            }))
+            .await
+            .unwrap();
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
+        handle_resume_session(&state, &tx, prior_id.to_owned(), true)
+            .await
+            .unwrap();
+
+        let slot = state.active_session.lock().await;
+        let active = slot.as_ref().expect("session must exist after resume");
+        assert!(
+            active.monitor_manager.roster().is_empty(),
+            "resumed session roster must be empty for a completed monitor",
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_does_not_revive_dangling_monitor() {
+        // Prior session: MonitorStarted but NO MonitorStopped — simulates
+        // a crash before clean shutdown (Phase 4 gap scenario).  The
+        // resumed roster must still be empty; the dangling MonitorStarted
+        // must not spawn a new process.
+        let tmp = TempDir::new().unwrap();
+        let state = test_state(&tmp);
+
+        let prior_id = "2025-01-01T00-00-00-000-cafebabe";
+        let prior_dir = tmp.path().join("sessions").join(prior_id);
+        std::fs::create_dir_all(&prior_dir).unwrap();
+        let prior_store = omega_store::EventStore::new(prior_dir.join("events.jsonl"));
+        prior_store
+            .append(&OmegaEvent::MonitorStarted(MonitorStartedEvent {
+                id: "m2".to_owned(),
+                description: "dangling monitor".to_owned(),
+                command: "sleep 9999".to_owned(),
+                time: "2025-01-01T00:00:00.000Z".to_owned(),
+            }))
+            .await
+            .unwrap();
+        // Intentionally no MonitorStopped — simulates a crash/kill
+        // before Phase 4 shutdown logging could run.
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
+        handle_resume_session(&state, &tx, prior_id.to_owned(), true)
+            .await
+            .unwrap();
+
+        let slot = state.active_session.lock().await;
+        let active = slot.as_ref().expect("session must exist after resume");
+        assert!(
+            active.monitor_manager.roster().is_empty(),
+            "resumed session roster must be empty even for a dangling MonitorStarted (simulated crash)",
         );
     }
 }
