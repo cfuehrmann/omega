@@ -5,11 +5,22 @@
 //! ```text
 //! App
 //!  ├── provide_context::<MonitorsPanelOpen>
-//!  └── MonitorsBadge   ← shown in header area (hidden when roster is empty)
+//!  └── MonitorsBadge   ← always-visible header entry point to the roster modal
 //!       └── MonitorsModal ← full-viewport modal toggled by the badge
 //! ```
 //!
 //! ## Design (§9 of docs/monitors-design.html — server-authoritative push)
+//!
+//! The badge is **always visible** (never gated on roster size).  Monitors
+//! are default-on and the badge is the only entry point to the modal, so
+//! hiding it when the roster is empty makes the feature undiscoverable.  The
+//! always-visible approach is also simpler and more robust — no reactive
+//! guard needed.
+//!
+//! If the store ever cleanly surfaces whether monitors are disabled in the
+//! current session's tool selection, the badge *could* be conditionally
+//! hidden — but only when that signal is clean and cheap.  For now,
+//! always-visible is the right default.
 //!
 //! The server pushes a [`WsMessage::MonitorRoster`] snapshot:
 //! - once when the client connects/resumes (so the badge is current after a
@@ -21,7 +32,7 @@
 //! The frontend stores the latest snapshot in `SessionStore::roster` and
 //! this module reads from that signal.
 //!
-//! ## Deferred (out of scope for Phase 3)
+//! ## Deferred
 //!
 //! - **Kill button / KillMonitor control frame** — when picked up it needs:
 //!   a new `MonitorManager` method doing the Running→Stopped CAS, killing
@@ -31,8 +42,8 @@
 //!   `ClientFrame::KillMonitor { id }` would dispatch to it (mirror
 //!   `handle_abort`).  `MonitorStopReason::StoppedByUser` exists in the schema
 //!   but is currently unused.
-//! - **Live pending-queue visualisation** (sub-seam state; would need
-//!   per-enqueue streaming).
+//! - **Live pending-queue visualisation** (PLANNED — wanted, not yet
+//!   scheduled; sub-seam state would need per-enqueue streaming).
 
 use leptos::ev;
 use leptos::prelude::*;
@@ -97,18 +108,33 @@ pub fn total_fired(roster: &[MonitorRosterEntry]) -> u64 {
     roster.iter().map(|m| m.fired_count).sum()
 }
 
+/// Label text for the badge count span.
+///
+/// Returns `"Monitors"` when no monitors are running (idle / discoverable
+/// state) so the badge always reads naturally.  Returns `"{n} running"` when
+/// at least one monitor is active.
+#[must_use]
+pub fn badge_label(running: usize) -> String {
+    if running == 0 {
+        "Monitors".to_owned()
+    } else {
+        format!("{running} running")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MonitorsBadge component
 // ---------------------------------------------------------------------------
 
-/// Header badge showing live monitor activity.
+/// Header badge showing live monitor activity — always visible.
 ///
-/// Hidden when the roster is empty (no monitors in this session).
-/// Clicking the badge opens [`MonitorsModal`].
+/// Clicking the badge opens [`MonitorsModal`].  When no monitors are
+/// running the badge shows the idle label "Monitors" so the feature remains
+/// discoverable even in a session that has never started one.
 ///
 /// Marked `#[mutants::skip]` — the reactive/DOM body is exercised by the
-/// snapshot tests; the two pure derivation functions carry the mutation-test
-/// budget.
+/// snapshot tests; the pure derivation functions (`running_count`,
+/// `total_fired`, `badge_label`) carry the mutation-test budget.
 #[mutants::skip]
 #[component]
 pub fn MonitorsBadge() -> impl IntoView {
@@ -118,29 +144,25 @@ pub fn MonitorsBadge() -> impl IntoView {
 
     let running = Memo::new(move |_| store.roster.with(|r| running_count(r)));
     let fired = Memo::new(move |_| store.roster.with(|r| total_fired(r)));
-    let has_any = Memo::new(move |_| store.roster.with(|r| !r.is_empty()));
 
     view! {
-        <Show when=move || has_any.get() fallback=|| ()>
-            <button
-                class="monitors-badge"
-                data-testid="monitors-badge"
-                title="Live monitors — click to inspect"
-                on:click=move |_| panel_open.toggle()
-            >
-                <span class="monitors-badge-count" data-testid="monitors-badge-count">
-                    {move || running.get()}
-                    " running"
+        <button
+            class="monitors-badge"
+            data-testid="monitors-badge"
+            title="Live monitors — click to inspect"
+            on:click=move |_| panel_open.toggle()
+        >
+            <span class="monitors-badge-count" data-testid="monitors-badge-count">
+                {move || badge_label(running.get())}
+            </span>
+            <Show when=move || fired.get() != 0 fallback=|| ()>
+                <span class="monitors-badge-fired" data-testid="monitors-badge-fired">
+                    {move || fired.get()}
+                    " fired"
                 </span>
-                <Show when=move || fired.get() != 0 fallback=|| ()>
-                    <span class="monitors-badge-fired" data-testid="monitors-badge-fired">
-                        {move || fired.get()}
-                        " fired"
-                    </span>
-                </Show>
-            </button>
-            <MonitorsModal />
-        </Show>
+            </Show>
+        </button>
+        <MonitorsModal />
     }
 }
 
@@ -183,61 +205,79 @@ pub fn MonitorsModal() -> impl IntoView {
                         >"✕"</button>
                     </div>
 
-                    // Roster table
-                    <table class="monitors-table">
-                        <thead>
-                            <tr>
-                                <th class="mt-header">"ID"</th>
-                                <th class="mt-header">"Description"</th>
-                                <th class="mt-header">"Command"</th>
-                                <th class="mt-header">"Status"</th>
-                                <th class="mt-header">"Started"</th>
-                                <th class="mt-header">"Events fired"</th>
-                                <th class="mt-header">"Stderr tail"</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {move || store.roster.with(|roster| {
-                                roster.iter().map(|m| {
-                                    let id = m.id.clone();
-                                    let id2 = id.clone();
-                                    let description = m.description.clone();
-                                    let command = m.command.clone();
-                                    let status = m.status.clone();
-                                    let started_at = m.started_at.clone();
-                                    let fired_count = m.fired_count;
-                                    let stderr = m.stderr_tail.join("\n");
-                                    let stderr2 = stderr.clone();
-                                    let status_class = if status == "running" {
-                                        "mt-status-running"
-                                    } else {
-                                        "mt-status-stopped"
-                                    };
-                                    view! {
-                                        <tr
-                                            class="monitors-row"
-                                            data-testid="monitors-row"
-                                            data-monitor-id=id2
-                                        >
-                                            <td class="mt-id"><code>{id}</code></td>
-                                            <td class="mt-description">{description}</td>
-                                            <td class="mt-command"><code>{command}</code></td>
-                                            <td class="mt-status">
-                                                <span class=status_class>{status}</span>
-                                            </td>
-                                            <td class="mt-started">{started_at}</td>
-                                            <td class="mt-fired">{fired_count}</td>
-                                            <td class="mt-stderr">
-                                                <Show when=move || !stderr.is_empty() fallback=|| ()>
-                                                    <pre class="mt-stderr-pre">{stderr2.clone()}</pre>
-                                                </Show>
-                                            </td>
-                                        </tr>
-                                    }
-                                }).collect::<Vec<_>>()
-                            })}
-                        </tbody>
-                    </table>
+                    // Empty state — shown when no monitors are in the roster.
+                    <Show
+                        when=move || store.roster.with(|r| r.is_empty())
+                        fallback=|| ()
+                    >
+                        <p
+                            class="monitors-empty-state"
+                            data-testid="monitors-empty-state"
+                        >
+                            "No monitors running — started monitors appear here."
+                        </p>
+                    </Show>
+
+                    // Roster table — shown when there is at least one monitor.
+                    <Show
+                        when=move || store.roster.with(|r| !r.is_empty())
+                        fallback=|| ()
+                    >
+                        <table class="monitors-table">
+                            <thead>
+                                <tr>
+                                    <th class="mt-header">"ID"</th>
+                                    <th class="mt-header">"Description"</th>
+                                    <th class="mt-header">"Command"</th>
+                                    <th class="mt-header">"Status"</th>
+                                    <th class="mt-header">"Started"</th>
+                                    <th class="mt-header">"Events fired"</th>
+                                    <th class="mt-header">"Stderr tail"</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {move || store.roster.with(|roster| {
+                                    roster.iter().map(|m| {
+                                        let id = m.id.clone();
+                                        let id2 = id.clone();
+                                        let description = m.description.clone();
+                                        let command = m.command.clone();
+                                        let status = m.status.clone();
+                                        let started_at = m.started_at.clone();
+                                        let fired_count = m.fired_count;
+                                        let stderr = m.stderr_tail.join("\n");
+                                        let stderr2 = stderr.clone();
+                                        let status_class = if status == "running" {
+                                            "mt-status-running"
+                                        } else {
+                                            "mt-status-stopped"
+                                        };
+                                        view! {
+                                            <tr
+                                                class="monitors-row"
+                                                data-testid="monitors-row"
+                                                data-monitor-id=id2
+                                            >
+                                                <td class="mt-id"><code>{id}</code></td>
+                                                <td class="mt-description">{description}</td>
+                                                <td class="mt-command"><code>{command}</code></td>
+                                                <td class="mt-status">
+                                                    <span class=status_class>{status}</span>
+                                                </td>
+                                                <td class="mt-started">{started_at}</td>
+                                                <td class="mt-fired">{fired_count}</td>
+                                                <td class="mt-stderr">
+                                                    <Show when=move || !stderr.is_empty() fallback=|| ()>
+                                                        <pre class="mt-stderr-pre">{stderr2.clone()}</pre>
+                                                    </Show>
+                                                </td>
+                                            </tr>
+                                        }
+                                    }).collect::<Vec<_>>()
+                                })}
+                            </tbody>
+                        </table>
+                    </Show>
                 </div>
             </div>
         </Show>
@@ -265,6 +305,26 @@ mod tests {
             fired_count: fired,
             stderr_tail: vec![],
         }
+    }
+
+    // ── badge_label ──────────────────────────────────────────────────────
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn badge_label_zero_returns_monitors() {
+        assert_eq!(badge_label(0), "Monitors");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn badge_label_one_running() {
+        assert_eq!(badge_label(1), "1 running");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn badge_label_many_running() {
+        assert_eq!(badge_label(5), "5 running");
     }
 
     // ── running_count ────────────────────────────────────────────────────

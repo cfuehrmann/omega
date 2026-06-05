@@ -435,6 +435,16 @@ mutants-monitor-ws-message:
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
         --file "crates/omega-server/src/ws_message.rs" --re 'MonitorRoster|monitor_roster'
 
+# Phase 5 — monitors_panel.rs: badge_label + running_count + total_fired.
+# These three pure derivation functions carry the mutation-test budget for the
+# monitors panel (the view/component body itself is #[mutants::skip]).
+# Tests: wasm-bindgen-test unit tests in monitors_panel.rs + snapshot tests.
+mutants-monitors-panel:
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cap-lints=true \
+        --file "src/monitors_panel.rs" \
+        --no-default-features --features ssr
+
 # Phase 2.3 — feed.rs: ToolUseBlock dispatch (timeout chip + expansion body).
 # Scoped to the ToolUseBlock-related logic via --regex to keep runtime
 # manageable.  feed.rs is otherwise mostly JS-interop glue exempt from

@@ -1009,17 +1009,25 @@ mod monitors_panel_snapshots {
 
     // ── Badge ────────────────────────────────────────────────────────────
 
-    /// Empty roster — the outer `<Show when=has_any>` must suppress the
-    /// entire badge (no button, no modal).
+    /// Empty roster — badge must ALWAYS render, showing the idle label
+    /// "Monitors" so the feature remains discoverable.
     #[test]
-    fn snap_monitors_badge_hidden_when_empty() {
+    fn snap_monitors_badge_empty_roster_shows_idle_label() {
         let html = render(|| {
             install_monitors_context(vec![]);
             view! { <MonitorsBadge /> }
         });
         assert!(
-            !html.contains("data-testid=\"monitors-badge\""),
-            "badge must be absent when roster is empty; got: {html}"
+            html.contains("data-testid=\"monitors-badge\""),
+            "badge must be visible even when roster is empty; got: {html}"
+        );
+        assert!(
+            html.contains("Monitors"),
+            "idle label must be 'Monitors' when no monitors are running; got: {html}"
+        );
+        assert!(
+            !html.contains("data-testid=\"monitors-badge-fired\""),
+            "fired span must be absent when total_fired == 0; got: {html}"
         );
         insta::assert_snapshot!(html);
     }
@@ -1062,6 +1070,29 @@ mod monitors_panel_snapshots {
     }
 
     // ── Modal ────────────────────────────────────────────────────────────
+
+    /// Modal open with an empty roster — must show the empty-state message.
+    #[test]
+    fn snap_monitors_modal_open_empty_roster() {
+        let html = render(|| {
+            let panel = install_monitors_context(vec![]);
+            panel.0.set(true); // open the modal
+            view! { <MonitorsModal /> }
+        });
+        assert!(
+            html.contains("data-testid=\"monitors-modal\""),
+            "modal DOM must be present when open; got: {html}"
+        );
+        assert!(
+            html.contains("data-testid=\"monitors-empty-state\""),
+            "empty-state element must be present when roster is empty; got: {html}"
+        );
+        assert!(
+            !html.contains("data-testid=\"monitors-row\""),
+            "roster rows must be absent when roster is empty; got: {html}"
+        );
+        insta::assert_snapshot!(html);
+    }
 
     /// Modal closed (default) — `<Show when=is_open>` must emit nothing.
     #[test]
