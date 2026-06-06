@@ -40,7 +40,7 @@
 
 mod common;
 
-use common::{collect_stream, make_llm_response, make_test_agent};
+use common::{collect_stream, drive, make_llm_response, make_test_agent};
 use omega_core::{AgentItem, LlmError};
 use omega_types::StreamSignal;
 use serde_json::{Value, json};
@@ -191,7 +191,7 @@ async fn t1_signatures_preserved() {
     let (mut agent, provider, tmp) = make_test_agent();
     provider.push_response(script_t1());
 
-    let stream = agent.send_message("hi".to_owned(), CancellationToken::new());
+    let stream = drive(&mut agent, "hi".to_owned(), CancellationToken::new());
     let _items = collect_stream(stream).await;
 
     let context_path = tmp.path().join("context.jsonl");
@@ -259,7 +259,7 @@ async fn t2_block_order_in_context_jsonl() {
     let (mut agent, provider, tmp) = make_test_agent();
     provider.push_response(script_t2());
 
-    let stream = agent.send_message("go".to_owned(), CancellationToken::new());
+    let stream = drive(&mut agent, "go".to_owned(), CancellationToken::new());
     let _items = collect_stream(stream).await;
 
     let context_path = tmp.path().join("context.jsonl");
@@ -321,7 +321,11 @@ async fn t3_events_and_context_carry_same_blocks() {
     // Reuse the T2 fixture — same block sequence, same assertions.
     provider.push_response(script_t2());
 
-    let stream = agent.send_message("cross-check".to_owned(), CancellationToken::new());
+    let stream = drive(
+        &mut agent,
+        "cross-check".to_owned(),
+        CancellationToken::new(),
+    );
     let _items = collect_stream(stream).await;
 
     let context_path = tmp.path().join("context.jsonl");

@@ -964,6 +964,33 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
   at every phase boundary. Monitor delivery and interjection MAY lapse temporarily
   mid-migration; ordinary coding turns MUST NOT.
 </div>
+<div class="box ok"><strong>U1 &mdash; IMPLEMENTED.</strong>
+  <code>Agent::run(&amp;mut self, inbox: mpsc::Receiver&lt;InputItem&gt;, cancel)</code>
+  is the persistent per-session loop; <code>send_message</code> is gone (its
+  per-turn body became the private <code>drive_turn</code>, which <code>run</code>
+  drives once per gathered <code>InputItem::Human</code> then parks by awaiting
+  the inbox). The server spawns <strong>one</strong> run task per session at
+  reset/resume; it is the <em>sole</em> holder of the agent lock; the
+  WS-forwarding loop (turn-state + roster pushes) moved into it;
+  <code>handle_user_message</code> is now just <code>inbox.send(Human{content})</code>.
+  Reset/resume <code>teardown_prior_run</code> cancels + joins the prior run
+  task before reaping its monitors.
+  <br/><strong>Intact:</strong> ordinary human&rarr;agent coding turns (incl.
+  back-to-back messages on one parked run task &mdash; the old per-message
+  deadlock is gone); per-block <code>request_abort</code> (cancels the current
+  block, loop returns to park, run survives); monitor <strong>spawn/reap</strong>
+  (<code>Drop</code> + session-end <code>shutdown_and_log_monitors</code> via
+  <code>teardown_prior_run</code>).
+  <br/><strong>Dark (intentionally, until noted):</strong> monitor
+  <em>delivery</em> &mdash; Seam-B mid-turn drain and the Seam-A
+  park-on-<code>notify_item</code> were removed (re-wired to the inbox in U2);
+  interjection &mdash; <code>pause</code> / <code>pending_continue</code> plumbing
+  is kept but lapses (retired in U3). Delivery/park tests are
+  <code>#[ignore]</code>d with reason <em>“monitor delivery re-enabled in U2
+  (§15)”</em>; spawn/reap and session-end reaping tests stay green.
+  <br/>The model/effort handlers were moved off the agent lock onto a lock-free
+  <code>ModelEffortHandle</code> (shared cells + event store) so they no longer
+  contend with the run task that owns the lock for the session's life.</div>
 <ol>
   <li><strong>U1 &mdash; persistent <code>run</code> loop + inbox for human input;
     monitor <em>delivery</em> goes dark.</strong>

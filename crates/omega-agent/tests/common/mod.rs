@@ -26,12 +26,13 @@ use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use omega_agent::{Agent, AgentConfig};
+use omega_agent::{Agent, AgentConfig, InputItem};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_store::{ContextStore, EventStore};
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
 use omega_types::{LlmResponseUsage, MonitorDeliveryItem, OmegaEvent};
 use tempfile::TempDir;
+use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
 // MockProvider
@@ -185,6 +186,27 @@ pub fn make_llm_response(stop_reason: &str, input_tokens: i64, output_tokens: i6
 // ---------------------------------------------------------------------------
 // Stream-collection helpers
 // ---------------------------------------------------------------------------
+
+/// Drive a single human turn through the persistent [`Agent::run`] loop
+/// (§15 Unified Input Model) and return the run stream.
+///
+/// Queues one `Human` [`InputItem`] then **closes** the inbox, so after the
+/// single turn the run loop's next Gather sees a closed inbox and returns —
+/// reproducing the one-turn-then-finish shape of the old `send_message`
+/// without an explicit channel dance at every call site.  `cancel` is the
+/// run-level token (firing it aborts the in-flight turn and terminates the
+/// loop), matching the old per-message cancel semantics.
+pub fn drive(
+    agent: &mut Agent,
+    content: String,
+    cancel: CancellationToken,
+) -> impl futures::Stream<Item = AgentItem> + '_ {
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    tx.try_send(InputItem::Human { content })
+        .expect("seed inbox");
+    drop(tx); // close inbox => run() returns after this single turn
+    agent.run(rx, cancel)
+}
 
 /// Drive an agent stream to completion and return every item produced.
 pub async fn collect_stream<S>(stream: S) -> Vec<AgentItem>

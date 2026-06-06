@@ -14,7 +14,7 @@ pub mod error_classify;
 pub mod session_resume;
 pub mod system_prompt;
 
-pub use agent::{Agent, AgentConfig, DEFAULT_EFFORT};
+pub use agent::{Agent, AgentConfig, DEFAULT_EFFORT, InputItem, ModelEffortHandle};
 pub use config::max_output_tokens_for_model;
 pub use controls::ControlHandle;
 pub use error_classify::{is_context_too_long, is_invalid_tool_json};

@@ -96,7 +96,7 @@ mod common;
 use std::fs;
 use std::path::PathBuf;
 
-use common::{collect_stream, make_llm_response, make_test_agent};
+use common::{collect_stream, drive, make_llm_response, make_test_agent};
 use omega_core::{AgentItem, LlmError};
 use omega_types::events::{
     LlmResponseEndedEvent, LlmResponseUsage, LlmRetryEvent, ToolCallEvent, UsageIteration,
@@ -154,7 +154,11 @@ async fn run_fixture(
     for s in scripts {
         provider.push_response(s);
     }
-    let stream = agent.send_message(user_message.to_owned(), CancellationToken::new());
+    let stream = drive(
+        &mut agent,
+        user_message.to_owned(),
+        CancellationToken::new(),
+    );
     let _ = collect_stream(stream).await;
 
     let raw = fs::read_to_string(tmp.path().join("context.jsonl")).expect("context.jsonl");

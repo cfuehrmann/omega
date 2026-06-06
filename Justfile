@@ -331,6 +331,28 @@ mutants-sessions-root:
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
         --file "crates/omega-server/src/router.rs" --re 'absolute_sessions_root|list_sessions'
 
+# §15 U1 (Unified Input Model) — the persistent per-session agent loop.
+# Scoped to Agent::run + Agent::drive_turn in agent.rs.  Both are `stream!`
+# macro generators, so cargo-mutants can only mutate the outer fn body (the
+# macro body is opaque); the body-replacement mutants come back UNVIABLE
+# (`Default::default()` is not implemented for `Pin<Box<dyn Stream>>`).
+# Uses --in-place to avoid copying the 6 GB target directory to TMPDIR.
+mutants-agent-run-loop:
+    cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
+        --re 'Agent::run|Agent::drive_turn'
+
+# §15 U1 — the server glue for the persistent run task: handle_user_message
+# (now just inbox.send), spawn_run_task (owns the agent lock + forwards the
+# run stream to WS, incl. turn-state + roster pushes), and teardown_prior_run
+# (abort + run_cancel + join + session-end monitor reap).  Exercised by the
+# two_sequential_user_messages_share_one_run_task and
+# reset_reaps_prior_sessions_live_monitor tests in tests/ws_router.rs.
+mutants-server-run-task:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+        --file "crates/omega-server/src/router.rs" \
+        --re 'handle_user_message|spawn_run_task|teardown_prior_run'
+
 # Run cargo-mutants targeted at the picker's `session_at_path` formatter, which
 # wraps the server-supplied absolute path as an `@<path>/` composer reference.
 # Runs on the wasm target (the only one the leptos crate's tests build for).

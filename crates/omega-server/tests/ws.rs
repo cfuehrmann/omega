@@ -730,6 +730,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         },
     );
     let controls = agent.controls();
+    let model_effort = agent.model_effort_handle();
     let info_cache = omega_server::session::SessionInfoCache {
         dir: "2025-01-01T00-00-00-000-deadbeef".to_owned(),
         model: "claude-sonnet-4-6".to_owned(),
@@ -739,12 +740,17 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         has_pending_changes: false,
         features: FeatureFlags::default(),
     };
+    let (inbox, inbox_rx) = tokio::sync::mpsc::channel(64);
     let active = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
         controls,
+        model_effort,
         paths,
         ws_tx: None,
         current_turn: None,
+        inbox,
+        inbox_rx: Some(inbox_rx),
+        run_cancel: tokio_util::sync::CancellationToken::new(),
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
         info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
         features: FeatureFlags::default(),

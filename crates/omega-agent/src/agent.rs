@@ -490,12 +490,18 @@ pub struct Agent {
     /// Currently selected model id.  Initialised from `config.model`;
     /// mutated by [`Agent::set_model`].  Read on every API call so a
     /// switch takes effect from the next call onward.
-    active_model: String,
+    ///
+    /// §15 (Unified Input Model): wrapped in `Arc<Mutex<…>>` so that
+    /// [`ModelEffortHandle`] can mutate it without the agent lock — the
+    /// persistent [`Agent::run`] task holds that lock for the session's
+    /// life, and only *reads* this value when building each `LlmRequest`.
+    active_model: Arc<std::sync::Mutex<String>>,
     /// Currently selected thinking-effort level.  Initialised to
     /// [`DEFAULT_EFFORT`]; mutated by [`Agent::set_effort`].
     /// Threaded onto every `LlmRequest` as `config.effort` via
-    /// [`cap_effort_for_model`].
-    active_effort: String,
+    /// [`cap_effort_for_model`].  Wrapped in `Arc<Mutex<…>>` for the same
+    /// lock-free-mutation reason as [`Self::active_model`].
+    active_effort: Arc<std::sync::Mutex<String>>,
     /// Cached system-prompt blocks for the active session.  Populated
     /// once in [`Agent::init`] (discovers + reads `AGENTS.md` files
     /// from the global and repo tiers, then assembles core + runtime
@@ -620,7 +626,92 @@ fn format_monitor_stopped(id: &str, reason: &MonitorStopReason, exit_code: Optio
     }
 }
 
+/// One item of input to the persistent agent loop ([`Agent::run`]).
+///
+/// §15 Unified Input Model.  For U1 only the `Human` variant exists; U2
+/// will add a `Monitor { id, lines }` variant carrying drained monitor
+/// output.  Modelled as an enum from the start so growth is purely
+/// additive (old readers fail loudly on an unknown variant, per the
+/// Contract Authority rule).
+#[derive(Debug, Clone)]
+pub enum InputItem {
+    /// A human coding-turn message — the text the operator typed.
+    Human { content: String },
+}
+
+/// Lock-free handle for changing the active model / effort without
+/// acquiring the agent mutex.
+///
+/// §15 (Unified Input Model): the persistent [`Agent::run`] task owns the
+/// agent lock for the session's life, so model/effort changes — which the
+/// run loop only *reads* when building each `LlmRequest` — flow through
+/// this cheap clonable handle instead of through `agent.lock()`.  The
+/// cells are the same `Arc`s the agent reads, so a change takes effect
+/// from the next LLM call onward; the event is persisted to the shared
+/// event store and returned for fan-out to the UI.
+#[derive(Clone)]
+pub struct ModelEffortHandle {
+    model: Arc<std::sync::Mutex<String>>,
+    effort: Arc<std::sync::Mutex<String>>,
+    event_store: Arc<EventStore>,
+}
+
+impl ModelEffortHandle {
+    /// Currently selected model id.
+    #[must_use]
+    pub fn model(&self) -> String {
+        self.model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Currently selected thinking-effort level.
+    #[must_use]
+    pub fn effort(&self) -> String {
+        self.effort
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Switch the active model.  Persists a [`ModelChangedEvent`] and
+    /// returns it so callers can fan it out to the UI without a reload.
+    pub async fn set_model(&self, model: String) -> OmegaEvent {
+        self.model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone_from(&model);
+        let ev = OmegaEvent::ModelChanged(ModelChangedEvent {
+            time: now_iso(),
+            model,
+        });
+        let _ = self.event_store.append(&ev).await;
+        ev
+    }
+
+    /// Switch the active thinking-effort level.  Persists an
+    /// [`EffortChangedEvent`] and returns it.
+    pub async fn set_effort(&self, effort: String) -> OmegaEvent {
+        self.effort
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone_from(&effort);
+        let ev = OmegaEvent::EffortChanged(EffortChangedEvent {
+            time: now_iso(),
+            effort,
+        });
+        let _ = self.event_store.append(&ev).await;
+        ev
+    }
+}
+
 /// Outcome of one [`Agent::drain_monitors`] pass.
+//
+// U1 (§15): monitor delivery is dark — `drain_monitors` is no longer
+// called by the run loop.  Kept (with the type) for U2, which re-wires
+// delivery through `Agent::run`'s inbox.
+#[allow(dead_code)]
 #[derive(Default)]
 struct MonitorDrain {
     /// Events the loop must yield (delivery / stderr / stopped), in order.
@@ -675,8 +766,8 @@ impl Agent {
             event_store,
             controls,
             config,
-            active_model,
-            active_effort,
+            active_model: Arc::new(std::sync::Mutex::new(active_model)),
+            active_effort: Arc::new(std::sync::Mutex::new(active_effort)),
             system_blocks: Vec::new(),
             system_prompt_paths: Arc::new(HashSet::new()),
             history: Vec::new(),
@@ -740,7 +831,7 @@ impl Agent {
         }
 
         // 3. Assemble system blocks once for the whole session.
-        let max_tokens = max_output_tokens_for_model(&self.active_model);
+        let max_tokens = max_output_tokens_for_model(&self.active_model());
         self.system_blocks = build_system_blocks(
             &self.config.cwd.to_string_lossy(),
             max_tokens,
@@ -780,8 +871,8 @@ impl Agent {
             time: now_iso(),
             session_id,
             path,
-            model: self.active_model.clone(),
-            effort: self.active_effort.clone(),
+            model: self.active_model(),
+            effort: self.active_effort(),
             system_prompt,
             omega_commit: crate::OMEGA_GIT_COMMIT.to_owned(),
             // IANA name of the agent host's current TZ (e.g. "Europe/Berlin").
@@ -846,13 +937,18 @@ impl Agent {
     ///
     /// Mirrors `Agent.setModel` in `src/agent.ts`.
     pub async fn set_model(&mut self, model: String) -> OmegaEvent {
-        self.active_model = model.clone();
-        let ev = OmegaEvent::ModelChanged(ModelChangedEvent {
-            time: now_iso(),
-            model,
-        });
-        let _ = self.event_store.append(&ev).await;
-        ev
+        self.model_effort_handle().set_model(model).await
+    }
+
+    /// Lock-free handle for changing model/effort without the agent lock.
+    /// See [`ModelEffortHandle`] (§15 Unified Input Model).
+    #[must_use]
+    pub fn model_effort_handle(&self) -> ModelEffortHandle {
+        ModelEffortHandle {
+            model: Arc::clone(&self.active_model),
+            effort: Arc::clone(&self.active_effort),
+            event_store: Arc::clone(&self.event_store),
+        }
     }
 
     /// Switch the active thinking-effort level.  Persists an
@@ -860,26 +956,26 @@ impl Agent {
     ///
     /// Mirrors `Agent.setEffort` in `src/agent.ts`.
     pub async fn set_effort(&mut self, effort: String) -> OmegaEvent {
-        self.active_effort = effort.clone();
-        let ev = OmegaEvent::EffortChanged(EffortChangedEvent {
-            time: now_iso(),
-            effort,
-        });
-        let _ = self.event_store.append(&ev).await;
-        ev
+        self.model_effort_handle().set_effort(effort).await
     }
 
     /// Currently selected model id.  Reflects the most recent
     /// `set_model` call (or `config.model` if none has happened).
     #[must_use]
-    pub fn active_model(&self) -> &str {
-        &self.active_model
+    pub fn active_model(&self) -> String {
+        self.active_model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Currently selected thinking-effort level.
     #[must_use]
-    pub fn active_effort(&self) -> &str {
-        &self.active_effort
+    pub fn active_effort(&self) -> String {
+        self.active_effort
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Hashes of the records in [`Self::history`], in the same order.
@@ -1209,6 +1305,9 @@ impl Agent {
     /// item produced context the model must see (a `MonitorDelivery`, or a
     /// `MonitorStopped` whose reason projects) — the Seam-A park loop uses it
     /// to decide whether to run another cycle.
+    // U1 (§15): no longer called by the run loop (monitor delivery is dark);
+    // retained for U2 re-wiring through the inbox.
+    #[allow(dead_code)]
     async fn drain_monitors(&mut self) -> MonitorDrain {
         let items = self.monitors.drain_pending();
         if items.is_empty() {
@@ -1270,14 +1369,75 @@ impl Agent {
         MonitorDrain { events, projected }
     }
 
-    /// Drive one user turn.  Returns a stream of every event/signal
-    /// produced by the agentic loop.
+    /// Run the persistent per-session agent loop (§15 Unified Input Model, U1).
     ///
-    /// Cancellation: tripping `cancel` aborts in-flight tool calls and
-    /// the LLM stream, then yields a `TurnInterrupted{reason: aborted}`
-    /// event before the stream ends.
+    /// Borrows `&mut self` **once** for the whole session.  Human input
+    /// arrives through `inbox`; the loop gathers the next [`InputItem`],
+    /// drives one coding turn via [`Self::drive_turn`], then parks by
+    /// awaiting the inbox again.  Parking on an empty inbox is the normal
+    /// idle state — the loop does **not** terminate while the session is
+    /// alive.
+    ///
+    /// Termination: the loop ends when `cancel` (the run-level / session
+    /// teardown token) fires, or when `inbox` is closed (all senders
+    /// dropped).
+    ///
+    /// Abort: each turn installs its own per-block cancel token (via
+    /// [`ControlHandle::reset_for_turn`] inside `drive_turn`, forwarded
+    /// from the run-level `cancel`).  An abort cancels only the *current*
+    /// turn — after it ends the loop returns to Gather/park rather than
+    /// terminating.  Only the run-level `cancel` ends the whole loop.
+    pub fn run<'a>(
+        &'a mut self,
+        mut inbox: tokio::sync::mpsc::Receiver<InputItem>,
+        cancel: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AgentItem> + Send + 'a>> {
+        Box::pin(stream! {
+            loop {
+                // ---- Gather (park on empty inbox) -----------------------
+                // Awaiting the inbox IS the idle/park state.  The run-level
+                // `cancel` (session teardown) or a closed inbox ends the loop.
+                let content = tokio::select! {
+                    () = cancel.cancelled() => return,
+                    item = inbox.recv() => match item {
+                        Some(InputItem::Human { content }) => content,
+                        None => return,
+                    },
+                };
+
+                // ---- Process one turn -----------------------------------
+                // `drive_turn` installs its own per-turn cancel token
+                // (forwarded from the run-level `cancel`) and TurnGuard, so an
+                // abort cancels just this turn and the guard drops here.
+                {
+                    let mut turn = self.drive_turn(content, cancel.clone());
+                    while let Some(item) = turn.next().await {
+                        yield item;
+                    }
+                }
+
+                // ---- Park-vs-terminate ----------------------------------
+                // The turn ended (TurnEnd / abort → TurnInterrupted / error).
+                // A run-level cancel terminates the session; otherwise loop
+                // back to Gather and park on the inbox.
+                if cancel.is_cancelled() {
+                    return;
+                }
+            }
+        })
+    }
+
+    /// Drive one coding turn (one Gather→Process block of [`Self::run`]).
+    ///
+    /// Returns a stream of every event/signal produced by the agentic
+    /// loop, ending at `TurnEnd` (clean), `TurnInterrupted` (abort), or an
+    /// error.  It does **not** park — parking is `run`'s job.
+    ///
+    /// Cancellation: tripping `cancel` aborts in-flight tool calls and the
+    /// LLM stream, then yields a `TurnInterrupted{reason: aborted}` event
+    /// before the stream ends.
     #[allow(clippy::too_many_lines)] // single async generator; splitting requires plumbing yields through return types
-    pub fn send_message<'a>(
+    fn drive_turn<'a>(
         &'a mut self,
         user_message: String,
         cancel: CancellationToken,
@@ -1437,7 +1597,7 @@ impl Agent {
             let mut tot_cache_creation: i64 = 0;
             let mut tot_cache_read: i64 = 0;
 
-            'agentic: loop {
+            loop {
                 if cancel.is_cancelled() {
                     let ev = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                         time: now_iso(),
@@ -1448,14 +1608,16 @@ impl Agent {
                     return;
                 }
 
-                let max_tokens = max_output_tokens_for_model(&self.active_model);
+                let active_model = self.active_model();
+                let active_effort = self.active_effort();
+                let max_tokens = max_output_tokens_for_model(&active_model);
                 let system_blocks: Vec<String> = self
                     .system_blocks
                     .iter()
                     .map(|b| b.content.clone())
                     .collect();
                 let request = LlmRequest {
-                    model: self.active_model.clone(),
+                    model: active_model.clone(),
                     messages: project_messages(&self.history),
                     system: Some(system_blocks),
                     tools: tool_definitions(&self.tool_selection),
@@ -1465,11 +1627,8 @@ impl Agent {
                         thinking_budget: None,
                         adaptive_thinking: true,
                         effort: Some(
-                            cap_effort_for_model(
-                                &self.active_effort,
-                                &self.active_model,
-                            )
-                            .to_owned(),
+                            cap_effort_for_model(&active_effort, &active_model)
+                                .to_owned(),
                         ),
                     },
                     context_management: Some(build_context_management()),
@@ -1486,7 +1645,7 @@ impl Agent {
                 let call_ev = OmegaEvent::LlmCall(LlmCallEvent {
                     time: now_iso(),
                     url: ANTHROPIC_URL.to_owned(),
-                    model: self.active_model.clone(),
+                    model: active_model.clone(),
                     context_hashes: self
                         .context_hashes
                         .iter()
@@ -2222,18 +2381,11 @@ impl Agent {
                         yield AgentItem::event(cont_ev);
                     }
 
-                    // ---- Seam B (§3): drain monitors right after a completed
-                    // tool_result, before the next LlmCall.  The drained
-                    // MonitorDelivery is appended as a *separate* role:user
-                    // message after the tool_result user message; project_messages
-                    // merges the two, so the tool_use/tool_result pair is never
-                    // split.  We continue to the next cycle regardless, so no
-                    // park/projected check is needed here.
-                    let seam_b = self.drain_monitors().await;
-                    for ev in seam_b.events {
-                        yield AgentItem::event(ev);
-                    }
-
+                    // ---- Seam B (§3/§15 U1): monitor delivery is DARK.
+                    // The Seam-B drain was removed in U1 of the Unified Input
+                    // Model migration; monitor delivery is re-wired through
+                    // `Agent::run`'s inbox in U2.  Monitor spawn/reap is
+                    // unaffected.  Continue to the next cycle.
                     continue;
                 }
 
@@ -2259,108 +2411,14 @@ impl Agent {
                 let _ = self.event_store.append(&te).await;
                 yield AgentItem::event(te);
 
-                // ---- Seam A (§3/§4): the assistant emitted end_turn and is
-                // idle.  Drain monitors, then decide park-vs-terminate.
-                //
-                // • If a drained item *projected* (a delivery, or a stop that
-                //   projects), run a fresh monitor-driven cycle so the model
-                //   reacts.
-                // • Else if a live monitor (or queued item) still exists, PARK
-                //   on a select over {monitor-queue, roster-changed, human
-                //   input/abort} and re-drain on wake.
-                // • Else terminate — never hang when nothing can ever fire.
-                loop {
-                    let drain = self.drain_monitors().await;
-                    let projected = drain.projected;
-                    for ev in drain.events {
-                        yield AgentItem::event(ev);
-                    }
-                    if projected {
-                        continue 'agentic;
-                    }
-                    // Nothing projected this pass.  Terminate iff nothing can
-                    // ever fire again (no live monitor and an empty queue — the
-                    // drain above already emptied it).
-                    if monitors.live_count() == 0 {
-                        return;
-                    }
-                    // Park.  Enter suspend so a human `request_continue` (or
-                    // `request_abort`) notifies us, matching the pause seam.
-                    // Block on a select over the three wake sources (monitor
-                    // queue, roster-changed, human input) plus abort; any one
-                    // wakes us to re-drain and re-evaluate.
-                    let need_suspend = self.controls.try_enter_suspend();
-                    if need_suspend {
-                        if !self.controls.pending_continue_ready()
-                            && !cancel.is_cancelled()
-                        {
-                            tokio::select! {
-                                () = monitors.notify_item().notified() => {},
-                                () = monitors.notify_roster().notified() => {},
-                                () = self.controls.notify().notified() => {},
-                                () = cancel.cancelled() => {},
-                            }
-                        }
-                        self.controls.exit_suspend();
-                    }
-                    // Human abort while parked: the turn already ended cleanly
-                    // (TurnEnd above), so just terminate — no TurnInterrupted.
-                    if cancel.is_cancelled() {
-                        return;
-                    }
-                    // Human interjection while parked: treat the pending
-                    // continue's content as a fresh user message and run a
-                    // cycle.  (Content-less continue just re-drains.)
-                    let pending_text = self
-                        .controls
-                        .take_pending_continue()
-                        .and_then(|cont| cont.content)
-                        .filter(|s| !s.is_empty());
-                    if let Some(text) = pending_text {
-                        {
-                            let blocks = vec![ContentBlock::Text {
-                                text: text.clone(),
-                            }];
-                            match self
-                                .context_store
-                                .append(Role::User, blocks.clone())
-                                .await
-                            {
-                                Ok(hash) => {
-                                    self.history.push(Message {
-                                        role: Role::User,
-                                        content: blocks,
-                                    });
-                                    self.context_hashes.push(hash);
-                                }
-                                Err(e) => {
-                                    let ev = OmegaEvent::AgentError(
-                                        AgentErrorEvent {
-                                            time: now_iso(),
-                                            error: format!(
-                                                "context_store append failed: {e}"
-                                            ),
-                                        },
-                                    );
-                                    let _ = self.event_store.append(&ev).await;
-                                    yield AgentItem::event(ev);
-                                    return;
-                                }
-                            }
-                            let user_ev = OmegaEvent::UserMessage(
-                                UserMessageEvent {
-                                    time: now_iso(),
-                                    content: text,
-                                },
-                            );
-                            let _ = self.event_store.append(&user_ev).await;
-                            yield AgentItem::event(user_ev);
-                            continue 'agentic;
-                        }
-                    }
-                    // Otherwise a monitor line or roster change woke us; the
-                    // 'park loop re-iterates to drain and re-evaluate.
-                }
+                // ---- Seam A (§3/§4/§15 U1): the turn ends here.  The former
+                // park loop (monitor drain + select over monitor-queue /
+                // roster / human-input) was removed in U1.  Parking is now
+                // done by `Agent::run`, which awaits the inbox after this
+                // stream completes.  Monitor delivery is dark until U2;
+                // monitor spawn/reap is unaffected (Drop and
+                // shutdown_and_log_monitors still fire at session end).
+                return;
             }
         })
     }

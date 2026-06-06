@@ -1353,3 +1353,124 @@ async fn e2e_full_turn_via_http_fake() {
     child.kill().ok();
     child.wait().ok();
 }
+
+// ---------------------------------------------------------------------------
+// §15 U1 — dog-fooding invariant: one persistent run task per session
+// ---------------------------------------------------------------------------
+
+/// Two sequential human messages must BOTH be processed by the single
+/// persistent `Agent::run` task spawned at reset.
+///
+/// Before U1 the server acquired the agent lock per message and held it
+/// across parking, so a second `user_message` (arriving while the first
+/// turn's stream was parked) deadlocked on that lock.  Under the unified
+/// input model `handle_user_message` only pushes to the inbox and the run
+/// task — the sole lock holder — drains it, so the second turn runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_sequential_user_messages_share_one_run_task() {
+    let tmp = TempDir::new().unwrap();
+    let provider = Arc::new(MockProvider::new());
+    // Two independent single-cycle turns.
+    provider.push(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "one".to_owned(),
+        })),
+        Ok(llm_response_event("end_turn")),
+    ]);
+    provider.push(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "two".to_owned(),
+        })),
+        Ok(llm_response_event("end_turn")),
+    ]);
+    let addr = spawn_server(make_state(
+        Arc::clone(&provider),
+        tmp.path().join("sessions"),
+    ))
+    .await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    reset_and_ready(&mut ws).await;
+
+    // First message → first turn completes.
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "first" }),
+    )
+    .await;
+    let first = recv_until_type(&mut ws, "turn_end").await;
+    assert!(
+        first
+            .iter()
+            .any(|v| v["type"] == "user_message" && v["content"] == "first"),
+        "first turn must echo its user_message; got {first:?}"
+    );
+
+    // Second message → MUST be processed by the SAME parked run task. If the
+    // old per-message lock survived, this recv would hang (deadlock).
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "second" }),
+    )
+    .await;
+    let second = recv_until_type(&mut ws, "turn_end").await;
+    assert!(
+        second
+            .iter()
+            .any(|v| v["type"] == "user_message" && v["content"] == "second"),
+        "second turn must be processed by the same run task; got {second:?}"
+    );
+}
+
+/// §15 U1 — session-end reaping is preserved.
+///
+/// Monitor *delivery* is dark in U1, but spawn/reap stay intact.  Resetting
+/// while a monitor is live must wind down the prior session's run task and
+/// reap the monitor, persisting `MonitorStopped(StoppedBySessionEnd)` to the
+/// outgoing session's `events.jsonl`.  This is the server-level proof that
+/// `teardown_prior_run` actually fires (the persistent run task otherwise
+/// holds the agent lock forever, so reaping cannot happen without it).
+#[tokio::test(flavor = "multi_thread")]
+async fn reset_reaps_prior_sessions_live_monitor() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    // Turn cycle 1: spawn a long-lived monitor via the `monitor` tool.
+    provider.push(tool_use_items(
+        "m1",
+        "monitor",
+        serde_json::json!({ "description": "watcher", "command": "sleep 60" }),
+    ));
+    // Turn cycle 2: end the turn so the run loop parks.
+    provider.push(vec![Ok(llm_response_event("end_turn"))]);
+    let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root.clone())).await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    let dir_a = reset_and_ready(&mut ws).await;
+
+    // Drive a turn that spawns the monitor, then parks.
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "watch" }),
+    )
+    .await;
+    let _ = recv_until_type(&mut ws, "turn_end").await;
+
+    // Reset again: this must tear down session A's run task and reap its
+    // monitor before the new session goes live.
+    let _dir_b = reset_and_ready(&mut ws).await;
+
+    // Session A's log must now carry the session-end stop for the monitor.
+    let events = std::fs::read_to_string(sessions_root.join(&dir_a).join("events.jsonl"))
+        .expect("session A events.jsonl must exist");
+    assert!(
+        events.contains("monitor_started"),
+        "monitor must have been spawned in session A; got:\n{events}"
+    );
+    assert!(
+        events.contains("monitor_stopped"),
+        "reset must reap the live monitor and persist MonitorStopped to session A; got:\n{events}"
+    );
+}

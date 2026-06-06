@@ -257,7 +257,17 @@ async fn run(
     });
 
     // ---- Stream the turn -----------------------------------------------
-    let mut stream = agent.send_message(instruction, cancel);
+    // Headless one-shot: feed the single instruction through the persistent
+    // run loop's inbox, then close the inbox so the loop terminates after
+    // this one turn instead of parking.
+    let (inbox_tx, inbox_rx) = tokio::sync::mpsc::channel(1);
+    let _ = inbox_tx
+        .send(omega_agent::InputItem::Human {
+            content: instruction,
+        })
+        .await;
+    drop(inbox_tx);
+    let mut stream = agent.run(inbox_rx, cancel);
 
     let mut exit_code = 0i32;
 

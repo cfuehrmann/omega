@@ -161,19 +161,26 @@ pub const TURN_DRAIN_DEADLINE: Duration = Duration::from_secs(2);
 ///
 /// Public so tests can drive it without spawning a real process.
 pub async fn perform_shutdown(state: &AppState) {
-    let (controls, events_file, turn_handle) = {
+    let (controls, run_cancel, events_file, turn_handle) = {
         let mut slot = state.active_session.lock().await;
         match slot.as_mut() {
             Some(active) => (
                 Some(active.controls.clone()),
+                Some(active.run_cancel.clone()),
                 Some(active.paths.events_file.clone()),
                 active.current_turn.take(),
             ),
-            None => (None, None, None),
+            None => (None, None, None, None),
         }
     };
     if let Some(c) = controls {
         c.request_abort();
+    }
+    // §15 (Unified Input Model): the per-session run task parks holding the
+    // agent lock, so `request_abort` alone won't end it — cancel the run-level
+    // token so the loop terminates and the join below returns promptly.
+    if let Some(run_cancel) = run_cancel {
+        run_cancel.cancel();
     }
     if let Some(handle) = turn_handle {
         let _ = tokio::time::timeout(TURN_DRAIN_DEADLINE, handle).await;

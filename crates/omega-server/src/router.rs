@@ -31,7 +31,7 @@ use axum::{
     routing::get,
 };
 use futures::{SinkExt, StreamExt};
-use omega_agent::{Agent, AgentConfig};
+use omega_agent::{Agent, AgentConfig, InputItem};
 use omega_store::{ContextRecord, ContextStore, EventStore, SessionMetadata, session_dir_re};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -309,8 +309,9 @@ async fn create_active_session(
         .map_err(|e| format!("agent.init() failed: {e}"))?;
 
     let controls = agent.controls();
-    let active_model = agent.active_model().to_owned();
-    let active_effort = agent.active_effort().to_owned();
+    let model_effort = agent.model_effort_handle();
+    let active_model = agent.active_model();
+    let active_effort = agent.active_effort();
     let features = agent.features();
     let monitor_manager = agent.monitor_manager();
     let info_cache = SessionInfoCache {
@@ -322,12 +323,21 @@ async fn create_active_session(
         has_pending_changes,
         features,
     };
+    // §15 (Unified Input Model, U1): human input flows through this inbox to
+    // the persistent run task spawned at reset/resume — not by acquiring the
+    // agent lock per message.  Bounded so a runaway producer can't grow the
+    // queue unboundedly; 64 is far more than the UI ever queues.
+    let (inbox, inbox_rx) = tokio::sync::mpsc::channel::<InputItem>(64);
     let session = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
         controls,
         paths,
         ws_tx: None,
         current_turn: None,
+        inbox,
+        inbox_rx: Some(inbox_rx),
+        run_cancel: CancellationToken::new(),
+        model_effort,
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
         info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
         features,
@@ -541,7 +551,6 @@ async fn send_session_info_and_history(state: &AppState, tx: &UnboundedSender<Ws
         Arc<tokio::sync::Mutex<crate::session::SessionInfoCache>>,
         Arc<tokio::sync::Mutex<String>>,
         PathBuf,
-        bool,
     );
     let snapshot: Option<Snapshot> = {
         let slot = state.active_session.lock().await;
@@ -550,17 +559,21 @@ async fn send_session_info_and_history(state: &AppState, tx: &UnboundedSender<Ws
                 Arc::clone(&active.info_cache),
                 Arc::clone(&active.turn_state),
                 active.paths.events_file.clone(),
-                active
-                    .current_turn
-                    .as_ref()
-                    .is_some_and(|h| !h.is_finished()),
             )
         })
     }; // active_session lock released here
 
-    let Some((info_cache_arc, turn_state_arc, events_file, streaming)) = snapshot else {
+    let Some((info_cache_arc, turn_state_arc, events_file)) = snapshot else {
         return;
     };
+    // `streaming` means a turn is actually in flight.  Under the §15
+    // persistent run loop the run task's `JoinHandle` lives for the whole
+    // session (it parks between turns), so it can no longer signal
+    // "streaming"; the turn state does.  A turn is live iff `turn_state` is
+    // not "idle" (UserMessage/TurnContinued → "running"; TurnEnd /
+    // TurnInterrupted → "idle").  Read it here, after the `active_session`
+    // lock is released, to preserve the lock discipline above.
+    let streaming = turn_state_arc.lock().await.as_str() != "idle";
     // Safe to await inner locks now that active_session is released.
     //
     // Re-evaluate pending changes at WS-connect time.  `has_pending_changes`
@@ -733,21 +746,23 @@ async fn handle_set_model(
     tx: &UnboundedSender<WsMessage>,
     model: String,
 ) -> Result<(), String> {
-    let (agent, info_cache_arc) = {
+    // §15 (Unified Input Model): mutate model/effort through the lock-free
+    // handle, never `agent.lock()` — the persistent run task holds that lock
+    // for the session's life and would deadlock us here.
+    let (model_effort, info_cache_arc) = {
         let slot = state.active_session.lock().await;
         let Some(active) = slot.as_ref() else {
             return Err("no active session — send `reset` first".to_owned());
         };
-        (Arc::clone(&active.agent), Arc::clone(&active.info_cache))
+        (active.model_effort.clone(), Arc::clone(&active.info_cache))
     };
     let (model_event, effort_reset) = {
-        let mut guard = agent.lock().await;
-        let model_event = guard.set_model(model.clone()).await;
-        let current_effort = guard.active_effort().to_owned();
+        let model_event = model_effort.set_model(model.clone()).await;
+        let current_effort = model_effort.effort();
         let needs_reset = (current_effort == "max" && !MAX_EFFORT_MODELS.contains(&model.as_str()))
             || (current_effort == "xhigh" && !XHIGH_EFFORT_MODELS.contains(&model.as_str()));
         let effort_event = if needs_reset {
-            Some(guard.set_effort("medium".to_owned()).await)
+            Some(model_effort.set_effort("medium".to_owned()).await)
         } else {
             None
         };
@@ -774,18 +789,16 @@ async fn handle_set_effort(
     tx: &UnboundedSender<WsMessage>,
     effort: String,
 ) -> Result<(), String> {
-    let (agent, info_cache_arc) = {
+    let (model_effort, info_cache_arc) = {
         let slot = state.active_session.lock().await;
         let Some(active) = slot.as_ref() else {
             return Err("no active session — send `reset` first".to_owned());
         };
-        (Arc::clone(&active.agent), Arc::clone(&active.info_cache))
+        (active.model_effort.clone(), Arc::clone(&active.info_cache))
     };
     let new_effort = effort.clone();
-    let event = {
-        let mut guard = agent.lock().await;
-        guard.set_effort(effort).await
-    };
+    // §15: lock-free model/effort change (see handle_set_model).
+    let event = model_effort.set_effort(effort).await;
     info_cache_arc.lock().await.effort = new_effort;
     let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(event)))));
     Ok(())
@@ -807,36 +820,74 @@ async fn handle_delete_session(
     Ok(())
 }
 
-/// Spawn a task that drives one agent turn and forwards every yielded
-/// item to whichever WebSocket is currently installed in
-/// `active_session.ws_tx`.  We don't await the task: pause/continue/abort
-/// frames must be processable while the turn is in flight.  Looking up
-/// `ws_tx` on each send (rather than capturing a clone) lets a paused
-/// turn survive a browser reload — events emitted *after* the new
-/// connection takes over still reach the client.
+/// Push a human message onto the persistent run loop's inbox (§15 Unified
+/// Input Model, U1).
+///
+/// This is the deadlock fix: instead of acquiring the agent lock and
+/// calling `send_message` per message (the old per-message re-entry that
+/// deadlocked when a new message arrived while the prior turn was parked),
+/// we hand the message to the single per-session run task via its inbox.
+/// That task owns the agent lock for the session's life and streams every
+/// turn to the WebSocket (see [`spawn_run_task`]).  No `agent.lock()`, no
+/// spawned per-message stream.
 async fn handle_user_message(
     content: String,
     state: &AppState,
     _tx: &UnboundedSender<WsMessage>,
 ) -> Result<(), String> {
-    let (agent, turn_state, info_cache_arc, monitor_manager) = {
+    let inbox = {
         let slot = state.active_session.lock().await;
         let Some(active) = slot.as_ref() else {
             return Err("no active session — send `reset` first".to_owned());
         };
-        (
-            Arc::clone(&active.agent),
-            Arc::clone(&active.turn_state),
-            Arc::clone(&active.info_cache),
-            Arc::clone(&active.monitor_manager),
-        )
+        active.inbox.clone()
+    };
+    inbox
+        .send(InputItem::Human { content })
+        .await
+        .map_err(|_| "agent run loop is not accepting input".to_owned())
+}
+
+/// Spawn the single per-session `Agent::run` task and stash its handle.
+///
+/// §15 (Unified Input Model, U1): called once at reset/resume.  The task
+/// acquires the agent lock and holds it for the session's life, driving
+/// the persistent run loop (parked on an empty inbox until input arrives)
+/// and forwarding every yielded item to whichever WebSocket is currently
+/// installed in `active_session.ws_tx`.
+///
+/// The WS-forwarding loop (turn-state transitions via `next_turn_state_for`
+/// and the `is_monitor_event` roster push) moved here from the old
+/// `handle_user_message`.  Looking up `ws_tx` on each send (rather than
+/// capturing a clone) lets a turn survive a browser reload — events
+/// emitted *after* the new connection takes over still reach the client.
+async fn spawn_run_task(state: &AppState) {
+    let prepared = {
+        let mut slot = state.active_session.lock().await;
+        slot.as_mut().and_then(|active| {
+            active.inbox_rx.take().map(|rx| {
+                (
+                    rx,
+                    Arc::clone(&active.agent),
+                    Arc::clone(&active.turn_state),
+                    Arc::clone(&active.info_cache),
+                    Arc::clone(&active.monitor_manager),
+                    active.run_cancel.clone(),
+                )
+            })
+        })
+    };
+    let Some((inbox_rx, agent, turn_state, info_cache_arc, monitor_manager, run_cancel)) = prepared
+    else {
+        // No active session, or the run task was already spawned.
+        return;
     };
 
     let slot_arc = Arc::clone(&state.active_session);
     let handle = tokio::spawn(async move {
+        // Owns the agent lock for the whole session (incl. while parked).
         let mut guard = agent.lock().await;
-        let cancel = CancellationToken::new();
-        let mut stream = guard.send_message(content, cancel);
+        let mut stream = guard.run(inbox_rx, run_cancel);
         while let Some(item) = stream.next().await {
             let next = match &item {
                 AgentItem::Event(ev) => next_turn_state_for(ev),
@@ -863,18 +914,53 @@ async fn handle_user_message(
         }
     });
 
-    // Stash the JoinHandle so graceful shutdown can `join` it (with a
-    // 2 s deadline) after requesting abort.  A previous turn's handle —
-    // if any — is dropped here; that does not abort it (Tokio detaches
-    // a JoinHandle that goes out of scope without `abort()`), so the
-    // prior turn keeps draining as before.
     {
         let mut slot = state.active_session.lock().await;
         if let Some(active) = slot.as_mut() {
             active.current_turn = Some(handle);
         }
     }
-    Ok(())
+}
+
+/// Wind down the prior session's run task before its slot is replaced
+/// (reset/resume).  §15 (Unified Input Model, U1).
+///
+/// The persistent run task holds the agent lock while parked on the inbox,
+/// so we cannot reap monitors (which needs that lock) until the task has
+/// stopped.  Steps:
+/// 1. `request_abort` — cancel any in-flight turn at the next seam.
+/// 2. `run_cancel.cancel()` — tell the run loop to terminate (this also
+///    aborts an in-flight turn via the forwarder) so it releases the lock.
+/// 3. Join the run task (bounded) so the lock is actually free.
+/// 4. `shutdown_and_log_monitors` — reap every live monitor and persist
+///    `MonitorStopped(StoppedBySessionEnd)`.  Requires the agent lock,
+///    which step 3 guarantees is available.
+async fn teardown_prior_run(state: &AppState) {
+    let (controls, run_cancel, run_task, agent) = {
+        let mut slot = state.active_session.lock().await;
+        match slot.as_mut() {
+            Some(active) => (
+                Some(active.controls.clone()),
+                Some(active.run_cancel.clone()),
+                active.current_turn.take(),
+                Some(Arc::clone(&active.agent)),
+            ),
+            None => (None, None, None, None),
+        }
+    };
+    if let Some(controls) = controls {
+        controls.request_abort();
+    }
+    if let Some(run_cancel) = run_cancel {
+        run_cancel.cancel();
+    }
+    if let Some(task) = run_task {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), task).await;
+    }
+    if let Some(agent) = agent {
+        let mut guard = agent.lock().await;
+        guard.shutdown_and_log_monitors().await;
+    }
 }
 
 async fn handle_pause(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Result<(), String> {
@@ -978,26 +1064,10 @@ async fn handle_reset(
         return Ok(());
     }
 
-    // Tell any in-flight turn to wind down so the orphan agent doesn't
-    // keep using the cwd / disk paths after we replace the slot.
-    {
-        let slot = state.active_session.lock().await;
-        if let Some(active) = slot.as_ref() {
-            active.controls.request_abort();
-        }
-    }
-
-    // Phase 4: kill every live monitor on the outgoing session AND persist
-    // MonitorStopped(StoppedBySessionEnd) for each.  The abort above ensures
-    // the agent loop has stopped writing so the single-writer rule is
-    // preserved.  Best-effort (failures are silently discarded).
-    {
-        let slot = state.active_session.lock().await;
-        if let Some(active) = slot.as_ref() {
-            let mut agent = active.agent.lock().await;
-            agent.shutdown_and_log_monitors().await;
-        }
-    }
+    // Wind down the prior run task (abort in-flight turn, terminate the run
+    // loop so it releases the agent lock) and reap its monitors before we
+    // replace the slot.  §15 (Unified Input Model).
+    teardown_prior_run(state).await;
 
     let (mut session, _dir_name) =
         create_active_session(state, model, effort, tool_selection).await?;
@@ -1031,6 +1101,9 @@ async fn handle_reset(
             let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
         }
     }
+    // 6. Spawn the single per-session run task (§15 U1).  It parks on the
+    //    empty inbox and owns the agent lock for the session's life.
+    spawn_run_task(state).await;
     Ok(())
 }
 
@@ -1057,26 +1130,9 @@ async fn handle_resume_session(
         return Ok(());
     }
 
-    // Tell any in-flight turn to wind down so the orphan agent doesn't
-    // keep using the soon-to-be-replaced session paths.
-    {
-        let slot = state.active_session.lock().await;
-        if let Some(active) = slot.as_ref() {
-            active.controls.request_abort();
-        }
-    }
-
-    // Phase 4: kill every live monitor on the outgoing session AND persist
-    // MonitorStopped(StoppedBySessionEnd) for each.  The abort above ensures
-    // the agent loop has stopped writing so the single-writer rule is
-    // preserved.  Best-effort (failures are silently discarded).
-    {
-        let slot = state.active_session.lock().await;
-        if let Some(active) = slot.as_ref() {
-            let mut agent = active.agent.lock().await;
-            agent.shutdown_and_log_monitors().await;
-        }
-    }
+    // Wind down the prior run task (abort + terminate + reap monitors)
+    // before we replace the slot.  §15 (Unified Input Model).
+    teardown_prior_run(state).await;
 
     // Load the prior session's events and metadata.
     let prev_dir = state.sessions_root.join(&session_dir);
@@ -1165,6 +1221,10 @@ async fn handle_resume_session(
             let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
         }
     }
+    // Spawn the per-session run task only AFTER the inline resumption block
+    // above has released the agent lock (§15 U1).  The run task then acquires
+    // the lock and parks on the empty inbox.
+    spawn_run_task(state).await;
     Ok(())
 }
 

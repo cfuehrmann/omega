@@ -6,13 +6,14 @@
 
 use std::sync::Arc;
 
-use omega_agent::{Agent, ControlHandle};
+use omega_agent::{Agent, ControlHandle, InputItem, ModelEffortHandle};
 use omega_store::SessionPaths;
 use omega_tools::MonitorManager;
 use omega_types::FeatureFlags;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::ws_message::WsMessage;
 
@@ -58,12 +59,32 @@ pub struct ActiveSession {
     /// fanned-out) on every reconnect, matching the TS server's
     /// single-WS-at-a-time model.
     pub ws_tx: Option<UnboundedSender<WsMessage>>,
-    /// Handle to the currently-running turn task, if any.
+    /// Handle to the persistent per-session `Agent::run` task (§15 Unified
+    /// Input Model, U1).
     ///
-    /// Set when [`router::handle_user_message`] spawns a turn-driving task
-    /// and consumed by graceful shutdown so the server can `join` the task
-    /// (with a 2 s deadline) after requesting abort.  `None` between turns.
+    /// Spawned **once** at reset/resume; it owns the agent lock for the
+    /// session's life, parks on an empty [`Self::inbox`], and forwards the
+    /// run stream to the WebSocket continuously.  Consumed by graceful
+    /// shutdown / session teardown so the server can cancel
+    /// ([`Self::run_cancel`]) and `join` the task (with a deadline) before
+    /// reaping monitors.
     pub current_turn: Option<JoinHandle<()>>,
+    /// Inbox sender for human (and, in U2, monitor) input to the persistent
+    /// run loop.  `handle_user_message` pushes [`InputItem::Human`] here
+    /// instead of acquiring the agent lock — this is the deadlock fix.
+    pub inbox: Sender<InputItem>,
+    /// Receiver half of the inbox, taken (`Option::take`) by the spawner
+    /// when the run task is launched.  `None` once the task is running.
+    pub inbox_rx: Option<Receiver<InputItem>>,
+    /// Run-level cancel token for the persistent run task.  Firing it tells
+    /// the run loop to terminate (and aborts any in-flight turn via the
+    /// forwarder), releasing the agent lock so teardown can reap monitors.
+    pub run_cancel: CancellationToken,
+    /// Lock-free handle for model/effort changes (§15 Unified Input Model).
+    /// Lets `handle_set_model` / `handle_set_effort` mutate model/effort and
+    /// persist the change without acquiring the agent lock — which the
+    /// persistent run task holds for the session's life.
+    pub model_effort: ModelEffortHandle,
     /// Derived turn state (`idle` / `running` / `pause_requested` / `paused`).
     ///
     /// Mirrors the TS server's `currentTurnState`. Updated by the WebSocket
