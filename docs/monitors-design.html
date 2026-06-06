@@ -934,7 +934,29 @@ dog-fooding (migration sessions do ordinary coding turns and need not run a live
 monitor). So we go straight to the unified model; the unification <em>is</em> the
 deadlock fix.</p>
 
-<h3>Migration plan (phased &mdash; sketch; refine before any handoff)</h3>
+<h3>Current shape (grounded in the code) and the core transformation</h3>
+<p>Today <code>Agent::send_message(user_message: String, cancel) -&gt; Stream&lt;AgentItem&gt;</code>
+borrows <code>&amp;mut self</code> for the stream's whole life &mdash; that borrow
+<em>is</em> the held lock. The <code>'agentic</code> loop inside it already parks
+and resumes; it is merely wrapped in a <em>per-message</em> entry seeded by one
+<code>String</code>. There are <strong>three ad-hoc input channels</strong>: the
+seed <code>String</code>, <code>controls.pending_continue</code> (interjection),
+and the monitor manager's pending queue + <code>notify_item</code>.
+<code>handle_user_message</code> spawns a task that does
+<code>agent.lock()&nbsp;&rarr;&nbsp;send_message&nbsp;&rarr;&nbsp;stream&nbsp;&rarr;&nbsp;WS</code>,
+holding the lock across parking &mdash; the deadlock.</p>
+<p><strong>The refactor, in one line:</strong> replace
+<code>send_message(String)</code> (borrows <code>&amp;mut self</code> per message)
+with <code>run(&amp;mut self, inbox)</code> (borrows <code>&amp;mut self</code> once
+per session), and collapse the three ad-hoc channels into one <code>inbox</code> of
+<code>InputItem</code>s (<code>source = Human | Monitor(id) | &hellip;</code>; a
+render tag, not a handling difference). Human input becomes
+<code>inbox.send(&hellip;)</code> &mdash; no agent lock &mdash; so the deadlock
+cannot form. The <code>'agentic</code> loop is largely unchanged: its
+<em>input source</em> moves to &ldquo;drain the inbox at the Gather seam&rdquo;
+and its <em>lifetime</em> moves from per-message to per-session.</p>
+
+<h3>Migration plan (phased)</h3>
 <div class="box warn">
   <strong>Governing invariant (dog-fooding):</strong> every intermediate version
   of Omega must remain usable to execute the <em>next</em> migration step &mdash;
@@ -943,30 +965,47 @@ deadlock fix.</p>
   mid-migration; ordinary coding turns MUST NOT.
 </div>
 <ol>
-  <li><strong>U1 &mdash; persistent session loop (human-only).</strong> Replace
-    &ldquo;one <code>send_message</code> per human message&rdquo; with a persistent
-    per-session loop that blocks on the queue, runs one Gather&rarr;Process cycle
-    per item, and loops. Human input &rarr; <em>append + notify</em> (no agent
-    lock). Monitors and interjection may be dark here; <em>ordinary coding turns
-    work</em> &mdash; dog-foodable. This is the backbone change.</li>
-  <li><strong>U2 &mdash; re-attach monitors to the unified queue.</strong> Monitor
-    stdout/stop enqueue into the same queue; Gather batches human + monitor items
-    at the seam; Process is the locked block; mid-block items wait for the next
-    seam. Monitor delivery and interjection back online.</li>
-  <li><strong>U3 &mdash; retire superseded machinery.</strong> Remove
-    parking-inside-<code>send_message</code>, the roster-changed wake (a stop now
-    enqueues a notice; idle = empty-queue seam), and the pause-for-injection
-    plumbing. Reconcile controls: <em>abort</em> stays (forceful);
-    pause/continue-for-interjection retired. Add the headless termination rule
-    (empty queue + no live monitor &rarr; done). UI turn-state: running = in a
-    block, idle = empty-queue seam &mdash; emit block-boundary markers so turns
-    still delineate (this also fixes the composer's parked-looks-idle confusion).</li>
+  <li><strong>U1 &mdash; persistent <code>run</code> loop + inbox for human input;
+    monitor <em>delivery</em> goes dark.</strong>
+    <ul>
+      <li>New <code>Agent::run(&amp;mut self, inbox: Receiver&lt;InputItem&gt;, cancel)
+        -&gt; Stream</code>; the loop's first Gather pulls the first human message
+        from <code>inbox</code> (the seed <code>String</code> dissolves).</li>
+      <li>Server spawns <strong>one</strong> <code>run</code> task per session at
+        reset/resume (parked on an empty inbox); the inbox <code>Sender</code> is
+        stored in <code>ActiveSession</code>; <code>handle_user_message</code> becomes
+        <code>inbox.send(content)</code> (no lock). The WS-forwarding loop
+        (turn-state updates, roster push) <strong>moves into the run task</strong> &mdash;
+        one continuous per-session stream instead of one per message.</li>
+      <li>Monitor <em>delivery</em> is temporarily unwired (Seam-B drain +
+        park-on-<code>notify_item</code> removed); the manager still <strong>spawns
+        and reaps</strong> (session-end <code>shutdown_and_log_monitors</code>
+        preserved). <code>request_abort</code> kept; <code>pause</code> /
+        <code>pending_continue</code> may lapse.</li>
+      <li><em>Dog-food check:</em> human &rarr; inbox &rarr; Gather &rarr; Process
+        &rarr; reply &rarr; park-on-inbox is an ordinary coding turn. &#x2713;</li>
+    </ul></li>
+  <li><strong>U2 &mdash; re-attach monitors to the inbox.</strong>
+    Monitor stdout/stop push <code>InputItem::Monitor{&hellip;}</code> into the
+    <em>same</em> inbox; Gather batches human + monitor at the seam; the
+    <strong>Seam-B mid-turn drain is re-wired to the inbox</strong> (must survive
+    &mdash; monitor output injected between a <code>tool_result</code> and the next
+    model call); park awaits the inbox. <em>Dog-food check:</em> human turns still
+    work; monitor delivery + interjection back online. &#x2713;</li>
+  <li><strong>U3 &mdash; retire superseded machinery + reconcile.</strong>
+    Remove <code>request_pause</code> + <code>pending_continue</code> (interjection
+    = enqueue-at-seam; <code>request_continue(content)</code> becomes a push to the
+    inbox); keep <code>request_abort</code>. Remove the roster-changed wake (a stop
+    enqueues a notice; idle = empty inbox). Add the headless rule (empty inbox + no
+    live monitor &rarr; <code>run</code> returns). UI turn-state: running = in a
+    block, idle = empty-inbox seam + block-boundary markers (also fixes the
+    composer's parked-looks-idle confusion). Drop the per-message
+    <code>current_turn</code> handle. <em>Dog-food check:</em> cleanup only. &#x2713;</li>
 </ol>
-<p class="meta">The exact cut between U1/U2/U3 is a sketch &mdash; refine it in a
-planning pass before the first handoff. The hard constraint is the dog-fooding
-invariant above. The Seam-B mid-turn drain (monitor output injected mid-block,
-between a <code>tool_result</code> and the next model call) must survive the
-refactor unchanged; only the Seam-A idle wait is being relocated.</p>
+<p class="meta">The one invariant the refactor must not break: the <strong>Seam-B
+mid-turn drain</strong> (monitor output injected mid-block) &mdash; only the
+Seam-A idle wait is being relocated. U1 is the invasive backbone; U2/U3 are
+incremental on top of it.</p>
 
 </main>
 </body>
