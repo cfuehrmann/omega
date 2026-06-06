@@ -72,18 +72,19 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <li><a href="#goal">Goal &amp; motivation</a></li>
     <li><a href="#research">Research: how others do it</a></li>
     <li><a href="#seams">The seam rules (Anthropic API)</a></li>
-    <li><a href="#mechanic">Core mechanic: pull-at-boundary</a></li>
+    <li><a href="#mechanic">Core mechanic: pull-at-boundary <em>(superseded — see 15)</em></a></li>
     <li><a href="#philosophy">Guardrail philosophy</a></li>
     <li><a href="#decisions">Signed-off decisions</a></li>
     <li><a href="#layers">Layer mapping (Contract Authority)</a></li>
-    <li><a href="#schema">Proposed event schema</a></li>
+    <li><a href="#schema">Event schema (implemented)</a></li>
     <li><a href="#ui">UI design</a></li>
     <li><a href="#lifecycle">Lifecycle, shutdown, resume, headless</a></li>
-    <li><a href="#steps">Implementation steps (phased)</a></li>
+    <li><a href="#steps">Implementation steps (phased) — Phases 0&ndash;4 done</a></li>
+    <li><a href="#sst">Single-source-of-truth refactor (implemented)</a></li>
     <li><a href="#open">Open items (deferred, non-blocking)</a></li>
     <li><a href="#codefacts">Codebase facts gathered</a></li>
-  </ol>
-</div>
+    <li><a href="#unified"><strong>Unified input model (planned refactor)</strong></a></li>
+  </ol></div>
 
 <h2 id="goal">1. Goal &amp; motivation</h2>
 <p>
@@ -271,6 +272,14 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 </ul>
 
 <h2 id="mechanic">4. Core mechanic: pull-at-boundary (single writer)</h2>
+<div class="box warn">
+  <strong>Superseded.</strong> The parking mechanic described in this section is
+  the <em>current implementation</em>. It conflates &ldquo;a monitor is live&rdquo;
+  with &ldquo;the agent is busy,&rdquo; which caused a real deadlock and a
+  human-vs-synthetic asymmetry. It is replaced by the <a href="#unified">unified
+  input model (&sect;15)</a>; read that for the target design. The text below is
+  retained as the record of what the shipped code does today.
+</div>
 <ul>
   <li>Monitors run as <strong>background OS processes</strong>. Each stdout line is
     enqueued to an <strong>in-memory queue</strong>. Monitors <em>never</em> write
@@ -564,7 +573,8 @@ const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows
     <td><p><strong>Phase&nbsp;3 (done):</strong> Badge shown; shows <code>N running</code> + <code>M fired</code> (total <code>fired_count</code> across all monitors); click opens modal with roster table (id, description, command, status chip, started_at, fired_count, stderr tail &le;20 lines). Components: <code>MonitorsBadge</code> / <code>MonitorsModal</code> (<small class="path">frontends/leptos/src/monitors_panel.rs</small>); <code>roster</code> signal in <code>SessionStore</code> updated by the new WS message; reset on <code>ResetDone</code>.</p><p><strong>Phase&nbsp;5 (done):</strong> Badge is now <strong>always-visible</strong> (never hidden); idle label "Monitors" when roster is empty; modal shows empty-state message when no monitors are running. See &sect;9 for design rationale.</p><p><strong>Deferred:</strong> Kill button (deferred). <strong>PLANNED:</strong> Pending-queue visualisation. <strong>Deferred:</strong> Real-time per-line badge updates. See &sect;9 for notes.</p></td></tr>
 </table>
 
-<h2 id="schema">8. Proposed event schema (sketch — finalize in events.rs first)</h2>
+<h2 id="schema">8. Event schema (implemented — see <small class="path">events.rs</small>)</h2>
+<p class="meta">The sketch below predates Phase&nbsp;0 and is illustrative only; the authoritative schema is in <small class="path">crates/omega-types/src/events.rs</small>. Note the shipped <code>MonitorDelivery</code> is monitor-sourced only (human input stayed <code>UserMessage</code>) — the unified model (&sect;15) revisits that choice.</p>
 <p>Field names illustrative; the point is the <em>variant boundaries</em>:</p>
 <pre><code>// canonical OmegaEvent variants (camelCase on the wire)
 MonitorStarted { id, description, command, time }
@@ -597,7 +607,7 @@ MonitorStopped { id, reason, exit_code, time }
   <li><strong>Server-authoritative push</strong> (<strong>done</strong>) &mdash; the server pushes a fresh roster snapshot (<code>WsMessage::MonitorRoster</code>) on client connect (when a session is active), after reset, after resume, and right after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event is forwarded. The frontend stores it in a <code>roster: RwSignal&lt;Vec&lt;MonitorRosterEntry&gt;&gt;</code> in <code>SessionStore</code>, reset on <code>ResetDone</code>. No client polling; no separate query endpoint.</li>
 </ul>
 <div class="box warn">
-  <h4>Deferred to the next session &mdash; do NOT implement in Phase 3</h4>
+  <h4>Deferred (not yet scheduled): kill button / KillMonitor</h4>
   <ul>
     <li><strong>Kill button / <code>KillMonitor</code> control frame.</strong> When picked up it needs: a new <code>MonitorManager</code> method that does the Running&rarr;Stopped status CAS, kills the process tree, enqueues a <code>PendingItem::Stopped{ reason: StoppedByUser, &hellip; }</code> (so the loop drains it into <code>MonitorStopped(StoppedByUser)</code> &mdash; single-writer preserved), and fires the roster-changed notify (so a loop parked on the last monitor wakes). Note <code>MonitorStopReason::StoppedByUser</code> exists in the schema but is currently unused. A <code>ClientFrame::KillMonitor{id}</code> would dispatch to it (mirror <code>handle_abort</code>). <strong>Deferred (not yet scheduled).</strong></li>
     <li><strong>Live pending-queue visualisation</strong> (sub-seam state; would need per-enqueue streaming). <strong>PLANNED &mdash; wanted, not yet scheduled.</strong></li>
@@ -726,7 +736,7 @@ MonitorStopped { id, reason, exit_code, time }
     (CAS guard prevents double-logging for naturally-exited monitors).</p></li>
 </ol>
 
-<h2 id="ssr">12. Single-source-of-truth refactor &amp; monitor promotion (implemented)</h2>
+<h2 id="sst">12. Single-source-of-truth refactor &amp; monitor promotion (implemented)</h2>
 <p>This was an unscheduled interlude refactor between Phases 3 and 4 — NOT Phase 4 itself. It completed the following structural changes:</p>
 <ul>
   <li><strong>Single source of truth — tool registry moved to <small class="path">crates/omega-types/src/tools.rs</small>.</strong>
@@ -855,7 +865,108 @@ MonitorStopped { id, reason, exit_code, time }
 </ul>
 
 <hr/>
-<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: §6 is settled, §13 lists the only soft spots. If implementing: start at §11 Phase 0 (schema in <small class="path">events.rs</small>), contract-first.</p>
+<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: Phases&nbsp;0&ndash;4 and the &sect;12 refactor are shipped. The current frontier is <a href="#unified">&sect;15, the unified input model</a> &mdash; read it and its migration plan before any further monitor work. &sect;13 lists remaining soft spots.</p>
+
+<h2 id="unified">15. Unified input model (planned refactor — supersedes &sect;4's parking)</h2>
+
+<p>The parking mechanic (&sect;4) makes &ldquo;a monitor is live&rdquo; masquerade
+as &ldquo;the agent is busy&rdquo;: parking lives <em>inside</em>
+<code>send_message</code>, which holds the agent lock for the whole turn. Two
+symptoms follow — (a) a human/synthetic asymmetry (a user message must be handled
+differently when parked), and (b) a real <strong>deadlock</strong>: a parked turn
+holds the agent lock, so a fresh <code>UserMessage</code> (which acquires that
+lock to start a turn) blocks forever, and the session is trapped. The fix is a
+unification, not a patch.</p>
+
+<div class="box callout">
+  <h4>The settled model</h4>
+  <ol>
+    <li><strong>One input queue.</strong> All user-role content — human messages,
+      monitor lines, monitor-stop notices, hook/synthetic output — flows through a
+      single queue. <strong>A human message is just a one-shot &ldquo;monitor&rdquo;:
+      one item, then done.</strong> <code>source</code> is a tag that affects
+      <em>rendering</em> (<code>&lt;monitor id=&hellip;&gt;</code> vs raw text),
+      never <em>handling</em>.</li>
+    <li><strong>Inputs are enqueued, never injected by acquiring the agent.</strong>
+      The server's human-input handler does exactly what the monitor manager does:
+      <em>append&nbsp;+&nbsp;notify</em>. Nothing reaches in to &ldquo;start&rdquo;
+      the agent &mdash; so the deadlock is <em>impossible by construction</em>.</li>
+    <li><strong>Gather/Process alternation.</strong> <em>Seam = Gather</em> (drain
+      the queue &rarr; the next user-role turn; unlocked). <em>Block = Process</em>
+      = <code>[model call &rarr; tool_result | end_turn]</code>, uninterruptible.
+      Items arriving during a block wait for the next seam &mdash; no-preemption
+      falls out for free. The user-role turn is the artifact handed across the
+      seam (Gather builds it, Process consumes it); the lock covers only Process,
+      never the turn assembly.</li>
+    <li><strong>Idle = an empty-queue seam.</strong> Waiting for the human and
+      &ldquo;parked on a monitor&rdquo; become the <em>same</em> state. The
+      park/terminate/roster-changed machinery dissolves.</li>
+    <li><strong>Abort is the only forceful control,</strong> fully outside this
+      picture. Cooperative input lands at the next seam; &ldquo;stop now&rdquo; is
+      abort.</li>
+    <li><strong>Headless</strong> is the sole place a termination rule survives:
+      empty queue + no live monitor &rarr; done. Interactive simply waits at the
+      seam.</li>
+    <li><strong>Interjection is preserved, modernised.</strong> Typing while a
+      block runs enqueues and is folded in at the next seam &mdash; automatically,
+      no pause-then-continue dance. The pause/continue <em>plumbing</em> for
+      interjection is superseded; the <em>capability</em> remains and is smoother.</li>
+  </ol>
+</div>
+
+<h3>From &rarr; to</h3>
+<table>
+  <tr><th>Current (&sect;4)</th><th>Unified (target)</th></tr>
+  <tr><td>one <code>send_message</code> per human message</td><td>one persistent per-session loop</td></tr>
+  <tr><td>human input acquires the agent lock to start a turn</td><td>human input = <em>append + notify</em> to the queue</td></tr>
+  <tr><td>parking lives inside <code>send_message</code> (lock held)</td><td>idle = empty-queue seam (no lock held)</td></tr>
+  <tr><td>human vs monitor handled by different paths</td><td>identical handling; <code>source</code> is a render tag only</td></tr>
+  <tr><td>park / terminate / roster-changed wake</td><td>dissolved (idle just waits; headless has the one termination rule)</td></tr>
+  <tr><td>pause-then-continue to interject</td><td>enqueue-while-running, lands at next seam</td></tr>
+</table>
+
+<h3>Why not the small &ldquo;reroute&rdquo; patch</h3>
+<p>An earlier option &mdash; route a <code>UserMessage</code>-while-parked through
+<code>request_continue</code> &mdash; would unblock chat without the refactor. We
+are <strong>not</strong> doing it: it entrenches the &ldquo;monitor = one long
+open turn&rdquo; model we are unwinding, and the deadlock does not actually block
+dog-fooding (migration sessions do ordinary coding turns and need not run a live
+monitor). So we go straight to the unified model; the unification <em>is</em> the
+deadlock fix.</p>
+
+<h3>Migration plan (phased &mdash; sketch; refine before any handoff)</h3>
+<div class="box warn">
+  <strong>Governing invariant (dog-fooding):</strong> every intermediate version
+  of Omega must remain usable to execute the <em>next</em> migration step &mdash;
+  i.e. an ordinary human&rarr;agent coding turn (read / edit / run / commit) works
+  at every phase boundary. Monitor delivery and interjection MAY lapse temporarily
+  mid-migration; ordinary coding turns MUST NOT.
+</div>
+<ol>
+  <li><strong>U1 &mdash; persistent session loop (human-only).</strong> Replace
+    &ldquo;one <code>send_message</code> per human message&rdquo; with a persistent
+    per-session loop that blocks on the queue, runs one Gather&rarr;Process cycle
+    per item, and loops. Human input &rarr; <em>append + notify</em> (no agent
+    lock). Monitors and interjection may be dark here; <em>ordinary coding turns
+    work</em> &mdash; dog-foodable. This is the backbone change.</li>
+  <li><strong>U2 &mdash; re-attach monitors to the unified queue.</strong> Monitor
+    stdout/stop enqueue into the same queue; Gather batches human + monitor items
+    at the seam; Process is the locked block; mid-block items wait for the next
+    seam. Monitor delivery and interjection back online.</li>
+  <li><strong>U3 &mdash; retire superseded machinery.</strong> Remove
+    parking-inside-<code>send_message</code>, the roster-changed wake (a stop now
+    enqueues a notice; idle = empty-queue seam), and the pause-for-injection
+    plumbing. Reconcile controls: <em>abort</em> stays (forceful);
+    pause/continue-for-interjection retired. Add the headless termination rule
+    (empty queue + no live monitor &rarr; done). UI turn-state: running = in a
+    block, idle = empty-queue seam &mdash; emit block-boundary markers so turns
+    still delineate (this also fixes the composer's parked-looks-idle confusion).</li>
+</ol>
+<p class="meta">The exact cut between U1/U2/U3 is a sketch &mdash; refine it in a
+planning pass before the first handoff. The hard constraint is the dog-fooding
+invariant above. The Seam-B mid-turn drain (monitor output injected mid-block,
+between a <code>tool_result</code> and the next model call) must survive the
+refactor unchanged; only the Seam-A idle wait is being relocated.</p>
 
 </main>
 </body>
