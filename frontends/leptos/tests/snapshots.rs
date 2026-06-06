@@ -31,10 +31,11 @@ use leptos::tachys::view::RenderHtml;
 use omega_types::FeatureFlags;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, ContextCompactedEvent, LlmCallEvent, LlmResponseDiscardedEvent,
-    LlmResponseEndedEvent, LlmResponseUsage, ResumingSessionEvent, SessionResumedEvent,
-    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
-    ToolUseBlockEvent, TurnEndEvent, TurnMetrics, UsageIteration, UserMessageEvent,
+    AgentErrorEvent, ContextCompactedEvent, HarnessRecoveryEvent, HarnessRecoveryKind,
+    LlmCallEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseUsage,
+    ResumingSessionEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
+    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TurnEndEvent,
+    TurnMetrics, UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use omega_web::context_modal::{ContextModal, ContextModalState};
@@ -619,6 +620,19 @@ fn snap_event_llm_response_ended_compacted() {
 fn snap_event_context_compacted() {
     let html = render(|| {
         let ev = ev_context_compacted();
+        view! { <EventBlock event=ev /> }
+    });
+    insta::assert_snapshot!(html);
+}
+
+#[test]
+fn snap_event_harness_recovery() {
+    let html = render(|| {
+        let ev = OmegaEvent::HarnessRecovery(HarnessRecoveryEvent {
+            time: "2025-01-01T00:00:00.000Z".into(),
+            kind: HarnessRecoveryKind::EmptyResponseContinuation,
+            content: "Please continue.".into(),
+        });
         view! { <EventBlock event=ev /> }
     });
     insta::assert_snapshot!(html);

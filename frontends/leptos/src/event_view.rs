@@ -103,6 +103,8 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::ContextCompacted(_)
         // python_repl bootstrap: treated as a status / informational event.
         | OmegaEvent::PythonReplBootstrapped(_)
+        // Harness-recovery events: self-repair notices, classified as Status.
+        | OmegaEvent::HarnessRecovery(_)
         // Phase 0 monitor events: causality / diagnostic markers.
         | OmegaEvent::MonitorStarted(_)
         | OmegaEvent::MonitorDelivery(_)
@@ -176,6 +178,8 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::ContextCompacted(_) => "context_compacted",
         // python_repl bootstrap.
         OmegaEvent::PythonReplBootstrapped(_) => "python_repl_bootstrapped",
+        // Harness-recovery events (§15).
+        OmegaEvent::HarnessRecovery(_) => "harness_recovery",
         // Phase 0 monitor events.
         OmegaEvent::MonitorStarted(_) => "monitor_started",
         OmegaEvent::MonitorDelivery(_) => "monitor_delivery",
@@ -223,6 +227,7 @@ pub const LABEL_ASSISTANT: &str = "Assistant";
 pub const LABEL_THINKING: &str = "Thinking";
 pub const LABEL_CONTEXT_COMPACTED: &str = "Context compacted";
 pub const LABEL_PYTHON_REPL_BOOTSTRAPPED: &str = "python3 bootstrapped";
+pub const LABEL_HARNESS_RECOVERY: &str = "Harness recovery";
 
 /// Canonical human label for an event.  Used by the big-block
 /// `<span class="block-label">` and the status chip alike.
@@ -263,6 +268,8 @@ pub fn event_label(event: &OmegaEvent) -> &str {
         OmegaEvent::ContextCompacted(_) => LABEL_CONTEXT_COMPACTED,
         // python_repl bootstrap.
         OmegaEvent::PythonReplBootstrapped(_) => LABEL_PYTHON_REPL_BOOTSTRAPPED,
+        // Harness-recovery events (§15).
+        OmegaEvent::HarnessRecovery(_) => LABEL_HARNESS_RECOVERY,
         // Phase 0 monitor events.
         OmegaEvent::MonitorStarted(_) => "Monitor started",
         OmegaEvent::MonitorDelivery(_) => "Monitor delivery",

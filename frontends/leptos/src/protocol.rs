@@ -48,7 +48,7 @@
 use omega_types::OmegaEvent;
 use omega_types::events::AgentErrorEvent;
 use omega_types::events::{
-    ContextCompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
+    ContextCompactedEvent, EffortChangedEvent, HarnessRecoveryEvent, LlmCallEvent, LlmErrorEvent,
     LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmRetryEvent,
     ModelChangedEvent, PauseRequestedEvent, PythonReplBootstrappedEvent, ResumingSessionEvent,
     ServerStartedEvent, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
@@ -259,6 +259,10 @@ pub enum WsMessage {
     /// Omega auto-installed python3 via apt-get because it was absent from PATH.
     PythonReplBootstrapped(PythonReplBootstrappedEvent),
 
+    // --- Harness-recovery events (§15 — forensics gap close) ---------------
+    /// A harness-authored recovery prompt was injected as `role: user`.
+    HarnessRecovery(HarnessRecoveryEvent),
+
     /// A `Reset` or `ResumeSession` frame was rejected because the
     /// working tree has uncommitted git changes and `allow_dirty` was
     /// not set.  The previous active session (if any) is untouched.
@@ -367,6 +371,8 @@ impl WsMessage {
             Self::ContextCompacted(e) => OmegaEvent::ContextCompacted(e),
             // python_repl bootstrap.
             Self::PythonReplBootstrapped(e) => OmegaEvent::PythonReplBootstrapped(e),
+            // Harness-recovery (§15).
+            Self::HarnessRecovery(e) => OmegaEvent::HarnessRecovery(e),
         })
     }
 }

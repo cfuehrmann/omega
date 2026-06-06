@@ -353,6 +353,24 @@ mutants-empty-response:
     cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
         --re 'drive_turn'
 
+# §15 HarnessRecovery event type — new OmegaEvent::HarnessRecovery variant, the
+# HarnessRecoveryKind enum, HarnessRecoveryEvent struct, and time() accessor.
+# Mutates omega-types/src/events.rs and runs the omega-types test suite.
+# All mutations must be CAUGHT or UNVIABLE.
+mutants-harness-recovery-events:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/events.rs"
+
+# §15 inject_harness_recovery helper — the free method on Agent that
+# emits the HarnessRecovery event + appends to context/history.
+# The call sites inside the async_stream! macro report UNVIABLE
+# (stream generators are opaque to cargo-mutants); the helper itself,
+# being a plain async method, should have its mutations CAUGHT.
+# Uses --in-place to avoid copying the 6 GB target directory.
+mutants-harness-recovery-agent:
+    cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
+        --re 'inject_harness_recovery'
+
 # §15 U1 — the server glue for the persistent run task: handle_user_message
 # (now just inbox.send), spawn_run_task (owns the agent lock + forwards the
 # run stream to WS, incl. turn-state + roster pushes), and teardown_prior_run

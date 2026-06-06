@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="leptos-event-block" data-event-type="harness_recovery" data-event-kind="status" class="block block-status"><span class="block-label">Harness recovery</span><span class="block-body">EmptyResponseContinuation: Please continue.</span><button title="Click to copy: 2025-01-01T00:00:00.000Z" class="block-timestamp">00:00:00.000</button></div>

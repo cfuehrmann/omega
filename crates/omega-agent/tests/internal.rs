@@ -78,7 +78,8 @@ use omega_store::{ContextStore, EventStore, content_hash};
 use omega_types::events::MonitorStopReason;
 use omega_types::events::ToolResultEvent;
 use omega_types::events::{
-    ContextCompactedEvent, LlmResponseEndedEvent, LlmResponseUsage, UsageIteration,
+    ContextCompactedEvent, HarnessRecoveryKind, LlmResponseEndedEvent, LlmResponseUsage,
+    UsageIteration,
 };
 use omega_types::{FeatureFlags, OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
@@ -598,7 +599,7 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
             "LlmResponseStarted",
             "LlmResponseDiscarded",
             "LlmError",
-            "UserMessage",
+            "HarnessRecovery", // injected nudge (InvalidToolJson)
             "LlmCall",
             "LlmResponseStarted",
             "Signal:Text",
@@ -2709,7 +2710,7 @@ async fn empty_end_turn_injects_continuation_and_completes() {
             "LlmCall",
             "LlmResponseStarted",
             "LlmResponseEnded", // empty response — no TurnEnd here
-            "UserMessage",      // injected continuation
+            "HarnessRecovery",  // injected continuation (EmptyResponseContinuation)
             "LlmCall",
             "LlmResponseStarted",
             "Signal:Text",
@@ -2719,20 +2720,19 @@ async fn empty_end_turn_injects_continuation_and_completes() {
         "empty end_turn sequence diverged: {t:?}"
     );
 
-    // The injected UserMessage must carry the continuation prompt.
-    let second_user = items
+    // The HarnessRecovery event must carry the continuation prompt.
+    let recovery_content = items
         .iter()
-        .filter_map(|i| match i {
+        .find_map(|i| match i {
             AgentItem::Event(e) => match e.as_ref() {
-                OmegaEvent::UserMessage(ev) => Some(ev.content.as_str()),
+                OmegaEvent::HarnessRecovery(ev) => Some(ev.content.as_str()),
                 _ => None,
             },
             _ => None,
         })
-        .nth(1) // skip the original human message; take the second
-        .expect("second UserMessage must exist");
+        .expect("HarnessRecovery event must exist");
     assert_eq!(
-        second_user, "Please continue.",
+        recovery_content, "Please continue.",
         "injected continuation must be 'Please continue.'"
     );
 
@@ -2770,7 +2770,7 @@ async fn empty_tool_use_stop_injects_continuation() {
             "LlmCall",
             "LlmResponseStarted",
             "LlmResponseEnded",
-            "UserMessage",
+            "HarnessRecovery", // injected continuation (EmptyResponseContinuation)
             "LlmCall",
             "LlmResponseStarted",
             "Signal:Text",
@@ -2945,6 +2945,130 @@ async fn empty_response_continuation_appears_in_next_request() {
     assert!(
         !has_empty_assistant,
         "empty assistant turn must NOT appear in the second LLM call's messages"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 6. HarnessRecovery events — forensics gap close (§15)
+// ---------------------------------------------------------------------------
+
+/// An empty response must emit a `HarnessRecovery{EmptyResponseContinuation}`
+/// event AND the continuation text must still project as `role: user` in the
+/// next LLM request.
+#[tokio::test]
+async fn empty_response_emits_harness_recovery_event() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // First response: empty (no signals).
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 3, 2))]);
+    // Second response: normal completion.
+    provider.push_response(make_terminal_response("end_turn", 6, 2));
+
+    let stream = drive(&mut agent, "go".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+
+    // Must emit exactly one HarnessRecovery event.
+    let recovery_events: Vec<_> = items
+        .iter()
+        .filter_map(|i| match i {
+            AgentItem::Event(e) => match e.as_ref() {
+                OmegaEvent::HarnessRecovery(ev) => Some(ev.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        recovery_events.len(),
+        1,
+        "exactly one HarnessRecovery expected; got: {recovery_events:?}"
+    );
+    assert_eq!(
+        recovery_events[0].kind,
+        HarnessRecoveryKind::EmptyResponseContinuation,
+        "kind must be EmptyResponseContinuation"
+    );
+    assert_eq!(
+        recovery_events[0].content, "Please continue.",
+        "content must be the standard continuation prompt"
+    );
+
+    // The continuation must still appear in the second LLM request as role:user.
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 2);
+    let has_continuation = reqs[1].messages.iter().any(|m| {
+        m.role == Role::User
+            && m.content.iter().any(|b| {
+                matches!(
+                    b,
+                    ContentBlock::Text { text } if text.contains("Please continue.")
+                )
+            })
+    });
+    assert!(
+        has_continuation,
+        "continuation must project as role:user in the second request"
+    );
+}
+
+/// Malformed tool JSON must emit a `HarnessRecovery{InvalidToolJson}` event
+/// AND the nudge text must still project as `role: user` in the retry.
+#[tokio::test]
+async fn invalid_tool_json_emits_harness_recovery_event() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // Turn 1: stream errors with the marker prefix.
+    provider.push_response(vec![Err(LlmError::Stream {
+        message: "malformed tool_use JSON: unexpected char at position 5".to_owned(),
+    })]);
+    // Turn 2: clean text reply.
+    provider.push_response(make_terminal_response("end_turn", 6, 2));
+
+    let stream = drive(&mut agent, "please".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+
+    // Must emit exactly one HarnessRecovery{InvalidToolJson} event.
+    let recovery_events: Vec<_> = items
+        .iter()
+        .filter_map(|i| match i {
+            AgentItem::Event(e) => match e.as_ref() {
+                OmegaEvent::HarnessRecovery(ev) => Some(ev.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        recovery_events.len(),
+        1,
+        "exactly one HarnessRecovery expected; got: {recovery_events:?}"
+    );
+    assert_eq!(
+        recovery_events[0].kind,
+        HarnessRecoveryKind::InvalidToolJson,
+        "kind must be InvalidToolJson"
+    );
+    assert!(
+        recovery_events[0].content.contains("could not be parsed"),
+        "nudge content must mention 'could not be parsed': {:?}",
+        recovery_events[0].content
+    );
+
+    // The nudge must still project as role:user in the retry request.
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 2);
+    let has_nudge = reqs[1].messages.iter().any(|m| {
+        m.role == Role::User
+            && m.content.iter().any(|b| {
+                matches!(
+                    b,
+                    ContentBlock::Text { text } if text.contains("could not be parsed")
+                )
+            })
+    });
+    assert!(
+        has_nudge,
+        "nudge must project as role:user in the retry request"
     );
 }
 

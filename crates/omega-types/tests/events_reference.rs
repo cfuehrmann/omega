@@ -1,4 +1,4 @@
-//! All-31-variants `OmegaEvent` reference snapshot.
+//! All-32-variants `OmegaEvent` reference snapshot.
 //!
 //! This file is the living wire-format reference for `events.jsonl`.  It
 //! contains exactly one example of every `OmegaEvent` variant, serialised
@@ -20,22 +20,24 @@
 //! the legacy `LlmResponse` and `Compacted` variants.  Phase 2.0 (F11)
 //! adds variant 27: `ContextCompacted`.  Phase 0 Async Monitors adds
 //! variants 28–31: `MonitorStarted`, `MonitorDelivery`, `MonitorStderr`,
-//! `MonitorStopped`.
+//! `MonitorStopped`.  §15 (forensics gap close) adds variant 32:
+//! `HarnessRecovery`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use omega_types::FeatureFlags;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, ContextCompactedEvent, ContinueMode, EffortChangedEvent, InterruptReason,
-    LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
-    LlmResponseStartedEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason, ModelChangedEvent,
-    MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent,
-    MonitorStopReason, MonitorStoppedEvent, PauseRequestedEvent, ResumingSessionEvent,
-    ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent,
-    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
-    ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
-    TurnMetrics, TurnPausedEvent, UsageIteration, UserMessageEvent,
+    AgentErrorEvent, ContextCompactedEvent, ContinueMode, EffortChangedEvent, HarnessRecoveryEvent,
+    HarnessRecoveryKind, InterruptReason, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
+    LlmResponseEndedEvent, LlmResponseStartedEvent, LlmResponseUsage, LlmRetryEvent,
+    LlmRetryReason, ModelChangedEvent, MonitorDeliveryEvent, MonitorDeliveryItem,
+    MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason, MonitorStoppedEvent,
+    PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome,
+    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
+    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent,
+    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent,
+    UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use serde_json::json;
@@ -67,8 +69,8 @@ const TOOL_USE_ID: &str = "toolu_ref_01";
 ///
 /// The correlated pair (positions 6–7) uses the same `id` to demonstrate
 /// id propagation.  Every other value is illustrative but realistic.
-#[allow(clippy::too_many_lines)] // test fixture: 31 event variants, one per arm
-fn all_31_events() -> Vec<OmegaEvent> {
+#[allow(clippy::too_many_lines)] // test fixture: 32 event variants, one per arm
+fn all_32_events() -> Vec<OmegaEvent> {
     vec![
         // 1. SessionStarted
         OmegaEvent::SessionStarted(SessionStartedEvent {
@@ -317,6 +319,13 @@ fn all_31_events() -> Vec<OmegaEvent> {
             exit_code: None,
             time: T.into(),
         }),
+        // --- §15 Harness-recovery forensics gap close -------------------------
+        // 32. HarnessRecovery — harness-authored mid-loop repair prompt.
+        OmegaEvent::HarnessRecovery(HarnessRecoveryEvent {
+            time: T.into(),
+            kind: HarnessRecoveryKind::EmptyResponseContinuation,
+            content: "Please continue.".into(),
+        }),
     ]
 }
 
@@ -335,9 +344,9 @@ fn all_31_events() -> Vec<OmegaEvent> {
 ///     transcript field from the provider's `tool_use` block,
 ///     redacted to `[id_2]`.
 #[test]
-fn all_31_variants_reference() {
-    let events = all_31_events();
-    assert_eq!(events.len(), 31, "exactly 31 OmegaEvent variants");
+fn all_32_variants_reference() {
+    let events = all_32_events();
+    assert_eq!(events.len(), 32, "exactly 32 OmegaEvent variants");
 
     let r = common::id_redactor();
     insta::assert_json_snapshot!(events, {

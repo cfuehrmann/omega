@@ -34,13 +34,14 @@ use omega_core::{
 use omega_types::FeatureFlags;
 use omega_types::StreamSignal;
 use omega_types::events::{
-    AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
-    LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, ModelChangedEvent,
-    MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent,
-    MonitorStopReason, MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent,
-    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent,
-    ToolResultEvent, ToolUseBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
-    TurnPausedEvent, UsageIteration, UserMessageEvent,
+    AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, HarnessRecoveryEvent,
+    HarnessRecoveryKind, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
+    LlmResponseEndedEvent, LlmResponseStartedEvent, ModelChangedEvent, MonitorDeliveryEvent,
+    MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason,
+    MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent,
+    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
+    ToolUseBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent,
+    UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
@@ -1219,6 +1220,47 @@ impl Agent {
         Ok(ev)
     }
 
+    /// Inject a harness-authored recovery prompt into the event log and LLM
+    /// context as a `role: user` record.
+    ///
+    /// Called synchronously from the run loop to record and project two
+    /// self-repair paths:
+    /// - [`HarnessRecoveryKind::EmptyResponseContinuation`] — model returned
+    ///   zero content blocks.
+    /// - [`HarnessRecoveryKind::InvalidToolJson`] — SSE parser surfaced a
+    ///   malformed-JSON error.
+    ///
+    /// Mirrors `inject_monitor_delivery`; see §15 of
+    /// `docs/monitors-design.html` for the invariant this upholds.
+    ///
+    /// # Errors
+    /// Returns an error if the event store or context store write fails.
+    pub async fn inject_harness_recovery(
+        &mut self,
+        kind: HarnessRecoveryKind,
+        content: &str,
+    ) -> omega_store::Result<OmegaEvent> {
+        let ev = OmegaEvent::HarnessRecovery(HarnessRecoveryEvent {
+            time: now_iso(),
+            kind,
+            content: content.to_owned(),
+        });
+        self.event_store.append(&ev).await?;
+        let blocks = vec![ContentBlock::Text {
+            text: content.to_owned(),
+        }];
+        let hash = self
+            .context_store
+            .append(Role::User, blocks.clone())
+            .await?;
+        self.history.push(Message {
+            role: Role::User,
+            content: blocks,
+        });
+        self.context_hashes.push(hash);
+        Ok(ev)
+    }
+
     /// Inject a `MonitorStopped` event into the event log, and optionally
     /// into the LLM context.
     ///
@@ -1957,20 +1999,15 @@ impl Agent {
                         && feedback_attempts < INVALID_TOOL_JSON_FEEDBACK_CAP
                     {
                         feedback_attempts += 1;
-                        let nudge_blocks = vec![ContentBlock::Text {
-                            text: INVALID_TOOL_JSON_NUDGE.to_owned(),
-                        }];
                         match self
-                            .context_store
-                            .append(Role::User, nudge_blocks.clone())
+                            .inject_harness_recovery(
+                                HarnessRecoveryKind::InvalidToolJson,
+                                INVALID_TOOL_JSON_NUDGE,
+                            )
                             .await
                         {
-                            Ok(hash) => {
-                                self.history.push(Message {
-                                    role: Role::User,
-                                    content: nudge_blocks,
-                                });
-                                self.context_hashes.push(hash);
+                            Ok(ev) => {
+                                yield AgentItem::event(ev);
                             }
                             Err(e) => {
                                 let ev = OmegaEvent::AgentError(AgentErrorEvent {
@@ -1982,12 +2019,6 @@ impl Agent {
                                 return;
                             }
                         }
-                        let nudge_ev = OmegaEvent::UserMessage(UserMessageEvent {
-                            time: now_iso(),
-                            content: INVALID_TOOL_JSON_NUDGE.to_owned(),
-                        });
-                        let _ = self.event_store.append(&nudge_ev).await;
-                        yield AgentItem::event(nudge_ev);
                         continue;
                     }
 
@@ -2113,11 +2144,6 @@ impl Agent {
                 //            docs/monitors-design.html).
                 // ----------------------------------------------------------
                 if assistant_blocks.is_empty() {
-                    eprintln!(
-                        "[agent] empty LLM response #{} (stop_reason={stop_reason}); \
-                         injecting continuation prompt",
-                        empty_response_count + 1
-                    );
                     empty_response_count += 1;
 
                     // Still accumulate token usage and emit LlmResponseEnded
@@ -2169,22 +2195,20 @@ impl Agent {
                         return;
                     }
 
-                    // Inject the continuation as a visible user turn
-                    // (option a — matches the Anthropic docs example).
-                    let cont_blocks = vec![ContentBlock::Text {
-                        text: EMPTY_RESPONSE_CONTINUATION.to_owned(),
-                    }];
+                    // Inject the continuation as a harness-recovery event
+                    // (§15 — every role:user record must have a backing event).
+                    // The role:user projection ensures the model still sees the
+                    // continuation prompt; the HarnessRecovery event in
+                    // events.jsonl records *why* it appeared.
                     match self
-                        .context_store
-                        .append(Role::User, cont_blocks.clone())
+                        .inject_harness_recovery(
+                            HarnessRecoveryKind::EmptyResponseContinuation,
+                            EMPTY_RESPONSE_CONTINUATION,
+                        )
                         .await
                     {
-                        Ok(hash) => {
-                            self.history.push(Message {
-                                role: Role::User,
-                                content: cont_blocks,
-                            });
-                            self.context_hashes.push(hash);
+                        Ok(ev) => {
+                            yield AgentItem::event(ev);
                         }
                         Err(e) => {
                             let ev = OmegaEvent::AgentError(AgentErrorEvent {
@@ -2196,12 +2220,6 @@ impl Agent {
                             return;
                         }
                     }
-                    let cont_ev = OmegaEvent::UserMessage(UserMessageEvent {
-                        time: now_iso(),
-                        content: EMPTY_RESPONSE_CONTINUATION.to_owned(),
-                    });
-                    let _ = self.event_store.append(&cont_ev).await;
-                    yield AgentItem::event(cont_ev);
                     continue;
                 }
 

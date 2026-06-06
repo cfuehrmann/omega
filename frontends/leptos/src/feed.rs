@@ -64,14 +64,14 @@ use crate::context_modal::ContextModalState;
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
     EventKind, LABEL_AGENT_ERROR, LABEL_ASSISTANT, LABEL_CONTEXT_COMPACTED, LABEL_EFFORT_CHANGED,
-    LABEL_LLM_CALL, LABEL_LLM_ERROR, LABEL_LLM_RESPONSE_ENDED, LABEL_LLM_RESPONSE_STARTED,
-    LABEL_LLM_RETRY, LABEL_MODEL_CHANGED, LABEL_PAUSE_REQUESTED, LABEL_PYTHON_REPL_BOOTSTRAPPED,
-    LABEL_RESUMING_SESSION, LABEL_SERVER_STARTED, LABEL_SERVER_STOPPED, LABEL_SESSION_RESUMED,
-    LABEL_SESSION_STARTED, LABEL_THINKING, LABEL_TOOL_CALL, LABEL_TOOL_RESULT,
-    LABEL_TRANSPORT_ERROR, LABEL_TURN_CONTINUED, LABEL_TURN_END, LABEL_TURN_INTERRUPTED,
-    LABEL_TURN_PAUSED, LABEL_USER_MESSAGE, assign_partial_counts, assign_tool_corr, css_class_for,
-    event_type_tag, format_time, kind_for, kind_tag, should_autoscroll, tool_call_preview,
-    truncate_preview, virtual_line_count,
+    LABEL_HARNESS_RECOVERY, LABEL_LLM_CALL, LABEL_LLM_ERROR, LABEL_LLM_RESPONSE_ENDED,
+    LABEL_LLM_RESPONSE_STARTED, LABEL_LLM_RETRY, LABEL_MODEL_CHANGED, LABEL_PAUSE_REQUESTED,
+    LABEL_PYTHON_REPL_BOOTSTRAPPED, LABEL_RESUMING_SESSION, LABEL_SERVER_STARTED,
+    LABEL_SERVER_STOPPED, LABEL_SESSION_RESUMED, LABEL_SESSION_STARTED, LABEL_THINKING,
+    LABEL_TOOL_CALL, LABEL_TOOL_RESULT, LABEL_TRANSPORT_ERROR, LABEL_TURN_CONTINUED,
+    LABEL_TURN_END, LABEL_TURN_INTERRUPTED, LABEL_TURN_PAUSED, LABEL_USER_MESSAGE,
+    assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, format_time, kind_for,
+    kind_tag, should_autoscroll, tool_call_preview, truncate_preview, virtual_line_count,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -1102,6 +1102,13 @@ fn render_event_body(
         OmegaEvent::MonitorStopped(e) => view! {
             <span class="block-label">{"Monitor stopped"}</span>
             <span class="block-body">{format!("[{}] {:?}", e.id, e.reason)}</span>
+        }
+        .into_any(),
+        // Harness-recovery events (§15 — forensics gap close).
+        // Minimal status rendering; full UI may follow in a later phase.
+        OmegaEvent::HarnessRecovery(e) => view! {
+            <span class="block-label">{LABEL_HARNESS_RECOVERY}</span>
+            <span class="block-body">{format!("{:?}: {}", e.kind, e.content)}</span>
         }
         .into_any(),
     }

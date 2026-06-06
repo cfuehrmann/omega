@@ -541,6 +541,42 @@ pub struct TurnContinuedEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Harness-recovery event types (§15 — forensics gap close)
+// ---------------------------------------------------------------------------
+
+/// Discriminates the two harness-authored mid-loop recovery prompts.
+///
+/// Both are injected as `role: user` context records so the model sees
+/// them as prompts; this enum tells forensics tools *why* the injection
+/// happened, closing the gap described in §15 of `monitors-design.html`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessRecoveryKind {
+    /// Injected when the model returns a response with zero content blocks.
+    /// Follows Anthropic's documented handling for the `end_turn` stop reason;
+    /// see <https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons>.
+    EmptyResponseContinuation,
+    /// Injected when the SSE parser surfaces a `malformed tool_use JSON`
+    /// error.  The harness asks the model to retry with correct escaping.
+    InvalidToolJson,
+}
+
+/// A harness-authored recovery prompt injected as `role: user`.
+///
+/// These are synchronous mid-loop self-repairs — NOT async user input.
+/// The `role: user` context record is a projection; this event is the
+/// authoritative backing entry in `events.jsonl`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessRecoveryEvent {
+    pub time: ISOTimestamp,
+    /// Which recovery path fired.
+    pub kind: HarnessRecoveryKind,
+    /// The verbatim text injected into the context (the prompt the model sees).
+    pub content: String,
+}
+
+// ---------------------------------------------------------------------------
 // Phase 0 — Async Monitors event types
 // ---------------------------------------------------------------------------
 
@@ -723,6 +759,17 @@ pub enum OmegaEvent {
     /// triggered a successful bootstrap.
     PythonReplBootstrapped(PythonReplBootstrappedEvent),
 
+    // --- Harness-recovery events (§15 — forensics gap close) ---------------
+    /// A harness-authored recovery prompt was injected as `role: user`.
+    ///
+    /// Two repair paths produce this event:
+    /// - `EmptyResponseContinuation` — model returned zero content blocks.
+    /// - `InvalidToolJson` — SSE parser surfaced a malformed-JSON error.
+    ///
+    /// The `role: user` context record is a projection; this event is the
+    /// backing entry in `events.jsonl`.
+    HarnessRecovery(HarnessRecoveryEvent),
+
     // --- Phase 0 — Async Monitors schema ----------------------------------
     /// A monitor was registered.  Log / causality only; NOT projected into
     /// LLM context (the tool result already informs the agent).
@@ -781,6 +828,7 @@ impl OmegaEvent {
             Self::ToolUseBlock(e) => &e.time,
             Self::ContextCompacted(e) => &e.time,
             Self::PythonReplBootstrapped(e) => &e.time,
+            Self::HarnessRecovery(e) => &e.time,
             Self::MonitorStarted(e) => &e.time,
             Self::MonitorDelivery(e) => &e.time,
             Self::MonitorStderr(e) => &e.time,
@@ -1760,6 +1808,52 @@ mod tests {
             reason: MonitorStopReason::ProcessCrashed,
             exit_code: None,
             time: ts.into(),
+        });
+        assert_eq!(ev.time().as_str(), ts);
+    }
+
+    // -----------------------------------------------------------------------
+    // HarnessRecovery serde round-trip and wire-format tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn harness_recovery_empty_response_continuation_wire_format() {
+        let ev = OmegaEvent::HarnessRecovery(HarnessRecoveryEvent {
+            time: "2024-01-15T12:00:00.000Z".into(),
+            kind: HarnessRecoveryKind::EmptyResponseContinuation,
+            content: "Please continue.".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "harness_recovery");
+        assert_eq!(json["time"], "2024-01-15T12:00:00.000Z");
+        assert_eq!(json["kind"], "empty_response_continuation");
+        assert_eq!(json["content"], "Please continue.");
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn harness_recovery_invalid_tool_json_wire_format() {
+        let ev = OmegaEvent::HarnessRecovery(HarnessRecoveryEvent {
+            time: "2024-01-15T12:00:00.000Z".into(),
+            kind: HarnessRecoveryKind::InvalidToolJson,
+            content: "The tool_use JSON could not be parsed.".into(),
+        });
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "harness_recovery");
+        assert_eq!(json["kind"], "invalid_tool_json");
+        assert_eq!(json["content"], "The tool_use JSON could not be parsed.");
+        let back: OmegaEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn harness_recovery_time_accessor() {
+        let ts = "2025-05-01T00:00:00.000Z";
+        let ev = OmegaEvent::HarnessRecovery(HarnessRecoveryEvent {
+            time: ts.into(),
+            kind: HarnessRecoveryKind::EmptyResponseContinuation,
+            content: String::new(),
         });
         assert_eq!(ev.time().as_str(), ts);
     }

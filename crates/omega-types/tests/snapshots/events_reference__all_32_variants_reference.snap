@@ -258,5 +258,11 @@ expression: events
     "reason": "process_crashed",
     "exitCode": null,
     "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "harness_recovery",
+    "time": "2024-01-15T12:00:00.000Z",
+    "kind": "empty_response_continuation",
+    "content": "Please continue."
   }
 ]

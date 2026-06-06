@@ -991,9 +991,9 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
     <code>events.jsonl</code> event; nothing is appended to the context store as
     user-role content without a backing event.</strong> This is the load-bearing
     requirement of the unification — far more important than how the events are
-    shaped. Today it is violated only by two <em>silent repairs</em> (the
-    empty-response continuation and the invalid-tool-JSON nudge), which append to
-    <code>context.jsonl</code> with no event. Closing those is mandatory.
+    shaped. <strong>Invariant fully satisfied</strong>: the two former silent repairs
+    (empty-response continuation and invalid-tool-JSON nudge) are now backed by
+    <code>OmegaEvent::HarnessRecovery</code> events — see item (c) below.
   </p>
 </div>
 <div class="box callout">
@@ -1035,16 +1035,17 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
       (human), <code>MonitorDelivery</code>, <code>MonitorStopped</code>,
       <code>ToolResult</code> — distinct agent-level things, several already
       projecting <code>role:user</code>.</li>
-    <li><strong>Promote the two silent repairs to first-class events</strong>
-      (each appends to context <em>and</em> emits an event, replacing the silent
-      append + the stderr <code>eprintln</code>). They are a coherent category —
-      harness-authored recovery prompts with fixed text — so a single
-      <code>HarnessRecovery { kind: EmptyResponseContinuation | InvalidToolJson, … }</code>
-      projecting <code>role:user</code> is tasteful, though two sibling events are
-      equally fine. Implementation taste call; what is non-negotiable is that each
-      is recorded. <em>(Supersedes the earlier &ldquo;just drop the
-      <code>eprintln</code>&rdquo; idea — we record the occurrence as a proper
-      event instead.)</em></li>
+    <li><strong>Promote the two silent repairs to first-class events
+      — <span style="color:green">IMPLEMENTED</span>.</strong>
+      Chosen shape: a single discriminated event
+      <code>OmegaEvent::HarnessRecovery(HarnessRecoveryEvent { time, kind, content })</code>
+      with <code>HarnessRecoveryKind ∈ { EmptyResponseContinuation, InvalidToolJson }</code>.
+      Each injection site calls <code>Agent::inject_harness_recovery</code>, which
+      appends to the context store as <code>role:user</code> <em>and</em> emits the event
+      to <code>events.jsonl</code> <em>and</em> yields it as an <code>AgentItem::event</code>.
+      The <code>eprintln!</code> in the empty-response branch is gone; the event is the
+      canonical record of the occurrence. Wire format tag: <code>"harness_recovery"</code>;
+      kind values: <code>"empty_response_continuation"</code> | <code>"invalid_tool_json"</code>.</li>
     <li><strong>Not part of this</strong> (flagged): <code>MonitorStderr</code> is
       never projected (diagnostic only); the session seed scaffolding is bootstrap
       context (decide later).</li>

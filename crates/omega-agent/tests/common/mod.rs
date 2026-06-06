@@ -285,6 +285,7 @@ pub fn tags(items: &[AgentItem]) -> Vec<&'static str> {
                 OmegaEvent::TextBlock(_) => "TextBlock",
                 OmegaEvent::ThinkingBlock(_) => "ThinkingBlock",
                 OmegaEvent::ToolUseBlock(_) => "ToolUseBlock",
+                OmegaEvent::HarnessRecovery(_) => "HarnessRecovery",
                 OmegaEvent::MonitorStarted(_) => "MonitorStarted",
                 OmegaEvent::MonitorDelivery(_) => "MonitorDelivery",
                 OmegaEvent::MonitorStderr(_) => "MonitorStderr",
