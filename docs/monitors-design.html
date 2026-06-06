@@ -991,9 +991,7 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
     <code>events.jsonl</code> event; nothing is appended to the context store as
     user-role content without a backing event.</strong> This is the load-bearing
     requirement of the unification — far more important than how the events are
-    shaped. <strong>Invariant fully satisfied</strong>: the two former silent repairs
-    (empty-response continuation and invalid-tool-JSON nudge) are now backed by
-    <code>OmegaEvent::HarnessRecovery</code> events — see item (c) below.
+    shaped. <strong>Correction (2026-06-06):</strong> the two harness repairs (empty-response continuation, invalid-tool-JSON nudge) were <em>not</em> silent &mdash; they already emitted <code>OmegaEvent::UserMessage</code> events, i.e. they were in <code>events.jsonl</code> but <strong>mis-attributed as human messages</strong>. They are now <code>OmegaEvent::HarnessRecovery</code> events with correct agent-level identity (item (c)) &mdash; so this was really a principle-(b) attribution fix, not a completeness gap. Whether <em>every</em> user-role context append has a backing event (e.g. the session seed scaffolding in <code>seed_with_resumption_summary</code>) has <strong>not</strong> been exhaustively audited; treat the blanket invariant as a goal to verify, not yet proven.
   </p>
 </div>
 <div class="box callout">
@@ -1035,8 +1033,7 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
       (human), <code>MonitorDelivery</code>, <code>MonitorStopped</code>,
       <code>ToolResult</code> — distinct agent-level things, several already
       projecting <code>role:user</code>.</li>
-    <li><strong>Promote the two silent repairs to first-class events
-      — <span style="color:green">IMPLEMENTED</span>.</strong>
+    <li><strong>Correct the two mis-attributed repairs (<code>UserMessage</code> &rarr; <code>HarnessRecovery</code>) &mdash; <span style="color:green">IMPLEMENTED</span>.</strong>
       Chosen shape: a single discriminated event
       <code>OmegaEvent::HarnessRecovery(HarnessRecoveryEvent { time, kind, content })</code>
       with <code>HarnessRecoveryKind ∈ { EmptyResponseContinuation, InvalidToolJson }</code>.
