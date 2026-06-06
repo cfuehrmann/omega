@@ -983,6 +983,73 @@ cannot form. The <code>'agentic</code> loop is largely unchanged: its
 <em>input source</em> moves to &ldquo;drain the inbox at the Gather seam&rdquo;
 and its <em>lifetime</em> moves from per-message to per-session.</p>
 
+<h3>Event design — agent-level events; <code>role:user</code> is a projection</h3>
+<div class="box callout">
+  <h4>(a) Invariant — completeness</h4>
+  <p>
+    <strong>Every user-role context record is the projection of some
+    <code>events.jsonl</code> event; nothing is appended to the context store as
+    user-role content without a backing event.</strong> This is the load-bearing
+    requirement of the unification — far more important than how the events are
+    shaped. Today it is violated only by two <em>silent repairs</em> (the
+    empty-response continuation and the invalid-tool-JSON nudge), which append to
+    <code>context.jsonl</code> with no event. Closing those is mandatory.
+  </p>
+</div>
+<div class="box callout">
+  <h4>(b) Principle — events are agent-level; the wire role is a projection</h4>
+  <p>
+    Per Contract Authority (&sect;7), <code>OmegaEvent</code> is the canonical,
+    <strong>agent-level</strong> domain model; <code>context.jsonl</code> / the
+    LLM <code>role:user</code> form is a <strong>derived projection</strong>.
+    &ldquo;A monitor delivered output,&rdquo; &ldquo;the human spoke,&rdquo;
+    &ldquo;the harness recovered from an empty response&rdquo; are <em>different
+    things at the agent level</em> even though all three project to
+    <code>role:user</code>. So:
+  </p>
+  <ul>
+    <li>Design event <em>types</em> by their <strong>agent-level meaning</strong>,
+      not by what they collapse to on the wire.</li>
+    <li><strong>Do not unify on <code>role:user</code></strong> — it is a
+      projection trait many event types share, not an identity. A single god
+      <code>UserInput</code> event would flatten meaningful agent-level
+      distinctions to match the projection — backwards. (Protocol fidelity is a
+      virtue of the projection layer, not of the event schema.)</li>
+  </ul>
+</div>
+<div class="box callout">
+  <h4>(c) Good-taste criteria + concrete to-dos</h4>
+  <ol>
+    <li>One event per distinct agent-level occurrence/cause; name it for what
+      happened <em>in the agent</em>, not for its wire role.</li>
+    <li>Don't unify on <code>role:user</code>; let several distinct event types
+      project to it.</li>
+    <li>Group only genuinely-alike things behind a small discriminator; avoid both
+      a god-event and gratuitous fragmentation.</li>
+    <li>Close the invariant: anything that appends user-role content emits a
+      backing event.</li>
+  </ol>
+  <p><strong>Concrete:</strong></p>
+  <ul>
+    <li><strong>Keep distinct (already good taste):</strong> <code>UserMessage</code>
+      (human), <code>MonitorDelivery</code>, <code>MonitorStopped</code>,
+      <code>ToolResult</code> — distinct agent-level things, several already
+      projecting <code>role:user</code>.</li>
+    <li><strong>Promote the two silent repairs to first-class events</strong>
+      (each appends to context <em>and</em> emits an event, replacing the silent
+      append + the stderr <code>eprintln</code>). They are a coherent category —
+      harness-authored recovery prompts with fixed text — so a single
+      <code>HarnessRecovery { kind: EmptyResponseContinuation | InvalidToolJson, … }</code>
+      projecting <code>role:user</code> is tasteful, though two sibling events are
+      equally fine. Implementation taste call; what is non-negotiable is that each
+      is recorded. <em>(Supersedes the earlier &ldquo;just drop the
+      <code>eprintln</code>&rdquo; idea — we record the occurrence as a proper
+      event instead.)</em></li>
+    <li><strong>Not part of this</strong> (flagged): <code>MonitorStderr</code> is
+      never projected (diagnostic only); the session seed scaffolding is bootstrap
+      context (decide later).</li>
+  </ul>
+</div>
 <h3>Migration plan (phased)</h3>
 <div class="box warn">
   <strong>Governing invariant (dog-fooding):</strong> every intermediate version
