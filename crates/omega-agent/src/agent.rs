@@ -417,6 +417,22 @@ const INVALID_TOOL_JSON_NUDGE: &str = "Your previous response could not be parse
 const DANGLING_TOOL_USE_RESULT: &str =
     "[not executed: previous turn was interrupted before this tool ran]";
 
+/// Continuation prompt injected as a new user message when the model returns
+/// a response with zero content blocks.  Follows Anthropic's documented
+/// handling:
+/// <https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons>
+/// ("Empty responses with `end_turn`")
+///
+/// The docs advise injecting a NEW user message rather than retrying with
+/// the empty assistant turn, because "Claude already decided it's done".
+const EMPTY_RESPONSE_CONTINUATION: &str = "Please continue.";
+
+/// Cap on consecutive empty-response continuation injections.  If the model
+/// returns more than this many back-to-back empty responses within a single
+/// turn, the agent surfaces a [`TurnInterrupted`] error rather than looping
+/// forever.
+const EMPTY_RESPONSE_CAP: u32 = 3;
+
 /// Canned preamble injected before the resumption summary in the synthetic
 /// user seed message.  Mirrors the literal in `Agent.seedWithResumptionSummary`
 /// in `src/agent.ts`.
@@ -1592,6 +1608,9 @@ impl Agent {
             // Step 3: outer agentic loop.
             // -----------------------------------------------------------------
             let mut feedback_attempts: u32 = 0;
+            // Consecutive empty-response continuations in this turn.
+            // Reset after any non-empty LLM response.
+            let mut empty_response_count: u32 = 0;
             let mut tot_input: i64 = 0;
             let mut tot_output: i64 = 0;
             let mut tot_cache_creation: i64 = 0;
@@ -2073,6 +2092,119 @@ impl Agent {
                     });
                 }
 
+                // Extract stop_reason before any ownership transfer of lr.
+                let stop_reason = lr.stop_reason.clone();
+
+                // ----------------------------------------------------------
+                // Empty-response guard (documented Anthropic behaviour):
+                // Claude occasionally returns a response with zero content
+                // blocks (no text, no thinking, no tool_use), with stop_reason
+                // "end_turn" OR "tool_use".  Per:
+                // https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons
+                //
+                // Detection: `assistant_blocks.is_empty()`, regardless of
+                //             stop_reason.
+                // Handling:  inject a NEW user continuation message; do NOT
+                //            persist the empty assistant turn to context
+                //            ("Claude already decided it's done").
+                // Decision:  the continuation is emitted as a visible user
+                //            turn (option a — simplest, matches the docs
+                //            example; design note at §14 in
+                //            docs/monitors-design.html).
+                // ----------------------------------------------------------
+                if assistant_blocks.is_empty() {
+                    eprintln!(
+                        "[agent] empty LLM response #{} (stop_reason={stop_reason}); \
+                         injecting continuation prompt",
+                        empty_response_count + 1
+                    );
+                    empty_response_count += 1;
+
+                    // Still accumulate token usage and emit LlmResponseEnded
+                    // so the event log records the empty response (forensics).
+                    // context_hash is left empty — no assistant record is
+                    // persisted.
+                    lr.context_hash = String::new();
+                    tot_input += lr.usage.input_tokens;
+                    tot_output += lr.usage.output_tokens;
+                    tot_cache_creation +=
+                        lr.usage.cache_creation_input_tokens.unwrap_or(0);
+                    tot_cache_read += lr.usage.cache_read_input_tokens.unwrap_or(0);
+                    // Phase 2.0 (F11): emit ContextCompacted before
+                    // LlmResponseEnded if compaction fired (unlikely with an
+                    // empty response, but handled defensively).
+                    if let Some((tokens_before, tokens_after, summary_tokens)) =
+                        compacted_info.take()
+                    {
+                        let cc_ev = OmegaEvent::ContextCompacted(ContextCompactedEvent {
+                            time: now_iso(),
+                            tokens_before,
+                            tokens_after,
+                            summary_tokens,
+                        });
+                        let _ = self.event_store.append(&cc_ev).await;
+                        yield AgentItem::event(cc_ev);
+                    }
+                    let ended_ev = OmegaEvent::LlmResponseEnded(lr);
+                    let _ = self.event_store.append(&ended_ev).await;
+                    yield AgentItem::event(ended_ev);
+
+                    if empty_response_count > EMPTY_RESPONSE_CAP {
+                        let ae = OmegaEvent::AgentError(AgentErrorEvent {
+                            time: now_iso(),
+                            error: format!(
+                                "Model returned {empty_response_count} consecutive \
+                                 empty responses (cap={EMPTY_RESPONSE_CAP}); ending \
+                                 turn to avoid an infinite loop."
+                            ),
+                        });
+                        let _ = self.event_store.append(&ae).await;
+                        yield AgentItem::event(ae);
+                        let ti = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
+                            time: now_iso(),
+                            reason: Some(InterruptReason::Error),
+                        });
+                        let _ = self.event_store.append(&ti).await;
+                        yield AgentItem::event(ti);
+                        return;
+                    }
+
+                    // Inject the continuation as a visible user turn
+                    // (option a — matches the Anthropic docs example).
+                    let cont_blocks = vec![ContentBlock::Text {
+                        text: EMPTY_RESPONSE_CONTINUATION.to_owned(),
+                    }];
+                    match self
+                        .context_store
+                        .append(Role::User, cont_blocks.clone())
+                        .await
+                    {
+                        Ok(hash) => {
+                            self.history.push(Message {
+                                role: Role::User,
+                                content: cont_blocks,
+                            });
+                            self.context_hashes.push(hash);
+                        }
+                        Err(e) => {
+                            let ev = OmegaEvent::AgentError(AgentErrorEvent {
+                                time: now_iso(),
+                                error: format!("context_store append failed: {e}"),
+                            });
+                            let _ = self.event_store.append(&ev).await;
+                            yield AgentItem::event(ev);
+                            return;
+                        }
+                    }
+                    let cont_ev = OmegaEvent::UserMessage(UserMessageEvent {
+                        time: now_iso(),
+                        content: EMPTY_RESPONSE_CONTINUATION.to_owned(),
+                    });
+                    let _ = self.event_store.append(&cont_ev).await;
+                    yield AgentItem::event(cont_ev);
+                    continue;
+                }
+
                 let assistant_hash = match self
                     .context_store
                     .append(Role::Assistant, assistant_blocks.clone())
@@ -2101,7 +2233,6 @@ impl Agent {
                 tot_output += lr.usage.output_tokens;
                 tot_cache_creation += lr.usage.cache_creation_input_tokens.unwrap_or(0);
                 tot_cache_read += lr.usage.cache_read_input_tokens.unwrap_or(0);
-                let stop_reason = lr.stop_reason.clone();
                 // Phase 2.0 (F11): emit ContextCompacted immediately
                 // before LlmResponseEnded when compaction was detected.
                 if let Some((tokens_before, tokens_after, summary_tokens)) =
@@ -2386,6 +2517,7 @@ impl Agent {
                     // Model migration; monitor delivery is re-wired through
                     // `Agent::run`'s inbox in U2.  Monitor spawn/reap is
                     // unaffected.  Continue to the next cycle.
+                    empty_response_count = 0; // non-empty response received
                     continue;
                 }
 

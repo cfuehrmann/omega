@@ -249,6 +249,19 @@ fn redact(mut v: serde_json::Value) -> serde_json::Value {
 // Mock transcript helpers
 // ---------------------------------------------------------------------------
 
+/// Like [`llm_response_event`] but includes a `Signal:Text` so
+/// `assistant_blocks` is non-empty, preventing the empty-response guard
+/// from injecting an unwanted continuation user message.
+fn text_llm_response_event(stop_reason: &str) -> Vec<Result<AgentItem, LlmError>> {
+    vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "ok".to_owned(),
+        })),
+        Ok(llm_response_event(stop_reason)),
+    ]
+}
+
 fn llm_response_event(stop_reason: &str) -> AgentItem {
     AgentItem::event(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
         time: "2024-01-01T00:00:00.000Z".to_owned(),
@@ -678,7 +691,7 @@ async fn turn_interrupted_emits_session_info_with_idle_turn_state() {
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
     // Second turn — only reached if abort failed.
-    provider.push(vec![Ok(llm_response_event("end_turn"))]);
+    provider.push(text_llm_response_event("end_turn"));
 
     let addr = spawn_server(make_state(
         Arc::clone(&provider),
@@ -739,7 +752,7 @@ async fn turn_paused_emits_session_info_with_paused_turn_state() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response_event("end_turn"))]);
+    provider.push(text_llm_response_event("end_turn"));
 
     let addr = spawn_server(make_state(
         Arc::clone(&provider),
@@ -779,6 +792,9 @@ async fn turn_paused_emits_session_info_with_paused_turn_state() {
 
     // Clean up: continue the paused turn so the session winds down cleanly.
     send_json(&mut ws, serde_json::json!({ "type": "continue" })).await;
+    // text_llm_response_event produces 2 items; item 1 (llm_response_event)
+    // is gated by the step gate — release it so the second turn can finish.
+    step_gate.notify_one();
     let _ = recv_until_type(&mut ws, "turn_end").await;
 }
 
@@ -810,7 +826,7 @@ async fn pause_emits_session_info_with_pause_requested_turn_state() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response_event("end_turn"))]);
+    provider.push(text_llm_response_event("end_turn"));
 
     let addr = spawn_server(make_state(
         Arc::clone(&provider),
@@ -849,6 +865,9 @@ async fn pause_emits_session_info_with_pause_requested_turn_state() {
     // Release the gate so the agent can finish (continue → turn_end).
     step_gate.notify_one();
     send_json(&mut ws, serde_json::json!({ "type": "continue" })).await;
+    // text_llm_response_event has 2 items; item 1 (llm_response_event) needs
+    // a second gate release for the resumed (second) turn.
+    step_gate.notify_one();
     let _ = recv_until_type(&mut ws, "turn_end").await;
 }
 
@@ -879,7 +898,7 @@ async fn history_streaming_flag_true_when_turn_in_flight() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response_event("end_turn"))]);
+    provider.push(text_llm_response_event("end_turn"));
 
     let state = make_state(Arc::clone(&provider), tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
@@ -991,7 +1010,7 @@ async fn resume_session_emits_running_then_idle_session_info() {
     .unwrap();
 
     let provider = Arc::new(MockProvider::new());
-    provider.push(vec![Ok(llm_response_event("end_turn"))]);
+    provider.push(text_llm_response_event("end_turn"));
 
     let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root)).await;
     let mut ws = connect(addr).await;
@@ -1444,7 +1463,7 @@ async fn reset_reaps_prior_sessions_live_monitor() {
         serde_json::json!({ "description": "watcher", "command": "sleep 60" }),
     ));
     // Turn cycle 2: end the turn so the run loop parks.
-    provider.push(vec![Ok(llm_response_event("end_turn"))]);
+    provider.push(text_llm_response_event("end_turn"));
     let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root.clone())).await;
     let mut ws = connect(addr).await;
     assert_eq!(recv_json(&mut ws).await["type"], "ready");

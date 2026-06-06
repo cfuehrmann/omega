@@ -341,6 +341,18 @@ mutants-agent-run-loop:
     cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
         --re 'Agent::run|Agent::drive_turn'
 
+# §14 — Empty-response continuation (documented Anthropic behaviour).
+# Covers the EMPTY_RESPONSE_CAP check, continuation injection, and the
+# empty-block detection in Agent::drive_turn.
+# Both Agent::run and Agent::drive_turn are `stream!` macro generators,
+# so cargo-mutants can only mutate the outer fn body (the macro body is
+# opaque); inner-body mutations come back UNVIABLE
+# (`Default::default()` not implemented for `Pin<Box<dyn Stream>>`).
+# Uses --in-place to avoid copying the 6 GB target directory.
+mutants-empty-response:
+    cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
+        --re 'drive_turn'
+
 # §15 U1 — the server glue for the persistent run task: handle_user_message
 # (now just inbox.send), spawn_run_task (owns the agent lock + forwards the
 # run stream to WS, incl. turn-state + roster pushes), and teardown_prior_run

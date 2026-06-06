@@ -69,8 +69,8 @@
 mod common;
 
 use common::{
-    collect_stream, drive, make_llm_response, make_monitor_item, make_test_agent,
-    make_tool_use_items, tags,
+    collect_stream, drive, make_llm_response, make_monitor_item, make_terminal_response,
+    make_test_agent, make_tool_use_items, tags,
 };
 use omega_agent::{Agent, AgentConfig, InputItem};
 use omega_core::{AgentItem, ContentBlock, LlmError, LlmRequest, Message, Role};
@@ -122,8 +122,9 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
         vec![user_hash, assistant_hash],
     );
 
-    // Provider just returns a clean reply for the resumed turn.
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 3, 1))]);
+    // Provider returns a non-empty reply so the empty-response guard
+    // does not fire (a bare make_llm_response produces zero content blocks).
+    provider.push_response(make_terminal_response("end_turn", 3, 1));
 
     let stream = drive(&mut agent, "continue".to_owned(), CancellationToken::new());
     let items = collect_stream(stream).await;
@@ -136,6 +137,7 @@ async fn dangling_tool_use_synthesises_is_error_tool_results() {
             "UserMessage",
             "LlmCall",
             "LlmResponseStarted",
+            "Signal:Text", // make_terminal_response produces a text delta
             "LlmResponseEnded",
             "TurnEnd",
         ],
@@ -345,7 +347,7 @@ async fn compacted_event_clears_history_and_persists_usage() {
 
     // Turn 4 must build on the cleared history; its LlmCall must carry
     // only the 2 post-compaction context hashes.
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 50, 3))]);
+    provider.push_response(make_terminal_response("end_turn", 50, 3));
     let _ = collect_stream(drive(
         &mut agent,
         "fourth".to_owned(),
@@ -581,8 +583,8 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
     provider.push_response(vec![Err(LlmError::Stream {
         message: "malformed tool_use JSON: expected `,` at position 17".to_owned(),
     })]);
-    // Turn 2: model now produces a clean text reply.
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 6, 2))]);
+    // Turn 2: model now produces a clean non-empty text reply.
+    provider.push_response(make_terminal_response("end_turn", 6, 2));
 
     let stream = drive(&mut agent, "please".to_owned(), CancellationToken::new());
     let items = collect_stream(stream).await;
@@ -599,6 +601,7 @@ async fn malformed_tool_json_triggers_nudge_and_retry() {
             "UserMessage",
             "LlmCall",
             "LlmResponseStarted",
+            "Signal:Text",
             "LlmResponseEnded",
             "TurnEnd",
         ],
@@ -681,8 +684,8 @@ async fn context_management_present_in_every_llm_request() {
         let tool_id = format!("tu_{i:02}");
         // Tool-use turn.
         provider.push_response(echo_tool_response(&tool_id, i));
-        // Post-tool final turn.
-        provider.push_response(vec![Ok(make_llm_response("end_turn", (i * 100) as i64, 3))]);
+        // Post-tool final turn (non-empty so the loop ends normally).
+        provider.push_response(make_terminal_response("end_turn", (i * 100) as i64, 3));
     }
 
     for i in 1..=8_usize {
@@ -732,7 +735,7 @@ async fn audit_request_bytes_grow_without_context_management() {
     for i in 1..=6_usize {
         let tool_id = format!("tu_{i:02}");
         provider.push_response(echo_tool_response(&tool_id, i));
-        provider.push_response(vec![Ok(make_llm_response("end_turn", (i * 50) as i64, 2))]);
+        provider.push_response(make_terminal_response("end_turn", (i * 50) as i64, 2));
     }
 
     let mut request_bytes_seq: Vec<i64> = Vec::new();
@@ -860,7 +863,15 @@ async fn turn_end_metrics_carry_cache_tokens() {
         },
     )));
 
-    provider.push_response(vec![Ok(response_with_cache)]);
+    // Add a text signal so assistant_blocks is non-empty; the
+    // empty-response guard must not fire for this test.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "ok".to_owned(),
+        })),
+        Ok(response_with_cache),
+    ]);
 
     let stream = drive(&mut agent, "hello".to_owned(), CancellationToken::new());
     let items = collect_stream(stream).await;
@@ -1272,9 +1283,8 @@ async fn tool_selection_drives_request_tools_and_system_prompt() {
     );
     agent.init().await.expect("init must succeed");
 
-    // Single LLM call: plain end_turn so the agent loop exits after one
-    // request — that's all we need to inspect the LlmRequest.
-    mock.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    // Single LLM call: non-empty end_turn so the loop exits normally.
+    mock.push_response(make_terminal_response("end_turn", 1, 1));
 
     let stream = drive(&mut agent, "noop".to_owned(), CancellationToken::new());
     let _ = collect_stream(stream).await;
@@ -1366,7 +1376,7 @@ async fn monitor_stderr_not_projected_into_context() {
 
     // Drive a normal turn — the LlmRequest must contain exactly ONE
     // message (the user text), with no stderr noise.
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 1, 1))]);
+    provider.push_response(make_terminal_response("end_turn", 1, 1));
     let _ = collect_stream(drive(&mut agent, "hello".into(), CancellationToken::new())).await;
 
     let reqs = provider.take_requests();
@@ -1454,7 +1464,7 @@ async fn consecutive_user_role_events_merge_into_one_api_message() {
     agent.init().await.expect("init");
 
     // Simulate one completed turn first so history is [user, assistant].
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 2))]);
+    provider.push_response(make_terminal_response("end_turn", 5, 2));
     let _ = collect_stream(drive(
         &mut agent,
         "question".into(),
@@ -1486,7 +1496,7 @@ async fn consecutive_user_role_events_merge_into_one_api_message() {
 
     // Drive the next turn.  The LlmRequest must receive a MERGED view:
     // [user(q), assistant(a), user(mon-1 + mon-2 + 'follow-up')] = 3 messages.
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 2))]);
+    provider.push_response(make_terminal_response("end_turn", 5, 2));
     let _ = collect_stream(drive(
         &mut agent,
         "follow-up".into(),
@@ -2570,8 +2580,8 @@ where
 #[tokio::test]
 async fn run_loop_parks_after_turn_then_processes_second_message() {
     let (mut agent, provider, _tmp) = make_test_agent();
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
 
     let (tx, rx) = tokio::sync::mpsc::channel::<InputItem>(8);
     let run_cancel = CancellationToken::new();
@@ -2636,9 +2646,8 @@ async fn run_loop_streams_multi_cycle_turn_then_parks() {
         "run_command",
         json!({ "command": "echo hi" }),
     ));
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
+    // One non-empty terminal response for after the tool result.
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
 
     let (tx, rx) = tokio::sync::mpsc::channel::<InputItem>(8);
     let mut stream = agent.run(rx, CancellationToken::new());
@@ -2661,6 +2670,284 @@ async fn run_loop_streams_multi_cycle_turn_then_parks() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 4. Empty-response continuation (documented Anthropic behaviour, §14)
+// ---------------------------------------------------------------------------
+//
+// Claude occasionally returns a response with zero content blocks
+// (stop_reason end_turn OR tool_use) — particularly after tool results.
+// The agent must NOT emit TurnEnd; instead it injects a "Please continue."
+// user message and re-issues the LLM call (up to EMPTY_RESPONSE_CAP times).
+//
+// Ref: https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons
+
+/// Empty response with stop_reason=end_turn → continuation injected →
+/// normal response → TurnEnd.  No premature turn-end between calls.
+#[tokio::test]
+async fn empty_end_turn_injects_continuation_and_completes() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // First LLM response: empty (no signals → zero content blocks).
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 3, 2))]);
+    // Second LLM response: normal text reply.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "Done.".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 100, 5)),
+    ]);
+
+    let stream = drive(&mut agent, "hello".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+    let t = tags(&items);
+
+    assert_eq!(
+        t,
+        vec![
+            "UserMessage", // original human message
+            "LlmCall",
+            "LlmResponseStarted",
+            "LlmResponseEnded", // empty response — no TurnEnd here
+            "UserMessage",      // injected continuation
+            "LlmCall",
+            "LlmResponseStarted",
+            "Signal:Text",
+            "LlmResponseEnded", // non-empty response
+            "TurnEnd",
+        ],
+        "empty end_turn sequence diverged: {t:?}"
+    );
+
+    // The injected UserMessage must carry the continuation prompt.
+    let second_user = items
+        .iter()
+        .filter_map(|i| match i {
+            AgentItem::Event(e) => match e.as_ref() {
+                OmegaEvent::UserMessage(ev) => Some(ev.content.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .nth(1) // skip the original human message; take the second
+        .expect("second UserMessage must exist");
+    assert_eq!(
+        second_user, "Please continue.",
+        "injected continuation must be 'Please continue.'"
+    );
+
+    // Two LLM calls must have been issued.
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 2, "must issue exactly 2 LLM calls");
+}
+
+/// Empty response with stop_reason=tool_use (no tools) also triggers
+/// continuation.  The stop_reason alone must not gate the behaviour.
+#[tokio::test]
+async fn empty_tool_use_stop_injects_continuation() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // Empty response with stop_reason=tool_use but no tool blocks.
+    provider.push_response(vec![Ok(make_llm_response("tool_use", 3, 2))]);
+    // Follow-up: normal text reply.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "Done.".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 100, 5)),
+    ]);
+
+    let stream = drive(&mut agent, "hello".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+    let t = tags(&items);
+
+    // Same event pattern as the end_turn case.
+    assert_eq!(
+        t,
+        vec![
+            "UserMessage",
+            "LlmCall",
+            "LlmResponseStarted",
+            "LlmResponseEnded",
+            "UserMessage",
+            "LlmCall",
+            "LlmResponseStarted",
+            "Signal:Text",
+            "LlmResponseEnded",
+            "TurnEnd",
+        ],
+        "empty tool_use stop sequence diverged: {t:?}"
+    );
+}
+
+/// A NON-empty end_turn must still end the turn normally (no regression).
+#[tokio::test]
+async fn non_empty_end_turn_ends_turn_normally() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // Normal text response — NOT empty.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "Hello, world!".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 100, 5)),
+    ]);
+
+    let stream = drive(&mut agent, "hi".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+    let t = tags(&items);
+
+    // Exactly one LlmCall and one TurnEnd; no injected UserMessage.
+    assert_eq!(
+        t,
+        vec![
+            "UserMessage",
+            "LlmCall",
+            "LlmResponseStarted",
+            "Signal:Text",
+            "LlmResponseEnded",
+            "TurnEnd",
+        ],
+        "non-empty end_turn must end normally: {t:?}"
+    );
+
+    // Only the original human UserMessage was emitted.
+    let user_msgs: Vec<_> = items
+        .iter()
+        .filter_map(|i| match i {
+            AgentItem::Event(e) => match e.as_ref() {
+                OmegaEvent::UserMessage(ev) => Some(ev.content.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(user_msgs, vec!["hi"], "only the original message expected");
+}
+
+/// Cap exceeded: EMPTY_RESPONSE_CAP + 1 consecutive empty responses must
+/// surface an AgentError + TurnInterrupted, with no infinite loop.
+#[tokio::test]
+async fn empty_response_cap_exceeded_surfaces_error() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // Four consecutive empty responses (cap = 3, so the 4th triggers the
+    // error: count becomes 4, 4 > 3 == true).
+    for _ in 0..4 {
+        provider.push_response(vec![Ok(make_llm_response("end_turn", 3, 2))]);
+    }
+    // A 5th response that would succeed if the cap weren't enforced.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "Should not reach here.".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 100, 5)),
+    ]);
+
+    let stream = drive(&mut agent, "go".to_owned(), CancellationToken::new());
+    let items = collect_stream(stream).await;
+    let t = tags(&items);
+
+    // Must end with AgentError + TurnInterrupted, never TurnEnd.
+    assert!(
+        t.contains(&"AgentError"),
+        "must surface AgentError when cap exceeded; got {t:?}"
+    );
+    assert!(
+        t.contains(&"TurnInterrupted"),
+        "must surface TurnInterrupted when cap exceeded; got {t:?}"
+    );
+    assert!(
+        !t.contains(&"TurnEnd"),
+        "must NOT emit TurnEnd when cap exceeded; got {t:?}"
+    );
+    // The 5th response provider slot must NOT have been consumed.
+    assert_eq!(
+        provider.take_requests().len(),
+        4,
+        "exactly 4 LLM calls expected (1 per empty response before cap triggers)"
+    );
+
+    // The AgentError message must mention the cap.
+    let err_text = items
+        .iter()
+        .find_map(|i| match i {
+            AgentItem::Event(e) => match e.as_ref() {
+                OmegaEvent::AgentError(ae) => Some(ae.error.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("AgentError must exist");
+    assert!(
+        err_text.contains("empty"),
+        "error must mention 'empty': {err_text:?}"
+    );
+    assert!(
+        err_text.contains('4'),
+        "error must mention the count (4): {err_text:?}"
+    );
+}
+
+/// The continuation user message must appear in the projected context sent to
+/// the LLM — the model must see a new user turn, per the Anthropic docs.
+#[tokio::test]
+async fn empty_response_continuation_appears_in_next_request() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+
+    // Empty response.
+    provider.push_response(vec![Ok(make_llm_response("end_turn", 3, 2))]);
+    // Normal follow-up.
+    provider.push_response(vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "Done.".to_owned(),
+        })),
+        Ok(make_llm_response("end_turn", 100, 5)),
+    ]);
+
+    let stream = drive(&mut agent, "hello".to_owned(), CancellationToken::new());
+    let _ = collect_stream(stream).await;
+
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 2, "exactly 2 LLM calls");
+
+    // The second request must carry the continuation prompt.
+    // project_messages merges consecutive user turns, so "hello" and
+    // "Please continue." land in one role:user API message — either as
+    // separate Text blocks or merged inline.  We search for the text.
+    let second_req = &reqs[1];
+    let has_continuation = second_req.messages.iter().any(|m| {
+        m.role == Role::User
+            && m.content.iter().any(|b| {
+                matches!(
+                    b,
+                    ContentBlock::Text { text } if text.contains("Please continue.")
+                )
+            })
+    });
+    assert!(
+        has_continuation,
+        "continuation prompt must appear in the second LLM call's messages; \
+         messages: {:?}",
+        second_req.messages
+    );
+
+    // The empty assistant turn must NOT appear in the second request's
+    // messages (we never persist it to context).
+    let has_empty_assistant = second_req
+        .messages
+        .iter()
+        .any(|m| m.role == Role::Assistant && m.content.is_empty());
+    assert!(
+        !has_empty_assistant,
+        "empty assistant turn must NOT appear in the second LLM call's messages"
+    );
+}
+
 // Abort (control-level `request_abort`) cancels the CURRENT block only: the
 // loop yields a TurnInterrupted and then returns to PARK — it does NOT
 // terminate the whole run.  A subsequent message is still served.
@@ -2675,10 +2962,8 @@ async fn run_loop_abort_cancels_block_and_returns_to_park() {
         "run_command",
         json!({ "command": "sleep 5" }),
     ));
-    // Turn 2 (after re-park): a clean single-cycle turn.
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
+    // Turn 2 (after re-park): one non-empty response that ends the turn.
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
 
     let (tx, rx) = tokio::sync::mpsc::channel::<InputItem>(8);
     let run_cancel = CancellationToken::new();

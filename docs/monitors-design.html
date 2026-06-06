@@ -853,6 +853,33 @@ MonitorStopped { id, reason, exit_code, time }
     events within the same Python session.  This is architecturally interesting
     but out of scope — the tool-call boundary is the correct level of abstraction
     for now.</li>
+  <li id="empty-response"><strong>EMPTY-RESPONSE CONTINUATION (implemented, §14 agent loop).</strong>
+    Anthropic documents that Claude occasionally returns a response with
+    <em>zero content blocks</em> (no text, no thinking, no tool_use) and
+    <code>stop_reason</code> <code>&ldquo;end_turn&rdquo;</code> <em>or</em>
+    <code>&ldquo;tool_use&rdquo;</code>, particularly after tool results.  Reference:
+    <a href="https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons"
+       target="_blank">Anthropic &mdash; Handling stop reasons</a>
+    (&ldquo;Empty responses with end_turn&rdquo;).
+    <p><strong>Detection:</strong> <code>assistant_blocks.is_empty()</code> after
+    stream assembly, regardless of <code>stop_reason</code>.</p>
+    <p><strong>Handling (NOT a plain retry):</strong> the agent injects a new
+    <em>visible</em> user-turn message (&ldquo;Please continue.&rdquo;) and
+    re-issues the LLM call.  The empty assistant turn is <em>not</em> persisted
+    to context (&ldquo;Claude already decided it&rsquo;s done&rdquo;).  A cap of
+    <code>EMPTY_RESPONSE_CAP&nbsp;=&nbsp;3</code> consecutive injections prevents
+    an infinite loop; a 4th consecutive empty response surfaces
+    <code>AgentError</code>&nbsp;+&nbsp;<code>TurnInterrupted</code>.</p>
+    <p><strong>Visible-vs-synthetic decision (option&nbsp;a):</strong> the
+    continuation is emitted as a plain <code>UserMessage</code> event (simplest;
+    matches the Anthropic docs example).  No new event-schema variant
+    needed.</p>
+    <p><strong>Seam-B note (§15 design input):</strong> the &ldquo;text after
+    <code>tool_result</code>&rdquo; root-cause question (why Claude returns empty
+    responses particularly after tool results) is distinct from this fix and
+    belongs to the Seam-B delivery re-design (§15 Unified Input Model).
+    This entry is the <em>symptom fix</em>; §15 addresses the structural cause.</p>
+  </li>
 </ul>
 
 <h2 id="codefacts">14. Codebase facts gathered (Omega = Rust workspace)</h2>

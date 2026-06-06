@@ -30,7 +30,7 @@ use omega_agent::{Agent, AgentConfig, InputItem};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_store::{ContextStore, EventStore};
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
-use omega_types::{LlmResponseUsage, MonitorDeliveryItem, OmegaEvent};
+use omega_types::{LlmResponseUsage, MonitorDeliveryItem, OmegaEvent, StreamSignal};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
@@ -181,6 +181,28 @@ pub fn make_llm_response(stop_reason: &str, input_tokens: i64, output_tokens: i6
         context_hash: String::new(),
         response_summary: None,
     }))
+}
+
+/// Build a non-empty terminal LLM response: a `Signal:Text` delta followed by
+/// a `LlmResponseEnded`.  Use this whenever a test needs a response that
+/// actually ends the turn (i.e. the model produced some text content).
+///
+/// Background: `make_llm_response` alone produces **zero** content blocks —
+/// the agent's empty-response guard now intercepts those and injects a
+/// continuation rather than emitting `TurnEnd`.  This helper produces the
+/// non-empty variant that correctly terminates the agent loop.
+pub fn make_terminal_response(
+    stop_reason: &str,
+    input_tokens: i64,
+    output_tokens: i64,
+) -> Vec<Result<AgentItem, LlmError>> {
+    vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "Done.".to_owned(),
+        })),
+        Ok(make_llm_response(stop_reason, input_tokens, output_tokens)),
+    ]
 }
 
 // ---------------------------------------------------------------------------

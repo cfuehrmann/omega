@@ -175,6 +175,19 @@ async fn send_json(ws: &mut WsClient, v: serde_json::Value) {
 // Mock transcript helpers (mirrors crates/omega-agent/tests/common/mod.rs)
 // ---------------------------------------------------------------------------
 
+/// Like [`llm_response`] but includes a `Signal:Text` so `assistant_blocks`
+/// is non-empty, preventing the empty-response guard from injecting an
+/// unwanted continuation user message.
+fn text_llm_response(stop_reason: &str) -> Vec<Result<AgentItem, LlmError>> {
+    vec![
+        Ok(AgentItem::Signal(StreamSignal::Text {
+            index: 0,
+            text: "ok".to_owned(),
+        })),
+        Ok(llm_response(stop_reason)),
+    ]
+}
+
 fn llm_response(stop_reason: &str) -> AgentItem {
     AgentItem::event(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
         time: "2024-01-01T00:00:00.000Z".to_owned(),
@@ -328,7 +341,7 @@ async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response("end_turn"))]);
+    provider.push(text_llm_response("end_turn"));
 
     let state = make_test_state(provider, tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
@@ -371,6 +384,9 @@ async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
 
     // Continue — turn must resume and end normally.
     send_json(&mut ws, serde_json::json!({ "type": "continue" })).await;
+    // text_llm_response produces 2 items; item 1 (llm_response) needs a
+    // gate release just like the first turn's item 1 did.
+    step_gate.notify_one();
     let frames = recv_until_type(&mut ws, "turn_end").await;
     let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
     assert!(
@@ -404,7 +420,7 @@ async fn abort_during_turn_emits_turn_interrupted() {
         "read_file",
         serde_json::json!({ "path": scratch.to_string_lossy() }),
     ));
-    provider.push(vec![Ok(llm_response("end_turn"))]);
+    provider.push(text_llm_response("end_turn"));
 
     let state = make_test_state(provider, tmp.path().join("sessions"));
     let addr = spawn_server(state).await;
@@ -1102,8 +1118,8 @@ async fn resume_session_emits_resuming_session_event_for_target_dir() {
     .expect("write session B events.jsonl");
 
     let provider = Arc::new(MockProvider::new());
-    // Resumption summary turn: a single end_turn LLM response with summary text.
-    provider.push(vec![Ok(llm_response("end_turn"))]);
+    // Resumption summary turn: an end_turn LLM response with summary text.
+    provider.push(text_llm_response("end_turn"));
 
     let state = make_test_state(Arc::clone(&provider), sessions_root.clone());
     let addr = spawn_server(state).await;
