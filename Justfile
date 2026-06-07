@@ -416,6 +416,20 @@ mutants-render-block:
         --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
         --file "src/context_modal.rs" --re 'render_block'
 
+# Run cargo-mutants targeted at the WS protocol projection (§16: the
+# WS-message mirror elimination). Covers `WsEnvelope` (the thin
+# frontend-only frame enum), the `#[serde(untagged)] WsMessage`
+# { Envelope, Event(OmegaEvent) } routing, and the `From` impls. The
+# drift-guard test round-trips every OmegaEvent variant through the
+# server-serialize → WsMessage parse path, so a survivor here means a
+# real coverage gap. Runs on the wasm target (the only one the leptos
+# crate's tests build for).
+mutants-ws-protocol:
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 \
+        --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
+        --file "src/protocol.rs"
+
 # Run cargo-mutants targeted at the schemas.rs tool-definition filtering.
 # Covers the tool_definitions(tool_selection) membership-driven filtering,
 # canonical-order iteration, and the shell-aware fetch_url schema branch.

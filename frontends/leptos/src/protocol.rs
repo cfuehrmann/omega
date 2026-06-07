@@ -1,61 +1,50 @@
-//! Client-side wire-protocol types — typed mirrors of `omega-server`'s
-//! `WsMessage` (server → client) and `ClientFrame` (client → server).
+//! Client-side wire-protocol types — the server → client frame
+//! ([`WsMessage`]) and the client → server frame ([`ClientFrame`]).
 //!
-//! ## Why a parallel enum (Phase 3.1 decision)
+//! ## No event mirror (§16 — Contract Authority)
 //!
-//! The server-side `WsMessage` lives in `omega-server` (not `omega-types`)
-//! because two of its variants are server-only wire shapes
-//! (`SessionDeleted`, `SessionRenamed`, `ResetDone`) and `Item` carries a
-//! `Box<AgentItem>` that is `#[serde(untagged)]` and `Serialize`-only by
-//! design. Lifting the type into `omega-types` would either force a
-//! redesign of `AgentItem` or pollute the shared-types crate with a
-//! transport-level concern.
+//! Event-carrying frames are **not** re-typed in the frontend. The
+//! canonical [`omega_types::OmegaEvent`] is already a dependency (the
+//! History path parses `Vec<OmegaEvent>` directly), so [`WsMessage`] is
+//! an `#[serde(untagged)]` enum over exactly two arms:
 //!
-//! Instead, we mirror the wire format with a single flat tagged enum
-//! that re-uses every typed event/signal struct from `omega-types`.
-//! The duplication is purely at the variant-listing layer; field types
-//! remain the single source of truth.
+//! - [`WsMessage::Envelope`] — the genuinely frontend-specific frames
+//!   that are **not** `OmegaEvent`s: `ready`, `reset_done`, the
+//!   `agent_error` *transport* envelope, `session_info`, `history`,
+//!   `session_deleted`/`session_renamed`, `pending_changes_warning`,
+//!   `monitor_roster`, `input_queue`, and the streaming signal deltas
+//!   (`text`, `thinking`, `thinking_block_complete`,
+//!   `tool_use_block_start`, `tool_input`). These live in the small,
+//!   hand-written [`WsEnvelope`] enum.
+//! - [`WsMessage::Event`] — a *transparent* [`OmegaEvent`]. The server
+//!   forwards events generically
+//!   (`omega-server::ws_message` → `serde_json::to_value(item)`), so
+//!   every variant in `omega-types` reaches the UI with **zero**
+//!   frontend edits. Adding a variant upstream can no longer drift the
+//!   frontend out of sync — the mirror is gone.
 //!
-//! ## Wire-shape collision: `agent_error`
+//! The drift-guard test (`drift_guard_*`, bottom of this file)
+//! round-trips *every* `OmegaEvent` variant through the server
+//! serialization → this parse → back to `OmegaEvent`, and fails to
+//! compile if a future variant is added without a sample.
 //!
-//! The server emits two distinct payloads under `type: "agent_error"`:
+//! ## Tag-collision check (envelope vs event)
+//!
+//! Under `#[serde(untagged)]` the `Envelope` arm is tried first and the
+//! `Event` arm second. The only `type` tag shared by both layers is
+//! `agent_error`:
 //!
 //! - **Envelope** — `{ "type": "agent_error", "message": "..." }` —
-//!   transport/handler-level error (malformed client frame, missing
-//!   session, etc). Sent directly by the WS handler.
+//!   a transport/handler error ([`WsEnvelope::AgentError`]). It requires
+//!   a `message` field.
 //! - **Event** — `{ "type": "agent_error", "time": "...", "error": "..." }`
-//!   — agent-level error written to `events.jsonl` and forwarded as a
-//!   `WsMessage::Item(OmegaEvent::AgentError(...))`.
-//!
-//! Resolved client-side by [`AgentErrorPayload`], an `#[serde(untagged)]`
-//! enum that disambiguates by structure — no server change.
-//!
-//! ## Tag enumeration
-//!
-//! - 7 envelope tags: `ready`, `agent_error`, `session_info`, `history`,
-//!   `reset_done`, `session_deleted`, `session_renamed`.
-//! - 5 stream-signal tags forwarded inside the server's `Item` variant:
-//!   `text`, `thinking`, `thinking_block_complete`, `tool_use_block_start`,
-//!   `tool_input`.
-//! - 20 [`omega_types::OmegaEvent`] tags forwarded via `Item`. The
-//!   `agent_error` event tag merges into the envelope variant via the
-//!   payload-disambiguation trick above, so 19 dedicated event variants
-//!   appear here.  SCHEMA-8 Phase 3 adds 6 block-grammar events;
-//!   Phase 6.5 removes `llm_response` and `compacted`, bringing the
-//!   total to 25 event variants.  Phase 2.0 (F11) adds `context_compacted`
-//!   bringing the total to 26 event variants.
+//!   — the forwarded `OmegaEvent::AgentError`. It has no `message`, so
+//!   the `Envelope` arm fails and parsing falls through to the
+//!   transparent `Event` arm. The field sets are disjoint, so dispatch
+//!   is deterministic. No other envelope/signal tag collides with any
+//!   `OmegaEvent` tag.
 
 use omega_types::OmegaEvent;
-use omega_types::events::AgentErrorEvent;
-use omega_types::events::{
-    ContextCompactedEvent, EffortChangedEvent, HaltRequestedEvent, HarnessRecoveryEvent,
-    LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
-    LlmResponseStartedEvent, LlmRetryEvent, ModelChangedEvent, PythonReplBootstrappedEvent,
-    ResumingSessionEvent, ServerStartedEvent, ServerStoppedEvent, SessionResumedEvent,
-    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
-    ToolUseBlockEvent, TransportErrorEvent, TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent,
-    TurnResumedEvent, UserMessageEvent,
-};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -132,80 +121,69 @@ pub struct HistoryPayload {
     pub streaming: bool,
 }
 
-/// `agent_error` payload disambiguator. See module docs for context.
-///
-/// Variant order matters for `#[serde(untagged)]`: the first variant
-/// whose required fields all match wins. `Envelope` requires `message`;
-/// `Event` requires `time` *and* `error`. The two field sets are
-/// disjoint, so the dispatch is deterministic for any well-formed
-/// server emission.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum AgentErrorPayload {
-    /// Server-side transport/handler error — no `time`, no `error` field.
-    Envelope { message: String },
-    /// Forwarded `OmegaEvent::AgentError` — has `time` and `error`.
-    Event(AgentErrorEvent),
-}
-
 // ---------------------------------------------------------------------------
-// Server → client: WsMessage
+// Server → client: WsEnvelope (the thin, frontend-specific frames)
 // ---------------------------------------------------------------------------
 
-/// One frame received over the WebSocket from `omega-server`.
+/// The genuinely frontend-specific frames — everything the server emits
+/// that is **not** an [`OmegaEvent`]. This is the only hand-written
+/// per-variant enum left in the frontend protocol; the event-carrying
+/// frames are deserialized straight into [`OmegaEvent`] (see
+/// [`WsMessage`]).
 ///
-/// The outer discriminator is the `type` field. Every variant the server
-/// emits today is enumerated explicitly so `serde::Deserialize` can
-/// route each frame to a fully-typed payload — there is no
-/// `serde_json::Value` in the parse path.
+/// The discriminator is the `type` field. Stream-signal frames (`text`,
+/// `thinking`, …) and ephemeral snapshots (`monitor_roster`,
+/// `input_queue`) live here because they are transport/UI concerns with
+/// no persisted `OmegaEvent` backing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum WsMessage {
-    // --- Envelope (server-only wire shapes) ----------------------------------
+pub enum WsEnvelope {
     /// Server is ready to receive client frames.
     Ready,
     /// Acknowledgement of a `reset` client frame.
     ResetDone,
-    /// Either a transport-layer error (envelope `{message}`) or a
-    /// forwarded `OmegaEvent::AgentError` (`{time, error}`).
-    AgentError(AgentErrorPayload),
+    /// A transport/handler-level error (malformed client frame, missing
+    /// session, …). Distinct from `OmegaEvent::AgentError`, which is the
+    /// *agent-level* error written to `events.jsonl` and routed through
+    /// [`WsMessage::Event`]. Disambiguated by the presence of `message`
+    /// (this) vs `time`+`error` (the event) — see the module docs.
+    AgentError { message: String },
     /// Session identity announcement.
     SessionInfo(SessionInfoPayload),
-    /// Persisted history batch.
+    /// Persisted history batch (carries `Vec<OmegaEvent>` directly).
     History(HistoryPayload),
     /// A session directory was deleted on disk.
     #[serde(rename_all = "camelCase")]
-    SessionDeleted {
-        session_dir: String,
-    },
+    SessionDeleted { session_dir: String },
     /// A session was renamed on disk.
     #[serde(rename_all = "camelCase")]
-    SessionRenamed {
-        session_dir: String,
-        name: String,
-    },
+    SessionRenamed { session_dir: String, name: String },
+    /// A `Reset` or `ResumeSession` frame was rejected because the
+    /// working tree has uncommitted git changes and `allow_dirty` was
+    /// not set.  `intent` echoes the original parameters so the client
+    /// can re-issue with `allow_dirty: true` on operator confirmation.
+    PendingChangesWarning { intent: PendingChangesIntent },
+    /// Ephemeral roster snapshot pushed by the server on connect and
+    /// after every monitor lifecycle event.  **Not** an `OmegaEvent`;
+    /// never written to `events.jsonl`.
+    MonitorRoster { monitors: Vec<MonitorRosterEntry> },
+    /// Ephemeral input-queue snapshot pushed by the server after a human
+    /// message is enqueued / drained, and on connect / reset / resume.
+    /// **Not** an `OmegaEvent`.
+    InputQueue { items: Vec<InputQueueItem> },
 
     // --- Forwarded `StreamSignal` payloads -----------------------------------
     /// Streaming assistant text fragment.  `index` matches Anthropic's
     /// `content_block_start.index` so the per-block streaming buffer
     /// can route deltas to the correct slot (SCHEMA-8 Phase 5a).
-    Text {
-        index: usize,
-        text: String,
-    },
+    Text { index: usize, text: String },
     /// Streaming thinking-block fragment.  `index` carries the same
     /// semantics as on [`Self::Text`].
-    Thinking {
-        index: usize,
-        text: String,
-    },
+    Thinking { index: usize, text: String },
     /// End-of-thinking-block marker (carries cryptographic signature).
     /// The UI ignores the signature; `index` lets `apply` drop the
     /// matching slot from the thinking streaming buffer.
-    ThinkingBlockComplete {
-        index: usize,
-        signature: String,
-    },
+    ThinkingBlockComplete { index: usize, signature: String },
     /// Streaming tool-use block opener.  Carries the LLM-issued
     /// `tool_use_id` and `name` so the UI can render the label
     /// immediately, before any `ToolInput` deltas arrive.
@@ -216,85 +194,54 @@ pub enum WsMessage {
     },
     /// Streaming partial-JSON fragment for the tool-use block at
     /// `index`.  Mid-stream content is NOT valid JSON; rendered raw.
-    ToolInput {
-        index: usize,
-        partial_json: String,
-    },
+    ToolInput { index: usize, partial_json: String },
+}
 
-    // --- Forwarded `OmegaEvent` payloads (19 — `agent_error` merged above) ---
-    SessionStarted(SessionStartedEvent),
-    ServerStarted(ServerStartedEvent),
-    ServerStopped(ServerStoppedEvent),
-    UserMessage(UserMessageEvent),
-    LlmCall(LlmCallEvent),
-    ToolCall(ToolCallEvent),
-    ToolResult(ToolResultEvent),
-    TurnEnd(TurnEndEvent),
-    LlmError(LlmErrorEvent),
-    TurnInterrupted(TurnInterruptedEvent),
-    LlmRetry(LlmRetryEvent),
-    ModelChanged(ModelChangedEvent),
-    EffortChanged(EffortChangedEvent),
-    TransportError(TransportErrorEvent),
-    ResumingSession(ResumingSessionEvent),
-    SessionResumed(SessionResumedEvent),
-    HaltRequested(HaltRequestedEvent),
-    TurnHalted(TurnHaltedEvent),
-    TurnResumed(TurnResumedEvent),
+// ---------------------------------------------------------------------------
+// Server → client: WsMessage
+// ---------------------------------------------------------------------------
 
-    // --- SCHEMA-8 block-grammar event variants (Phase 3 commit 3b) ---------
-    // Legacy `LlmResponse` and `Compacted` variants removed in Phase 6.5.
-    LlmResponseStarted(LlmResponseStartedEvent),
-    LlmResponseEnded(LlmResponseEndedEvent),
-    LlmResponseDiscarded(LlmResponseDiscardedEvent),
-    TextBlock(TextBlockEvent),
-    ThinkingBlock(ThinkingBlockEvent),
-    ToolUseBlock(ToolUseBlockEvent),
+/// One frame received over the WebSocket from `omega-server`.
+///
+/// `#[serde(untagged)]` over two arms (§16 — the event mirror is gone):
+///
+/// - [`WsMessage::Envelope`] — the hand-written [`WsEnvelope`] frames
+///   (tried first).
+/// - [`WsMessage::Event`] — a *transparent* [`OmegaEvent`]; any frame
+///   whose `type` is not a known envelope tag is parsed as the canonical
+///   event. Adding a variant to `omega-types` reaches the UI with no
+///   edit here.
+///
+/// Tag-collision is impossible by construction: the only shared `type`
+/// is `agent_error`, and the envelope arm requires a `message` field the
+/// event form lacks, so the event falls through to the `Event` arm. See
+/// the module docs and the `drift_guard_*` / `agent_error_*` tests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WsMessage {
+    /// A frontend-specific envelope / signal / ephemeral frame.
+    Envelope(WsEnvelope),
+    /// A canonical, persisted `OmegaEvent` forwarded by the server.
+    Event(OmegaEvent),
+}
 
-    // --- Phase 2.0 (F11) — server-side compaction event --------------------
-    /// Server-side context compaction fired; always precedes `LlmResponseEnded`.
-    ContextCompacted(ContextCompactedEvent),
+impl From<WsEnvelope> for WsMessage {
+    fn from(env: WsEnvelope) -> Self {
+        Self::Envelope(env)
+    }
+}
 
-    // --- python_repl bootstrap event ---------------------------------------
-    /// Omega auto-installed python3 via apt-get because it was absent from PATH.
-    PythonReplBootstrapped(PythonReplBootstrappedEvent),
-
-    // --- Harness-recovery events (§15 — forensics gap close) ---------------
-    /// A harness-authored recovery prompt was injected as `role: user`.
-    HarnessRecovery(HarnessRecoveryEvent),
-
-    /// A `Reset` or `ResumeSession` frame was rejected because the
-    /// working tree has uncommitted git changes and `allow_dirty` was
-    /// not set.  The previous active session (if any) is untouched.
-    /// `intent` echoes the original parameters so the client can
-    /// re-issue with `allow_dirty: true` on operator confirmation.
-    PendingChangesWarning {
-        intent: PendingChangesIntent,
-    },
-
-    /// Ephemeral roster snapshot pushed by the server on connect and
-    /// after every monitor lifecycle event.  **Not** an `OmegaEvent`;
-    /// `into_omega_event` returns `None` and the roster is never
-    /// written to `events.jsonl`.
-    MonitorRoster {
-        monitors: Vec<MonitorRosterEntry>,
-    },
-
-    /// Ephemeral input-queue snapshot pushed by the server (a) right after
-    /// a human message is enqueued, (b) right after the agent drains it, and
-    /// (c) on connect / reset / resume.  **Not** an `OmegaEvent`;
-    /// `into_omega_event` returns `None` and the queue is never written to
-    /// `events.jsonl`.  U1: human-only; monitor sources join in U2.
-    InputQueue {
-        items: Vec<InputQueueItem>,
-    },
+impl From<OmegaEvent> for WsMessage {
+    fn from(event: OmegaEvent) -> Self {
+        Self::Event(event)
+    }
 }
 
 // ---------------------------------------------------------------------------
 // MonitorRosterEntry — one entry in a roster snapshot
 // ---------------------------------------------------------------------------
 
-/// One monitor entry in a [`WsMessage::MonitorRoster`] snapshot.
+/// One monitor entry in a [`WsEnvelope::MonitorRoster`] snapshot.
 ///
 /// Transport-only projection of
 /// [`omega_tools::MonitorInfo`](crates/omega-tools/src/monitors.rs);
@@ -322,7 +269,7 @@ pub struct MonitorRosterEntry {
 // InputQueueItem — one entry in a queue snapshot
 // ---------------------------------------------------------------------------
 
-/// One pending item in an [`WsMessage::InputQueue`] snapshot.
+/// One pending item in a [`WsEnvelope::InputQueue`] snapshot.
 ///
 /// Transport-only projection — never written to `events.jsonl`.
 /// Structured to admit `"monitor:<id>"` sources in U2.
@@ -336,76 +283,6 @@ pub struct InputQueueItem {
     pub content_preview: String,
     /// RFC 3339 timestamp (millisecond precision) when the item was pushed.
     pub enqueued_at: String,
-}
-
-impl WsMessage {
-    /// If this frame carries an [`OmegaEvent`] payload (forwarded `Item`
-    /// or an `agent_error` *event*), reconstruct the original event so
-    /// it can be appended to a UI's event log. Returns `None` for
-    /// envelope-only frames and for raw stream signals.
-    #[must_use]
-    pub fn into_omega_event(self) -> Option<OmegaEvent> {
-        Some(match self {
-            // Envelope-only frames — no event payload.
-            Self::Ready
-            | Self::ResetDone
-            | Self::SessionInfo(_)
-            | Self::History(_)
-            | Self::SessionDeleted { .. }
-            | Self::SessionRenamed { .. }
-            | Self::PendingChangesWarning { .. }
-            // Ephemeral roster snapshot — never an OmegaEvent.
-            | Self::MonitorRoster { .. }
-            // Ephemeral input-queue snapshot — never an OmegaEvent.
-            | Self::InputQueue { .. } => return None,
-            // Stream signals — never persisted as events.
-            Self::Text { .. }
-            | Self::Thinking { .. }
-            | Self::ThinkingBlockComplete { .. }
-            | Self::ToolUseBlockStart { .. }
-            | Self::ToolInput { .. } => {
-                return None;
-            }
-            // `agent_error` envelope → not an event; envelope-side error.
-            Self::AgentError(AgentErrorPayload::Envelope { .. }) => return None,
-            // `agent_error` event → real OmegaEvent.
-            Self::AgentError(AgentErrorPayload::Event(e)) => OmegaEvent::AgentError(e),
-
-            // Genuine OmegaEvent variants.
-            Self::SessionStarted(e) => OmegaEvent::SessionStarted(e),
-            Self::ServerStarted(e) => OmegaEvent::ServerStarted(e),
-            Self::ServerStopped(e) => OmegaEvent::ServerStopped(e),
-            Self::UserMessage(e) => OmegaEvent::UserMessage(e),
-            Self::LlmCall(e) => OmegaEvent::LlmCall(e),
-            Self::ToolCall(e) => OmegaEvent::ToolCall(e),
-            Self::ToolResult(e) => OmegaEvent::ToolResult(e),
-            Self::TurnEnd(e) => OmegaEvent::TurnEnd(e),
-            Self::LlmError(e) => OmegaEvent::LlmError(e),
-            Self::TurnInterrupted(e) => OmegaEvent::TurnInterrupted(e),
-            Self::LlmRetry(e) => OmegaEvent::LlmRetry(e),
-            Self::ModelChanged(e) => OmegaEvent::ModelChanged(e),
-            Self::EffortChanged(e) => OmegaEvent::EffortChanged(e),
-            Self::TransportError(e) => OmegaEvent::TransportError(e),
-            Self::ResumingSession(e) => OmegaEvent::ResumingSession(e),
-            Self::SessionResumed(e) => OmegaEvent::SessionResumed(e),
-            Self::HaltRequested(e) => OmegaEvent::HaltRequested(e),
-            Self::TurnHalted(e) => OmegaEvent::TurnHalted(e),
-            Self::TurnResumed(e) => OmegaEvent::TurnResumed(e),
-            // SCHEMA-8 block-grammar variants.
-            Self::LlmResponseStarted(e) => OmegaEvent::LlmResponseStarted(e),
-            Self::LlmResponseEnded(e) => OmegaEvent::LlmResponseEnded(e),
-            Self::LlmResponseDiscarded(e) => OmegaEvent::LlmResponseDiscarded(e),
-            Self::TextBlock(e) => OmegaEvent::TextBlock(e),
-            Self::ThinkingBlock(e) => OmegaEvent::ThinkingBlock(e),
-            Self::ToolUseBlock(e) => OmegaEvent::ToolUseBlock(e),
-            // Phase 2.0 (F11).
-            Self::ContextCompacted(e) => OmegaEvent::ContextCompacted(e),
-            // python_repl bootstrap.
-            Self::PythonReplBootstrapped(e) => OmegaEvent::PythonReplBootstrapped(e),
-            // Harness-recovery (§15).
-            Self::HarnessRecovery(e) => OmegaEvent::HarnessRecovery(e),
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -502,34 +379,45 @@ mod tests {
         serde_json::from_str(json).unwrap_or_else(|e| panic!("parse failed for {json}: {e}"))
     }
 
+    /// Match an [`WsMessage::Envelope`] arm or panic with the wrong variant.
+    fn envelope(msg: WsMessage) -> WsEnvelope {
+        match msg {
+            WsMessage::Envelope(env) => env,
+            WsMessage::Event(ev) => panic!("expected envelope, got event: {ev:?}"),
+        }
+    }
+
     // ---- envelope -----------------------------------------------------------
 
     #[wasm_bindgen_test]
     fn ready_round_trips() {
-        let msg = parse(r#"{"type":"ready"}"#);
-        assert!(matches!(msg, WsMessage::Ready));
+        assert!(matches!(
+            envelope(parse(r#"{"type":"ready"}"#)),
+            WsEnvelope::Ready
+        ));
     }
 
     #[wasm_bindgen_test]
     fn reset_done_round_trips() {
-        let msg = parse(r#"{"type":"reset_done"}"#);
-        assert!(matches!(msg, WsMessage::ResetDone));
+        assert!(matches!(
+            envelope(parse(r#"{"type":"reset_done"}"#)),
+            WsEnvelope::ResetDone
+        ));
     }
 
     #[wasm_bindgen_test]
     fn session_deleted_camel_case_dir() {
-        let msg = parse(r#"{"type":"session_deleted","sessionDir":"abc"}"#);
-        match msg {
-            WsMessage::SessionDeleted { session_dir } => assert_eq!(session_dir, "abc"),
+        match envelope(parse(r#"{"type":"session_deleted","sessionDir":"abc"}"#)) {
+            WsEnvelope::SessionDeleted { session_dir } => assert_eq!(session_dir, "abc"),
             other => panic!("wrong variant: {other:?}"),
         }
     }
 
     #[wasm_bindgen_test]
     fn session_renamed_carries_dir_and_name() {
-        let msg = parse(r#"{"type":"session_renamed","sessionDir":"d","name":"my-name"}"#);
-        match msg {
-            WsMessage::SessionRenamed { session_dir, name } => {
+        let m = parse(r#"{"type":"session_renamed","sessionDir":"d","name":"my-name"}"#);
+        match envelope(m) {
+            WsEnvelope::SessionRenamed { session_dir, name } => {
                 assert_eq!(session_dir, "d");
                 assert_eq!(name, "my-name");
             }
@@ -544,8 +432,8 @@ mod tests {
             "cwd":"/c","turnState":"running","hasPendingChanges":true,
             "name":"alpha"
         }"#;
-        match parse(json) {
-            WsMessage::SessionInfo(p) => {
+        match envelope(parse(json)) {
+            WsEnvelope::SessionInfo(p) => {
                 assert_eq!(p.turn_state, TurnState::Running);
                 assert!(p.has_pending_changes);
                 assert_eq!(p.name.as_deref(), Some("alpha"));
@@ -560,8 +448,8 @@ mod tests {
             "type":"session_info","dir":"d","model":"m","effort":"e",
             "cwd":"/c","turnState":"idle","hasPendingChanges":false
         }"#;
-        match parse(json) {
-            WsMessage::SessionInfo(p) => {
+        match envelope(parse(json)) {
+            WsEnvelope::SessionInfo(p) => {
                 assert_eq!(p.turn_state, TurnState::Idle);
                 assert!(!p.has_pending_changes);
                 assert!(p.name.is_none());
@@ -572,9 +460,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn history_with_streaming_field() {
-        let msg = parse(r#"{"type":"history","events":[],"streaming":true}"#);
-        match msg {
-            WsMessage::History(p) => {
+        match envelope(parse(r#"{"type":"history","events":[],"streaming":true}"#)) {
+            WsEnvelope::History(p) => {
                 assert!(p.events.is_empty());
                 assert!(p.streaming);
             }
@@ -584,9 +471,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn history_without_streaming_field_defaults_to_false() {
-        let msg = parse(r#"{"type":"history","events":[]}"#);
-        match msg {
-            WsMessage::History(p) => assert!(!p.streaming),
+        match envelope(parse(r#"{"type":"history","events":[]}"#)) {
+            WsEnvelope::History(p) => assert!(!p.streaming),
             other => panic!("wrong variant: {other:?}"),
         }
     }
@@ -600,8 +486,8 @@ mod tests {
                 {"type":"server_started","time":"2024-01-01T00:00:00.000Z"}
             ]
         }"#;
-        match parse(json) {
-            WsMessage::History(p) => {
+        match envelope(parse(json)) {
+            WsEnvelope::History(p) => {
                 assert_eq!(p.events.len(), 1);
                 assert!(matches!(p.events[0], OmegaEvent::ServerStarted(_)));
             }
@@ -609,28 +495,30 @@ mod tests {
         }
     }
 
-    // ---- agent_error disambiguation ----------------------------------------
+    // ---- agent_error disambiguation (envelope vs forwarded event) ----------
 
     #[wasm_bindgen_test]
     fn agent_error_envelope_disambiguates_by_message_field() {
-        let msg = parse(r#"{"type":"agent_error","message":"bad frame"}"#);
-        match msg {
-            WsMessage::AgentError(AgentErrorPayload::Envelope { message }) => {
-                assert_eq!(message, "bad frame");
-            }
-            other => panic!("expected envelope, got {other:?}"),
+        // `{message}` only → the transport envelope, NOT an OmegaEvent.
+        match envelope(parse(r#"{"type":"agent_error","message":"bad frame"}"#)) {
+            WsEnvelope::AgentError { message } => assert_eq!(message, "bad frame"),
+            other => panic!("expected envelope agent_error, got {other:?}"),
         }
     }
 
     #[wasm_bindgen_test]
-    fn agent_error_event_disambiguates_by_time_and_error_fields() {
+    fn agent_error_event_falls_through_to_transparent_event_arm() {
+        // `{time, error}` (no `message`) → the canonical OmegaEvent, reached
+        // via the transparent `Event` arm. This is the tag-collision case the
+        // module docs call out: envelope tried first, fails on the missing
+        // `message`, parsing falls through to `Event`.
         let json = r#"{"type":"agent_error","time":"2024-01-01T00:00:00.000Z","error":"oops"}"#;
         match parse(json) {
-            WsMessage::AgentError(AgentErrorPayload::Event(e)) => {
+            WsMessage::Event(OmegaEvent::AgentError(e)) => {
                 assert_eq!(e.error, "oops");
                 assert_eq!(e.time, "2024-01-01T00:00:00.000Z");
             }
-            other => panic!("expected event, got {other:?}"),
+            other => panic!("expected Event(AgentError), got {other:?}"),
         }
     }
 
@@ -638,8 +526,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn text_signal_round_trips() {
-        match parse(r#"{"type":"text","index":0,"text":"hello"}"#) {
-            WsMessage::Text { index, text } => {
+        match envelope(parse(r#"{"type":"text","index":0,"text":"hello"}"#)) {
+            WsEnvelope::Text { index, text } => {
                 assert_eq!(index, 0);
                 assert_eq!(text, "hello");
             }
@@ -651,8 +539,8 @@ mod tests {
     fn text_signal_with_nonzero_index() {
         // Interleaved-thinking can revisit older indices; the wire
         // value must round-trip 1:1.  SCHEMA-8 Phase 5a.
-        match parse(r#"{"type":"text","index":3,"text":"world"}"#) {
-            WsMessage::Text { index, text } => {
+        match envelope(parse(r#"{"type":"text","index":3,"text":"world"}"#)) {
+            WsEnvelope::Text { index, text } => {
                 assert_eq!(index, 3);
                 assert_eq!(text, "world");
             }
@@ -662,8 +550,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn thinking_signal_round_trips() {
-        match parse(r#"{"type":"thinking","index":1,"text":"musing"}"#) {
-            WsMessage::Thinking { index, text } => {
+        match envelope(parse(r#"{"type":"thinking","index":1,"text":"musing"}"#)) {
+            WsEnvelope::Thinking { index, text } => {
                 assert_eq!(index, 1);
                 assert_eq!(text, "musing");
             }
@@ -673,8 +561,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn thinking_block_complete_carries_index_and_signature() {
-        match parse(r#"{"type":"thinking_block_complete","index":2,"signature":"sig"}"#) {
-            WsMessage::ThinkingBlockComplete { index, signature } => {
+        let m = parse(r#"{"type":"thinking_block_complete","index":2,"signature":"sig"}"#);
+        match envelope(m) {
+            WsEnvelope::ThinkingBlockComplete { index, signature } => {
                 assert_eq!(index, 2);
                 assert_eq!(signature, "sig");
             }
@@ -684,10 +573,11 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn tool_use_block_start_round_trips() {
-        match parse(
+        let m = parse(
             r#"{"type":"tool_use_block_start","index":3,"tool_use_id":"tu_1","name":"bash"}"#,
-        ) {
-            WsMessage::ToolUseBlockStart {
+        );
+        match envelope(m) {
+            WsEnvelope::ToolUseBlockStart {
                 index,
                 tool_use_id,
                 name,
@@ -704,8 +594,10 @@ mod tests {
     fn tool_input_round_trips() {
         // partial_json carries raw partial-JSON fragments; verify
         // the field round-trips without modification.
-        match parse(r#"{"type":"tool_input","index":3,"partial_json":"{cmd:"}"#) {
-            WsMessage::ToolInput {
+        match envelope(parse(
+            r#"{"type":"tool_input","index":3,"partial_json":"{cmd:"}"#,
+        )) {
+            WsEnvelope::ToolInput {
                 index,
                 partial_json,
             } => {
@@ -716,85 +608,185 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
-    fn tool_use_block_start_and_tool_input_return_none_from_into_omega_event() {
-        assert!(
-            WsMessage::ToolUseBlockStart {
-                index: 0,
-                tool_use_id: "tu".into(),
-                name: "bash".into(),
-            }
-            .into_omega_event()
-            .is_none()
-        );
-        assert!(
-            WsMessage::ToolInput {
-                index: 0,
-                partial_json: "{\"a\"".into(),
-            }
-            .into_omega_event()
-            .is_none()
-        );
-    }
-
-    // ---- forwarded events ---------------------------------------------------
+    // ---- forwarded events route to the transparent Event arm ----------------
 
     #[wasm_bindgen_test]
-    fn user_message_event_round_trips() {
+    fn user_message_event_routes_to_event_arm() {
         let json = r#"{"type":"user_message","time":"2024-01-01T00:00:00.000Z","content":"hi"}"#;
         match parse(json) {
-            WsMessage::UserMessage(e) => assert_eq!(e.content, "hi"),
+            WsMessage::Event(OmegaEvent::UserMessage(e)) => assert_eq!(e.content, "hi"),
             other => panic!("wrong variant: {other:?}"),
         }
     }
 
     #[wasm_bindgen_test]
-    fn turn_end_event_round_trips() {
+    fn turn_end_event_routes_to_event_arm() {
         let json = r#"{
             "type":"turn_end","time":"2024-01-01T00:00:00.000Z",
             "metrics":{"inputTokens":1,"outputTokens":2}
         }"#;
         match parse(json) {
-            WsMessage::TurnEnd(e) => assert_eq!(e.metrics.output_tokens, 2),
+            WsMessage::Event(OmegaEvent::TurnEnd(e)) => assert_eq!(e.metrics.output_tokens, 2),
             other => panic!("wrong variant: {other:?}"),
         }
     }
 
-    // ---- into_omega_event ---------------------------------------------------
+    // ---- live monitor path (the §16 bug) -----------------------------------
 
     #[wasm_bindgen_test]
-    fn into_omega_event_returns_none_for_envelope() {
-        assert!(WsMessage::Ready.into_omega_event().is_none());
-        assert!(WsMessage::ResetDone.into_omega_event().is_none());
+    fn monitor_delivery_frame_routes_to_event_not_dropped() {
+        // Regression for §16: a `monitor_delivery` frame arriving LIVE used
+        // to fail to deserialise into the old per-event mirror and was
+        // silently dropped. It must now reach the transparent Event arm so
+        // the existing feed renderer shows it without a reload.
+        let json = r#"{"type":"monitor_delivery","time":"2024-01-01T00:00:00.000Z",
+            "items":[{"monitorId":"m1","lines":["hello","world"]}]}"#;
+        match parse(json) {
+            WsMessage::Event(OmegaEvent::MonitorDelivery(e)) => {
+                assert_eq!(e.items.len(), 1);
+                assert_eq!(e.items[0].monitor_id, "m1");
+                assert_eq!(
+                    e.items[0].lines,
+                    vec!["hello".to_owned(), "world".to_owned()]
+                );
+            }
+            other => panic!("monitor_delivery dropped / mis-routed: {other:?}"),
+        }
     }
 
     #[wasm_bindgen_test]
-    fn into_omega_event_returns_none_for_signals() {
-        let sig = WsMessage::Text {
-            index: 0,
-            text: "x".into(),
-        };
-        assert!(sig.into_omega_event().is_none());
+    fn unparseable_frame_fails_loudly() {
+        // An unknown `type` matches neither the envelope tags nor any
+        // OmegaEvent tag, so parsing must ERROR. `ws.rs` surfaces this error
+        // visibly (store error state) instead of silently dropping it.
+        let r: Result<WsMessage, _> =
+            serde_json::from_str(r#"{"type":"totally_unknown_frame","x":1}"#);
+        assert!(r.is_err(), "unknown frame must fail to parse");
+    }
+
+    // ---- drift guard: every OmegaEvent variant round-trips -----------------
+
+    /// Compile-time exhaustiveness guard. Every [`OmegaEvent`] variant must
+    /// map to its wire tag here. Adding a variant to `omega-types` WITHOUT
+    /// updating this match is a **compile error** — which is exactly the
+    /// signal that forces a matching sample into [`drift_guard_samples`].
+    /// This is the mechanism that makes a future omission impossible to
+    /// merge silently (§16 drift guard).
+    fn variant_tag(ev: &OmegaEvent) -> &'static str {
+        match ev {
+            OmegaEvent::SessionStarted(_) => "session_started",
+            OmegaEvent::ServerStarted(_) => "server_started",
+            OmegaEvent::ServerStopped(_) => "server_stopped",
+            OmegaEvent::UserMessage(_) => "user_message",
+            OmegaEvent::LlmCall(_) => "llm_call",
+            OmegaEvent::ToolCall(_) => "tool_call",
+            OmegaEvent::ToolResult(_) => "tool_result",
+            OmegaEvent::TurnEnd(_) => "turn_end",
+            OmegaEvent::LlmError(_) => "llm_error",
+            OmegaEvent::AgentError(_) => "agent_error",
+            OmegaEvent::TurnInterrupted(_) => "turn_interrupted",
+            OmegaEvent::LlmRetry(_) => "llm_retry",
+            OmegaEvent::ModelChanged(_) => "model_changed",
+            OmegaEvent::EffortChanged(_) => "effort_changed",
+            OmegaEvent::TransportError(_) => "transport_error",
+            OmegaEvent::ResumingSession(_) => "resuming_session",
+            OmegaEvent::SessionResumed(_) => "session_resumed",
+            OmegaEvent::HaltRequested(_) => "halt_requested",
+            OmegaEvent::TurnHalted(_) => "turn_halted",
+            OmegaEvent::TurnResumed(_) => "turn_resumed",
+            OmegaEvent::LlmResponseStarted(_) => "llm_response_started",
+            OmegaEvent::LlmResponseEnded(_) => "llm_response_ended",
+            OmegaEvent::LlmResponseDiscarded(_) => "llm_response_discarded",
+            OmegaEvent::TextBlock(_) => "text_block",
+            OmegaEvent::ThinkingBlock(_) => "thinking_block",
+            OmegaEvent::ToolUseBlock(_) => "tool_use_block",
+            OmegaEvent::ContextCompacted(_) => "context_compacted",
+            OmegaEvent::PythonReplBootstrapped(_) => "python_repl_bootstrapped",
+            OmegaEvent::HarnessRecovery(_) => "harness_recovery",
+            OmegaEvent::MonitorStarted(_) => "monitor_started",
+            OmegaEvent::MonitorDelivery(_) => "monitor_delivery",
+            OmegaEvent::MonitorStderr(_) => "monitor_stderr",
+            OmegaEvent::MonitorStopped(_) => "monitor_stopped",
+        }
+    }
+
+    /// One canonical wire-form sample per [`OmegaEvent`] variant, in the
+    /// camelCase shape the server emits. Built by deserialising the JSON the
+    /// server would send so the round-trip exercises the real wire format.
+    fn drift_guard_samples() -> Vec<OmegaEvent> {
+        const SAMPLES: &[&str] = &[
+            r#"{"type":"session_started","time":"t","sessionId":"00000000-0000-0000-0000-000000000000","path":"p","model":"m","effort":"e","systemPrompt":"sp","toolSelection":[]}"#,
+            r#"{"type":"server_started","time":"t"}"#,
+            r#"{"type":"server_stopped","time":"t","outcome":"clean"}"#,
+            r#"{"type":"user_message","time":"t","content":"c"}"#,
+            r#"{"type":"llm_call","time":"t","url":"u","model":"m","contextHashes":[],"cacheBreakpointIndex":null,"requestBytes":0}"#,
+            r#"{"type":"tool_call","time":"t","toolCallId":"tc","name":"n","input":{},"contextHash":"h"}"#,
+            r#"{"type":"tool_result","time":"t","toolCallId":"tc","name":"n","isError":false,"durationMs":1,"output":"o"}"#,
+            r#"{"type":"turn_end","time":"t","metrics":{"inputTokens":1,"outputTokens":2}}"#,
+            r#"{"type":"llm_error","time":"t","url":"u","error":"e"}"#,
+            r#"{"type":"agent_error","time":"t","error":"e"}"#,
+            r#"{"type":"turn_interrupted","time":"t"}"#,
+            r#"{"type":"llm_retry","time":"t","attempt":1,"waitMs":100,"error":"e"}"#,
+            r#"{"type":"model_changed","time":"t","model":"m"}"#,
+            r#"{"type":"effort_changed","time":"t","effort":"e"}"#,
+            r#"{"type":"transport_error","time":"t","error":"e"}"#,
+            r#"{"type":"resuming_session","time":"t","resumedFrom":"r","basis":"b"}"#,
+            r#"{"type":"session_resumed","time":"t","resumedFrom":"r","summary":"s"}"#,
+            r#"{"type":"halt_requested","time":"t"}"#,
+            r#"{"type":"turn_halted","time":"t"}"#,
+            r#"{"type":"turn_resumed","time":"t"}"#,
+            r#"{"type":"llm_response_started","time":"t"}"#,
+            r#"{"type":"llm_response_ended","time":"t","stopReason":"end_turn","usage":{"input_tokens":1,"output_tokens":2},"contextHash":"h"}"#,
+            r#"{"type":"llm_response_discarded","time":"t"}"#,
+            r#"{"type":"text_block","time":"t","text":"x","partial":false}"#,
+            r#"{"type":"thinking_block","time":"t","thinking":"x","partial":false}"#,
+            r#"{"type":"tool_use_block","time":"t","toolCallId":"tc","toolUseId":"tu","name":"n","input":{},"partial":false}"#,
+            r#"{"type":"context_compacted","time":"t","tokensBefore":1,"tokensAfter":2,"summaryTokens":3}"#,
+            r#"{"type":"python_repl_bootstrapped","time":"t","durationMs":1,"success":true,"stderrExcerpt":""}"#,
+            r#"{"type":"harness_recovery","time":"t","kind":"empty_response_continuation","content":"c"}"#,
+            r#"{"type":"monitor_started","id":"m1","description":"d","command":"c","time":"t"}"#,
+            r#"{"type":"monitor_delivery","time":"t","items":[{"monitorId":"m1","lines":["l"]}]}"#,
+            r#"{"type":"monitor_stderr","id":"m1","chunk":"c","time":"t"}"#,
+            r#"{"type":"monitor_stopped","id":"m1","reason":"process_exited","time":"t"}"#,
+        ];
+        SAMPLES
+            .iter()
+            .map(|j| serde_json::from_str(j).unwrap_or_else(|e| panic!("drift sample {j}: {e}")))
+            .collect()
     }
 
     #[wasm_bindgen_test]
-    fn into_omega_event_returns_none_for_envelope_agent_error() {
-        let env = WsMessage::AgentError(AgentErrorPayload::Envelope {
-            message: "boom".into(),
-        });
-        assert!(env.into_omega_event().is_none());
-    }
-
-    #[wasm_bindgen_test]
-    fn into_omega_event_yields_typed_event_for_event_agent_error() {
-        let ev = WsMessage::AgentError(AgentErrorPayload::Event(AgentErrorEvent {
-            time: "t".into(),
-            error: "e".into(),
-        }));
-        assert!(matches!(
-            ev.into_omega_event(),
-            Some(OmegaEvent::AgentError(_))
-        ));
+    fn drift_guard_every_omega_event_variant_round_trips_through_wsmessage() {
+        let samples = drift_guard_samples();
+        // One sample per variant. `variant_tag`'s match is the compile-time
+        // guard; this count is the runtime reminder to add the sample too.
+        assert_eq!(
+            samples.len(),
+            33,
+            "add a drift-guard sample for the new OmegaEvent variant"
+        );
+        let mut seen = std::collections::BTreeSet::new();
+        for ev in samples {
+            let tag = variant_tag(&ev);
+            assert!(seen.insert(tag), "duplicate drift sample for tag {tag}");
+            // The server forwards events generically:
+            //   omega-server::ws_message → serde_json::to_value(item).
+            let wire = serde_json::to_value(&ev)
+                .unwrap_or_else(|e| panic!("{tag} failed to serialize: {e}"));
+            // The frontend parse path.
+            let parsed: WsMessage = serde_json::from_value(wire)
+                .unwrap_or_else(|e| panic!("{tag} failed to parse into WsMessage: {e}"));
+            match parsed {
+                WsMessage::Event(ev2) => {
+                    assert_eq!(variant_tag(&ev2), tag, "{tag} routed to the wrong variant");
+                    assert_eq!(ev2, ev, "{tag} did not round-trip by value");
+                }
+                WsMessage::Envelope(env) => {
+                    panic!("{tag} mis-routed to the envelope arm: {env:?}")
+                }
+            }
+        }
+        assert_eq!(seen.len(), 33, "all 33 variant tags must be distinct");
     }
 
     // ---- ClientFrame --------------------------------------------------------
@@ -842,6 +834,48 @@ mod tests {
         };
         let json = serde_json::to_string(&frame).unwrap();
         assert_eq!(json, r#"{"type":"reset"}"#);
+    }
+
+    #[wasm_bindgen_test]
+    fn client_frame_reset_emits_allow_dirty_when_true() {
+        // Guards `is_false`: a `true` flag MUST survive serialization. If
+        // `is_false` ever returned `true` unconditionally the field would be
+        // skipped here and this assertion would fail.
+        let frame = ClientFrame::Reset {
+            model: None,
+            effort: None,
+            allow_dirty: true,
+            tool_selection: None,
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(json, r#"{"type":"reset","allowDirty":true}"#);
+    }
+
+    #[wasm_bindgen_test]
+    fn client_frame_reset_omits_allow_dirty_when_false() {
+        // Guards `is_false`: a `false` flag MUST be omitted. If `is_false`
+        // returned `false` unconditionally the field would leak onto the wire.
+        let frame = ClientFrame::Reset {
+            model: None,
+            effort: None,
+            allow_dirty: false,
+            tool_selection: None,
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(json, r#"{"type":"reset"}"#);
+    }
+
+    #[wasm_bindgen_test]
+    fn client_frame_resume_session_emits_allow_dirty_when_true() {
+        let frame = ClientFrame::ResumeSession {
+            session_dir: "abc".into(),
+            allow_dirty: true,
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"resume_session","sessionDir":"abc","allowDirty":true}"#
+        );
     }
 
     #[wasm_bindgen_test]

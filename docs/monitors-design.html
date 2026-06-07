@@ -59,7 +59,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 <h1>Async Monitors for Omega</h1>
 <p class="meta">
   <span class="tag tag-status">CORE SHIPPED</span>
-  <span class="tag tag-status">NEXT: §16 ELIMINATE THE WS MIRROR</span><br/>
+  <span class="tag tag-status">§16 WS MIRROR ELIMINATED</span><br/>
   Design &amp; cold-start resume document. Self-contained: a future session with
   <em>no prior context</em> should be able to read this and either start
   implementing or continue the discussion.
@@ -75,14 +75,16 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   control reconciliation) are all landed. Three orthogonal controls exist:
   <strong>Queue</strong> (Send, always enqueues), <strong>Halt</strong> (stop at
   the next seam and wait), <strong>Abort</strong> (cancel the in-flight block).
-  Sections&nbsp;1&ndash;15 are kept as the <em>architectural record</em> of how
+  Sections&nbsp;1&ndash;16 are kept as the <em>architectural record</em> of how
   and why &mdash; not as a to-do list.</p>
-  <p><strong>The live frontier is §16.</strong> User testing surfaced one
+  <p><strong>&sect;16 is now shipped too.</strong> User testing surfaced one
   concrete defect (monitor deliveries invisible in the live UI) whose root cause
-  is structural: the frontend re-declares a hand-maintained <code>WsMessage</code>
-  enum that mirrors the canonical <code>OmegaEvent</code> with no compiler link
-  between them. §16 records the diagnosis and the planned fix &mdash;
-  <strong>eliminate the mirror</strong>. Start there.</p>
+  was structural: the frontend re-declared a hand-maintained <code>WsMessage</code>
+  enum that mirrored the canonical <code>OmegaEvent</code> with no compiler link
+  between them. The mirror is gone &mdash; event frames now deserialize straight
+  into <code>OmegaEvent</code>, a drift-guard test keeps it that way, and
+  unparseable frames surface visibly. &sect;16 records the diagnosis and the
+  fix.</p>
 </div>
 
 <div class="toc">
@@ -103,7 +105,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <li><a href="#open">Open items (deferred, non-blocking)</a></li>
     <li><a href="#codefacts">Codebase facts gathered</a></li>
     <li><a href="#unified">Unified input model (implemented)</a></li>
-    <li><a href="#mirror"><strong>Eliminate the WS-message mirror (next — frontend protocol projection)</strong></a></li>
+    <li><a href="#mirror"><strong>Eliminate the WS-message mirror (shipped — frontend protocol projection)</strong></a></li>
   </ol></div>
 
 <h2 id="goal">1. Goal &amp; motivation</h2>
@@ -1294,9 +1296,11 @@ incremental on top of it.</p>
 
 <h2 id="mirror">16. Eliminate the WS-message mirror (frontend protocol projection)</h2>
 
-<p><strong>This is the live frontier.</strong> Everything above is shipped; this
-section is the one piece of open implementation work. It begins with a concrete
-defect found in user testing and ends in a structural fix.</p>
+<p><strong>Shipped.</strong> This section records a concrete defect found in user
+testing and the structural fix that closed it. It is retained as an architectural
+record alongside &sect;1&ndash;15: the diagnosis explains <em>why</em> the
+frontend now deserializes straight into <code>OmegaEvent</code>, and the
+drift-guard test it installed is what keeps the class of bug from recurring.</p>
 
 <div class="box warn">
   <h4>Symptom (observed in user testing)</h4>
@@ -1356,58 +1360,68 @@ present; by enumeration the four monitor events are the <em>only</em> gap today.
   &ldquo;loud schema change&rdquo; rule.</p>
 </div>
 
-<h3>The fix &mdash; eliminate the mirror (the real correction)</h3>
-<p>Patching the four missing variants by hand restores monitors but leaves the
-structure that produced the bug: the <em>next</em> event variant added to
-<code>omega-types</code> will drift again, just as silently. The decided fix is
+<h3>The fix &mdash; eliminate the mirror (the correction that shipped)</h3>
+<p>Patching the four missing variants by hand would have restored monitors but
+left the structure that produced the bug: the <em>next</em> event variant added to
+<code>omega-types</code> would drift again, just as silently. The shipped fix is
 structural:</p>
 <ol>
-  <li><strong>Deserialize event-carrying frames straight into
-    <code>omega_types::OmegaEvent</code>.</strong> Stop re-declaring the ~30 event
-    variants in the frontend. The canonical type already derives serde and is
-    already a dependency (the History path uses it). Adding a variant to
-    <code>omega-types</code> then flows to the UI with no frontend edit &mdash; the
-    mirror can no longer be incomplete.</li>
-  <li><strong>Keep only the genuinely frontend-specific frames in a thin
-    envelope.</strong> Envelope / signal / ephemeral messages that are <em>not</em>
-    <code>OmegaEvent</code>s &mdash; <code>Ready</code>, streaming
+  <li><strong>Event-carrying frames deserialize straight into
+    <code>omega_types::OmegaEvent</code>.</strong> The ~30 event variants are no
+    longer re-declared in the frontend. <code>WsMessage</code> is now an
+    <code>#[serde(untagged)]</code> enum with exactly two arms
+    (<small class="path">frontends/leptos/src/protocol.rs</small>):
+    <code>Event(OmegaEvent)</code> for every canonical event, and
+    <code>Envelope(WsEnvelope)</code> for the rest. Adding a variant to
+    <code>omega-types</code> now flows to the UI with no frontend edit &mdash; the
+    feed / <code>event_view</code> renderers are already exhaustive over
+    <code>OmegaEvent</code>, so the new frame parses into the <code>Event</code>
+    arm and renders for free.</li>
+  <li><strong>Only the genuinely frontend-specific frames remain hand-written.</strong>
+    <code>WsEnvelope</code> is a thin internally-tagged enum holding the
+    non-<code>OmegaEvent</code> frames &mdash; <code>Ready</code>, streaming
     <code>Text</code>/<code>Thinking</code> deltas, <code>MonitorRoster</code>,
-    <code>InputQueue</code>, <code>History</code>, session-info, reset/ack frames
-    &mdash; stay as a small hand-written enum. The likely shape: an outer enum that
-    is <em>either</em> one of those envelope frames <em>or</em> a transparent
-    <code>OmegaEvent</code> (e.g. via <code>#[serde(untagged)]</code> over the two,
-    or an explicit <code>Event(OmegaEvent)</code> arm fed by the server's existing
-    flat <code>type</code>-tagged projection). Whoever implements decides the exact
-    serde wiring; the invariant is: <em>no event variant is ever re-typed in the
-    frontend.</em></li>
-  <li><strong>Make parse failure loud, not swallowed.</strong> In
-    <code>ws.rs</code>, an unparseable frame must surface visibly (an error block /
-    dev banner), not just <code>warn!</code>. A dropped frame is diagnostic signal;
-    it must not be invisible.</li>
-  <li><strong>Install a drift-guard test.</strong> Round-trip <em>every</em>
+    <code>InputQueue</code>, <code>History</code>, session-info, reset/ack, and the
+    envelope-level <code>AgentError { message }</code>. The only tag shared with an
+    <code>OmegaEvent</code> is <code>agent_error</code>; the two are disambiguated by
+    field shape (the envelope form requires <code>message</code>, the event form
+    requires <code>time</code>/<code>error</code>), and the untagged enum tries the
+    envelope arm first then falls through to <code>OmegaEvent</code>. The invariant
+    holds: <em>no event variant is re-typed in the frontend.</em></li>
+  <li><strong>Parse failure is loud, not swallowed.</strong> In
+    <code>ws.rs</code>, an unparseable frame now calls
+    <code>store.record_frame_parse_error(&hellip;)</code>, which pushes a message
+    onto <code>transport_errors</code>; a new <code>TransportErrorBanner</code>
+    (<small class="path">frontends/leptos/src/lib.rs</small>) renders that state as a
+    visible red banner. A dropped frame is diagnostic signal &mdash; it is no longer
+    invisible.</li>
+  <li><strong>A drift-guard test is installed.</strong> It round-trips <em>every</em>
     <code>OmegaEvent</code> variant through the server's serialization
     (<code>serde_json::to_value</code>) &rarr; the frontend parse &rarr; back to
-    <code>OmegaEvent</code>, asserting each yields the matching variant. This turns
-    any future omission into a red test the moment it is introduced &mdash; it would
-    have caught this one. This guard is what answers the broader worry
-    (&ldquo;do we have comparable omissions for other recently-introduced
-    events?&rdquo;) permanently, rather than by one-time enumeration.</li>
+    <code>OmegaEvent</code>, asserting each yields the matching variant. A
+    compile-time exhaustive <code>match</code> (<code>variant_tag</code>) makes
+    adding a variant to <code>omega-types</code> without extending the guard a build
+    error &mdash; so a future omission cannot merge. It would have caught this one.</li>
 </ol>
 
 <div class="box ok">
-  <h4>Acceptance criteria</h4>
+  <h4>Acceptance criteria &mdash; all met</h4>
   <ul>
-    <li>Monitor deliveries appear in the UI <strong>live</strong> (not only after
-      reload), verified against a <code>tail -F</code> monitor.</li>
-    <li>The frontend no longer re-declares per-event variants for the event-carrying
-      frames; adding a variant to <code>omega-types</code> requires <em>no</em>
-      frontend enum edit to display it.</li>
-    <li>An unparseable WS frame produces a <strong>visible</strong> signal, not a
-      silent drop.</li>
-    <li>A drift-guard test exercises all <code>OmegaEvent</code> variants and fails
-      if any cannot round-trip through the frontend.</li>
-    <li>The gate is green; targeted <code>cargo mutants</code> on the changed files
-      leaves no survivors (or documented skips), with a named Justfile recipe.</li>
+    <li>&#10003; Monitor deliveries appear in the UI <strong>live</strong> &mdash;
+      <code>monitor_delivery</code> frames parse into
+      <code>Event(OmegaEvent::MonitorDelivery)</code> and reach the existing feed
+      renderer instead of being dropped.</li>
+    <li>&#10003; The frontend no longer re-declares per-event variants; adding a
+      variant to <code>omega-types</code> requires <em>no</em> frontend enum edit to
+      display it.</li>
+    <li>&#10003; An unparseable WS frame produces a <strong>visible</strong> signal
+      (<code>TransportErrorBanner</code>), not a silent drop.</li>
+    <li>&#10003; A drift-guard test exercises all <code>OmegaEvent</code> variants and
+      fails (at compile time, via the exhaustive <code>variant_tag</code> match) if
+      any cannot round-trip through the frontend.</li>
+    <li>&#10003; The gate is green; targeted <code>cargo mutants</code>
+      (<code>just mutants-ws-protocol</code> plus scoped runs on the changed
+      <code>store.rs</code>/<code>sessions.rs</code> functions) leaves no survivors.</li>
   </ul>
 </div>
 

@@ -31,7 +31,7 @@ use omega_types::OmegaEvent;
 use serde::Serialize;
 
 use crate::protocol::{
-    AgentErrorPayload, InputQueueItem, MonitorRosterEntry, SessionInfoPayload, TurnState, WsMessage,
+    InputQueueItem, MonitorRosterEntry, SessionInfoPayload, TurnState, WsEnvelope, WsMessage,
 };
 
 // ---------------------------------------------------------------------------
@@ -39,11 +39,11 @@ use crate::protocol::{
 // ---------------------------------------------------------------------------
 
 /// One in-progress tool-use block that has been opened by a
-/// [`WsMessage::ToolUseBlockStart`] frame but not yet sealed by a
+/// [`WsEnvelope::ToolUseBlockStart`] frame but not yet sealed by a
 /// [`OmegaEvent::ToolUseBlock`].
 ///
 /// `partial_json` is the concatenation of every
-/// [`WsMessage::ToolInput`] delta received so far.  It is **not**
+/// [`WsEnvelope::ToolInput`] delta received so far.  It is **not**
 /// guaranteed to be valid JSON until the block is sealed; render it
 /// verbatim during streaming.
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -92,11 +92,11 @@ pub struct SessionState {
     /// from pre-migration behaviour in that case.
     pub agent_time_zone: String,
     /// Latest ephemeral monitor roster snapshot from the server.
-    /// Updated by [`WsMessage::MonitorRoster`] frames; never persisted.
+    /// Updated by [`WsEnvelope::MonitorRoster`] frames; never persisted.
     /// See [`SessionStore::roster`].
     pub roster: Vec<MonitorRosterEntry>,
     /// Latest ephemeral input-queue snapshot from the server.
-    /// Updated by [`WsMessage::InputQueue`] frames; never persisted.
+    /// Updated by [`WsEnvelope::InputQueue`] frames; never persisted.
     /// See [`SessionStore::input_queue`].
     pub input_queue: Vec<InputQueueItem>,
 }
@@ -144,11 +144,11 @@ pub struct SessionStore {
     /// previous session's zone before its own `SessionStarted` arrives.
     pub agent_time_zone: RwSignal<String>,
     /// Latest ephemeral monitor roster snapshot from the server.
-    /// Replaced on every [`WsMessage::MonitorRoster`] frame; never
+    /// Replaced on every [`WsEnvelope::MonitorRoster`] frame; never
     /// persisted to events.  The badge and modal read from this signal.
     pub roster: RwSignal<Vec<MonitorRosterEntry>>,
     /// Latest ephemeral input-queue snapshot from the server.
-    /// Replaced on every [`WsMessage::InputQueue`] frame; never
+    /// Replaced on every [`WsEnvelope::InputQueue`] frame; never
     /// persisted to events.  The queue badge and panel read from this
     /// signal.  U1: human-only; monitor sources join in U2.
     pub input_queue: RwSignal<Vec<InputQueueItem>>,
@@ -207,16 +207,32 @@ impl SessionStore {
     /// - Forwarded `OmegaEvent` (incl. `agent_error` event payload) →
     ///   `events.push(ev)` plus turn-state and streaming-accumulator
     ///   side effects keyed off the event type.
-    pub fn apply(&self, msg: WsMessage) {
-        match msg {
-            WsMessage::Ready => self.connected.set(true),
+    pub fn apply(&self, msg: impl Into<WsMessage>) {
+        match msg.into() {
+            // Forwarded canonical event → append + replay side effects.
+            // §16: every `OmegaEvent` reaches the UI through this one arm,
+            // so a new event variant needs no edit here to be displayed.
+            WsMessage::Event(event) => {
+                apply_event_side_effects(self, &event);
+                self.events.update(|v| v.push(event));
+            }
+            // Frontend-specific frame (envelope / signal / ephemeral snapshot).
+            WsMessage::Envelope(env) => self.apply_envelope(env),
+        }
+    }
 
-            WsMessage::SessionInfo(payload) => {
+    /// Apply a frontend-specific [`WsEnvelope`] frame. These frames are
+    /// never [`OmegaEvent`]s and are never appended to `events`.
+    fn apply_envelope(&self, env: WsEnvelope) {
+        match env {
+            WsEnvelope::Ready => self.connected.set(true),
+
+            WsEnvelope::SessionInfo(payload) => {
                 self.turn_state.set(payload.turn_state);
                 self.session_info.set(Some(payload));
             }
 
-            WsMessage::History(payload) => {
+            WsEnvelope::History(payload) => {
                 // Pick up the session's IANA TZ from the first
                 // `SessionStarted` in the history batch, falling back
                 // to `"UTC"` if (a) the batch is empty / lacks one or
@@ -240,7 +256,7 @@ impl SessionStore {
                 self.streaming_tool_use.set(BTreeMap::new());
             }
 
-            WsMessage::ResetDone => {
+            WsEnvelope::ResetDone => {
                 self.events.set(Vec::new());
                 self.streaming.set(false);
                 self.streaming_text.set(BTreeMap::new());
@@ -262,17 +278,17 @@ impl SessionStore {
                 self.input_queue.set(Vec::new());
             }
 
-            WsMessage::AgentError(AgentErrorPayload::Envelope { message }) => {
+            WsEnvelope::AgentError { message } => {
                 self.transport_errors.update(|v| v.push(message));
             }
 
-            WsMessage::SessionDeleted { .. } | WsMessage::SessionRenamed { .. } => {
+            WsEnvelope::SessionDeleted { .. } | WsEnvelope::SessionRenamed { .. } => {
                 // Picker-level side effects belong to 3.2's session-list
                 // store. The conversation store is unaffected by other
                 // sessions' fates; intentional no-op here.
             }
 
-            WsMessage::PendingChangesWarning { intent } => {
+            WsEnvelope::PendingChangesWarning { intent } => {
                 // Dirty-tree gate fired before the server destroyed the
                 // active session.  The conversation store is unchanged;
                 // we just record the intent so the dirty modal can
@@ -280,7 +296,7 @@ impl SessionStore {
                 self.pending_changes_warning.set(Some(intent));
             }
 
-            WsMessage::MonitorRoster { monitors } => {
+            WsEnvelope::MonitorRoster { monitors } => {
                 // Ephemeral roster snapshot from the server.  Replace the
                 // stored slice so reactive consumers (badge, modal) see
                 // the latest state.  This frame is NEVER passed to
@@ -288,7 +304,7 @@ impl SessionStore {
                 self.roster.set(monitors);
             }
 
-            WsMessage::InputQueue { items } => {
+            WsEnvelope::InputQueue { items } => {
                 // Ephemeral queue snapshot from the server.  Replace the
                 // stored slice so reactive consumers (queue badge, panel)
                 // see the latest pending items.  This frame is NEVER passed
@@ -296,19 +312,19 @@ impl SessionStore {
                 self.input_queue.set(items);
             }
 
-            WsMessage::Text { index, text } => {
+            WsEnvelope::Text { index, text } => {
                 self.streaming_text.update(|m| {
                     m.entry(index).or_default().push_str(&text);
                 });
             }
 
-            WsMessage::Thinking { index, text } => {
+            WsEnvelope::Thinking { index, text } => {
                 self.streaming_thinking.update(|m| {
                     m.entry(index).or_default().push_str(&text);
                 });
             }
 
-            WsMessage::ThinkingBlockComplete { index, .. } => {
+            WsEnvelope::ThinkingBlockComplete { index, .. } => {
                 // SCHEMA-8 Phase 5a — drain only the slot this signal
                 // refers to.  The subsequent `ThinkingBlock` event
                 // (handled in `apply_event_side_effects`) is the
@@ -320,7 +336,7 @@ impl SessionStore {
                 });
             }
 
-            WsMessage::ToolUseBlockStart {
+            WsEnvelope::ToolUseBlockStart {
                 index,
                 tool_use_id,
                 name,
@@ -340,7 +356,7 @@ impl SessionStore {
                 });
             }
 
-            WsMessage::ToolInput {
+            WsEnvelope::ToolInput {
                 index,
                 partial_json,
             } => {
@@ -355,16 +371,20 @@ impl SessionStore {
                         .push_str(&partial_json);
                 });
             }
-
-            // All other variants carry an `OmegaEvent` payload (incl. the
-            // `agent_error` *event* shape).
-            other => {
-                if let Some(event) = other.into_omega_event() {
-                    apply_event_side_effects(self, &event);
-                    self.events.update(|v| v.push(event));
-                }
-            }
         }
+    }
+
+    /// Record a WebSocket frame that could not be parsed into a
+    /// [`WsMessage`]. §16: an unparseable frame must NOT be silently
+    /// dropped — it is surfaced as a transport error (store error state)
+    /// so the [`crate::TransportErrorBanner`] makes it visible instead of
+    /// only logging a `warn!` to the JS console.
+    pub fn record_frame_parse_error(&self, raw: &str, err: &str) {
+        // Keep the raw frame short so a flood of bad frames can't blow up
+        // the banner; the full frame is still in the JS console log.
+        let preview: String = raw.chars().take(200).collect();
+        self.transport_errors
+            .update(|v| v.push(format!("unparseable WS frame ({err}): {preview}")));
     }
 
     /// Untracked snapshot of every field. Used for the debug view's
@@ -535,14 +555,15 @@ mod tests {
     }
 
     fn user_msg(content: &str) -> WsMessage {
-        WsMessage::UserMessage(UserMessageEvent {
+        OmegaEvent::UserMessage(UserMessageEvent {
             time: "2024-01-01T00:00:00.000Z".into(),
             content: content.into(),
         })
+        .into()
     }
 
     fn turn_end() -> WsMessage {
-        WsMessage::TurnEnd(TurnEndEvent {
+        OmegaEvent::TurnEnd(TurnEndEvent {
             time: "2024-01-01T00:00:00.000Z".into(),
             metrics: TurnMetrics {
                 input_tokens: 1,
@@ -551,10 +572,11 @@ mod tests {
                 cache_read_tokens: None,
             },
         })
+        .into()
     }
 
     fn session_info(turn_state: TurnState) -> WsMessage {
-        WsMessage::SessionInfo(SessionInfoPayload {
+        WsEnvelope::SessionInfo(SessionInfoPayload {
             dir: "d".into(),
             model: "m".into(),
             effort: "e".into(),
@@ -563,6 +585,7 @@ mod tests {
             has_pending_changes: false,
             name: None,
         })
+        .into()
     }
 
     // ---- envelope reducer rules ---------------------------------------------
@@ -572,7 +595,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             assert!(!s.snapshot().connected);
-            s.apply(WsMessage::Ready);
+            s.apply(WsEnvelope::Ready);
             assert!(s.snapshot().connected);
         });
     }
@@ -593,16 +616,16 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             // Pre-populate accumulators so the reset is observable.
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "leftover".into(),
             });
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 0,
                 text: "x".into(),
             });
 
-            let frame = WsMessage::History(crate::protocol::HistoryPayload {
+            let frame = WsEnvelope::History(crate::protocol::HistoryPayload {
                 events: vec![OmegaEvent::TurnEnd(TurnEndEvent {
                     time: "2024-01-01T00:00:00.000Z".into(),
                     metrics: TurnMetrics {
@@ -625,6 +648,25 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn history_adopts_agent_time_zone_from_session_started_event() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            // A History batch whose SessionStarted carries a non-UTC zone must
+            // re-home the store's clock to that zone (not fall back to UTC).
+            let started: OmegaEvent = serde_json::from_str(
+                r#"{"type":"session_started","time":"2024-01-01T00:00:00.000Z","sessionId":"00000000-0000-0000-0000-000000000000","path":"/p","model":"m","effort":"high","systemPrompt":"sp","toolSelection":[],"agentTimeZone":"Europe/Berlin"}"#,
+            )
+            .unwrap();
+            assert!(matches!(started, OmegaEvent::SessionStarted(_)));
+            s.apply(WsEnvelope::History(crate::protocol::HistoryPayload {
+                events: vec![started],
+                streaming: false,
+            }));
+            assert_eq!(s.snapshot().agent_time_zone, "Europe/Berlin");
+        });
+    }
+
+    #[wasm_bindgen_test]
     fn reset_done_wipes_events_and_returns_to_idle() {
         with_owner(|| {
             let s = SessionStore::new();
@@ -632,7 +674,7 @@ mod tests {
             assert!(!s.snapshot().events.is_empty());
             assert_eq!(s.snapshot().turn_state, TurnState::Running);
 
-            s.apply(WsMessage::ResetDone);
+            s.apply(WsEnvelope::ResetDone);
             let snap = s.snapshot();
             assert!(snap.events.is_empty());
             assert!(!snap.streaming);
@@ -646,9 +688,9 @@ mod tests {
     fn envelope_agent_error_appends_to_transport_errors_not_events() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::AgentError(AgentErrorPayload::Envelope {
+            s.apply(WsEnvelope::AgentError {
                 message: "bad frame".into(),
-            }));
+            });
             let snap = s.snapshot();
             assert_eq!(snap.transport_errors, vec!["bad frame".to_string()]);
             assert!(snap.events.is_empty());
@@ -659,16 +701,45 @@ mod tests {
     fn event_agent_error_appends_to_events_not_transport_errors() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::AgentError(AgentErrorPayload::Event(
-                AgentErrorEvent {
-                    time: "2024-01-01T00:00:00.000Z".into(),
-                    error: "oops".into(),
-                },
-            )));
+            s.apply(OmegaEvent::AgentError(AgentErrorEvent {
+                time: "2024-01-01T00:00:00.000Z".into(),
+                error: "oops".into(),
+            }));
             let snap = s.snapshot();
             assert_eq!(snap.events.len(), 1);
             assert!(matches!(snap.events[0], OmegaEvent::AgentError(_)));
             assert!(snap.transport_errors.is_empty());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn record_frame_parse_error_surfaces_a_visible_transport_error() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.record_frame_parse_error(r#"{"type":"weird"}"#, "unknown variant");
+            let snap = s.snapshot();
+            assert_eq!(snap.transport_errors.len(), 1);
+            let msg = &snap.transport_errors[0];
+            assert!(msg.contains("unparseable WS frame"), "got: {msg}");
+            assert!(msg.contains("unknown variant"), "got: {msg}");
+            assert!(msg.contains(r#"{"type":"weird"}"#), "got: {msg}");
+            // Never silently dropped onto the event stream.
+            assert!(snap.events.is_empty());
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn record_frame_parse_error_truncates_the_raw_frame_preview() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            let huge = "x".repeat(1000);
+            s.record_frame_parse_error(&huge, "boom");
+            let snap = s.snapshot();
+            let msg = &snap.transport_errors[0];
+            // Only the 200-char preview is kept (plus the fixed prefix), so a
+            // flood of bad frames can't blow up the banner.
+            assert!(msg.len() < 300, "preview not truncated: len={}", msg.len());
+            assert_eq!(msg.matches('x').count(), 200);
         });
     }
 
@@ -681,15 +752,15 @@ mod tests {
         // in its own slot.
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "Hello".into(),
             });
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: ", world".into(),
             });
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 2,
                 text: "other".into(),
             });
@@ -709,11 +780,11 @@ mod tests {
     fn thinking_signals_concatenate_into_streaming_thinking() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 1,
                 text: "abc".into(),
             });
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 1,
                 text: "def".into(),
             });
@@ -729,15 +800,15 @@ mod tests {
         // SCHEMA-8 Phase 5a — drains only the matching index slot.
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 0,
                 text: "a".into(),
             });
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 1,
                 text: "b".into(),
             });
-            s.apply(WsMessage::ThinkingBlockComplete {
+            s.apply(WsEnvelope::ThinkingBlockComplete {
                 index: 0,
                 signature: "sig".into(),
             });
@@ -769,7 +840,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "partial".into(),
             });
@@ -787,7 +858,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::TurnInterrupted(TurnInterruptedEvent {
+            s.apply(OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                 time: "t".into(),
                 reason: Some(omega_types::InterruptReason::Aborted),
             }));
@@ -802,7 +873,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::HaltRequested(HaltRequestedEvent {
+            s.apply(OmegaEvent::HaltRequested(HaltRequestedEvent {
                 time: "t".into(),
             }));
             assert_eq!(s.snapshot().turn_state, TurnState::HaltRequested);
@@ -814,7 +885,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::TurnHalted(TurnHaltedEvent { time: "t".into() }));
+            s.apply(OmegaEvent::TurnHalted(TurnHaltedEvent { time: "t".into() }));
             assert_eq!(s.snapshot().turn_state, TurnState::Halted);
         });
     }
@@ -824,9 +895,9 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::TurnHalted(TurnHaltedEvent { time: "t".into() }));
+            s.apply(OmegaEvent::TurnHalted(TurnHaltedEvent { time: "t".into() }));
             assert_eq!(s.snapshot().turn_state, TurnState::Halted);
-            s.apply(WsMessage::TurnResumed(TurnResumedEvent {
+            s.apply(OmegaEvent::TurnResumed(TurnResumedEvent {
                 time: "t2".into(),
             }));
             assert_eq!(s.snapshot().turn_state, TurnState::Running);
@@ -850,17 +921,17 @@ mod tests {
             // abandoned by retry, and the partial-block events have
             // already been emitted but the deltas haven't been
             // cleared on this code path yet).
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "leftover".into(),
             });
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 0,
                 text: "stale".into(),
             });
             assert!(!s.snapshot().streaming_text.is_empty());
             assert!(!s.snapshot().streaming_thinking.is_empty());
-            s.apply(WsMessage::LlmResponseStarted(LlmResponseStartedEvent {
+            s.apply(OmegaEvent::LlmResponseStarted(LlmResponseStartedEvent {
                 time: "t".into(),
             }));
             let snap = s.snapshot();
@@ -888,7 +959,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "hello".into(),
             });
@@ -896,7 +967,7 @@ mod tests {
                 s.snapshot().streaming_text.get(&0).map(String::as_str),
                 Some("hello"),
             );
-            s.apply(WsMessage::TextBlock(TextBlockEvent {
+            s.apply(OmegaEvent::TextBlock(TextBlockEvent {
                 time: "t".into(),
                 text: "hello world".into(),
                 partial: false,
@@ -923,15 +994,15 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "first".into(),
             });
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 2,
                 text: "second".into(),
             });
-            s.apply(WsMessage::TextBlock(TextBlockEvent {
+            s.apply(OmegaEvent::TextBlock(TextBlockEvent {
                 time: "t".into(),
                 text: "first".into(),
                 partial: false,
@@ -957,7 +1028,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "abandoned".into(),
             });
@@ -965,7 +1036,7 @@ mod tests {
                 s.snapshot().streaming_text.get(&0).map(String::as_str),
                 Some("abandoned"),
             );
-            s.apply(WsMessage::TextBlock(TextBlockEvent {
+            s.apply(OmegaEvent::TextBlock(TextBlockEvent {
                 time: "t".into(),
                 text: "abandoned".into(),
                 partial: true,
@@ -979,7 +1050,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 0,
                 text: "musing".into(),
             });
@@ -987,7 +1058,7 @@ mod tests {
                 s.snapshot().streaming_thinking.get(&0).map(String::as_str),
                 Some("musing"),
             );
-            s.apply(WsMessage::ThinkingBlock(ThinkingBlockEvent {
+            s.apply(OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
                 time: "t".into(),
                 thinking: "musing complete".into(),
                 signature: Some("sig".into()),
@@ -1009,7 +1080,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 0,
                 text: "abandoned".into(),
             });
@@ -1017,7 +1088,7 @@ mod tests {
                 s.snapshot().streaming_thinking.get(&0).map(String::as_str),
                 Some("abandoned"),
             );
-            s.apply(WsMessage::ThinkingBlock(ThinkingBlockEvent {
+            s.apply(OmegaEvent::ThinkingBlock(ThinkingBlockEvent {
                 time: "t".into(),
                 thinking: "abandoned".into(),
                 signature: None,
@@ -1033,7 +1104,7 @@ mod tests {
     fn tool_use_block_start_inserts_slot() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::ToolUseBlockStart {
+            s.apply(WsEnvelope::ToolUseBlockStart {
                 index: 1,
                 tool_use_id: "tu_abc".into(),
                 name: "bash".into(),
@@ -1050,16 +1121,16 @@ mod tests {
     fn tool_input_appends_partial_json() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::ToolUseBlockStart {
+            s.apply(WsEnvelope::ToolUseBlockStart {
                 index: 1,
                 tool_use_id: "tu_abc".into(),
                 name: "bash".into(),
             });
-            s.apply(WsMessage::ToolInput {
+            s.apply(WsEnvelope::ToolInput {
                 index: 1,
                 partial_json: r#"{"cmd": "ec"#.into(),
             });
-            s.apply(WsMessage::ToolInput {
+            s.apply(WsEnvelope::ToolInput {
                 index: 1,
                 partial_json: r#"ho hi}"#.into(),
             });
@@ -1074,17 +1145,17 @@ mod tests {
         use omega_types::events::ToolUseBlockEvent;
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::ToolUseBlockStart {
+            s.apply(WsEnvelope::ToolUseBlockStart {
                 index: 1,
                 tool_use_id: "tu_abc".into(),
                 name: "bash".into(),
             });
-            s.apply(WsMessage::ToolInput {
+            s.apply(WsEnvelope::ToolInput {
                 index: 1,
                 partial_json: r#"{"cmd":"echo"}"#.into(),
             });
             assert!(!s.snapshot().streaming_tool_use.is_empty());
-            s.apply(WsMessage::ToolUseBlock(ToolUseBlockEvent {
+            s.apply(OmegaEvent::ToolUseBlock(ToolUseBlockEvent {
                 time: "t".into(),
                 tool_call_id: "tc_abc".into(),
                 tool_use_id: "tu_abc".into(),
@@ -1107,13 +1178,13 @@ mod tests {
         // drain any lingering tool-use slots.
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::ToolUseBlockStart {
+            s.apply(WsEnvelope::ToolUseBlockStart {
                 index: 0,
                 tool_use_id: "tu_1".into(),
                 name: "bash".into(),
             });
             assert!(!s.snapshot().streaming_tool_use.is_empty());
-            s.apply(WsMessage::LlmResponseEnded(LlmResponseEndedEvent {
+            s.apply(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
                 time: "t".into(),
                 stop_reason: "end_turn".into(),
                 cleared_tool_uses: None,
@@ -1159,15 +1230,15 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "leftover text".into(),
             });
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 0,
                 text: "leftover thinking".into(),
             });
-            s.apply(WsMessage::LlmResponseEnded(LlmResponseEndedEvent {
+            s.apply(OmegaEvent::LlmResponseEnded(LlmResponseEndedEvent {
                 time: "t".into(),
                 stop_reason: "end_turn".into(),
                 cleared_tool_uses: None,
@@ -1211,17 +1282,17 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::Text {
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "in flight".into(),
             });
-            s.apply(WsMessage::Thinking {
+            s.apply(WsEnvelope::Thinking {
                 index: 0,
                 text: "in flight".into(),
             });
-            s.apply(WsMessage::LlmResponseDiscarded(LlmResponseDiscardedEvent {
-                time: "t".into(),
-            }));
+            s.apply(OmegaEvent::LlmResponseDiscarded(
+                LlmResponseDiscardedEvent { time: "t".into() },
+            ));
             let snap = s.snapshot();
             assert!(snap.streaming_text.is_empty());
             assert!(snap.streaming_thinking.is_empty());
@@ -1240,7 +1311,7 @@ mod tests {
             let s = SessionStore::new();
             s.apply(session_info(TurnState::Idle));
             assert_eq!(s.snapshot().session_info.unwrap().model, "m");
-            s.apply(WsMessage::ModelChanged(ModelChangedEvent {
+            s.apply(OmegaEvent::ModelChanged(ModelChangedEvent {
                 time: "t".into(),
                 model: "claude-opus-4-8".into(),
             }));
@@ -1254,7 +1325,7 @@ mod tests {
             let s = SessionStore::new();
             s.apply(session_info(TurnState::Idle));
             assert_eq!(s.snapshot().session_info.unwrap().effort, "e");
-            s.apply(WsMessage::EffortChanged(EffortChangedEvent {
+            s.apply(OmegaEvent::EffortChanged(EffortChangedEvent {
                 time: "t".into(),
                 effort: "high".into(),
             }));
@@ -1270,7 +1341,7 @@ mod tests {
         // SessionInfoPayload with default fields.
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::ModelChanged(ModelChangedEvent {
+            s.apply(OmegaEvent::ModelChanged(ModelChangedEvent {
                 time: "t".into(),
                 model: "claude-opus-4-8".into(),
             }));
@@ -1282,7 +1353,7 @@ mod tests {
     fn effort_changed_with_no_session_info_is_a_noop() {
         with_owner(|| {
             let s = SessionStore::new();
-            s.apply(WsMessage::EffortChanged(EffortChangedEvent {
+            s.apply(OmegaEvent::EffortChanged(EffortChangedEvent {
                 time: "t".into(),
                 effort: "high".into(),
             }));
@@ -1297,7 +1368,7 @@ mod tests {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(session_info(TurnState::Idle));
-            s.apply(WsMessage::ModelChanged(ModelChangedEvent {
+            s.apply(OmegaEvent::ModelChanged(ModelChangedEvent {
                 time: "t".into(),
                 model: "claude-opus-4-8".into(),
             }));

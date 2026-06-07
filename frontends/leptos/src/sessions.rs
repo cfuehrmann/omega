@@ -5,7 +5,7 @@
 //!
 //! Different lifecycles:
 //!
-//! - `SessionStore` (conversation): reset on every `WsMessage::ResetDone`;
+//! - `SessionStore` (conversation): reset on every `WsEnvelope::ResetDone`;
 //!   only ever describes the *currently active* session.
 //! - `SessionListStore` (this module): survives across resets; a list of
 //!   *all* sessions known to the server, mutated reactively as
@@ -28,7 +28,7 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::WsMessage;
+use crate::protocol::{WsEnvelope, WsMessage};
 
 // ---------------------------------------------------------------------------
 // Wire shape
@@ -260,17 +260,17 @@ impl SessionListStore {
     /// Both write-arms bump [`fetch_generation`] so any in-flight
     /// `GET /api/sessions` whose generation predates the mutation is
     /// dropped on completion (see struct-level docs).
-    pub fn apply(&self, msg: &WsMessage) {
-        match msg {
-            WsMessage::SessionRenamed { session_dir, name } => {
+    pub fn apply(&self, msg: impl Into<WsMessage>) {
+        match msg.into() {
+            WsMessage::Envelope(WsEnvelope::SessionRenamed { session_dir, name }) => {
                 self.sessions.update(|v| {
-                    apply_renamed(v, session_dir, name);
+                    apply_renamed(v, &session_dir, &name);
                 });
                 self.bump_generation();
             }
-            WsMessage::SessionDeleted { session_dir } => {
+            WsMessage::Envelope(WsEnvelope::SessionDeleted { session_dir }) => {
                 self.sessions.update(|v| {
-                    apply_deleted(v, session_dir);
+                    apply_deleted(v, &session_dir);
                 });
                 self.bump_generation();
             }
@@ -474,7 +474,7 @@ mod tests {
         with_owner(|| {
             let s = SessionListStore::new();
             s.set_sessions(vec![item("a", None), item("b", None)]);
-            s.apply(&WsMessage::SessionRenamed {
+            s.apply(WsEnvelope::SessionRenamed {
                 session_dir: "b".into(),
                 name: "beta".into(),
             });
@@ -489,7 +489,7 @@ mod tests {
         with_owner(|| {
             let s = SessionListStore::new();
             s.set_sessions(vec![item("a", None), item("b", None)]);
-            s.apply(&WsMessage::SessionDeleted {
+            s.apply(WsEnvelope::SessionDeleted {
                 session_dir: "a".into(),
             });
             let snap = s.snapshot();
@@ -507,9 +507,9 @@ mod tests {
             let s = SessionListStore::new();
             let before = vec![item("a", Some("alpha")), item("b", None)];
             s.set_sessions(before.clone());
-            s.apply(&WsMessage::Ready);
-            s.apply(&WsMessage::ResetDone);
-            s.apply(&WsMessage::Text {
+            s.apply(WsEnvelope::Ready);
+            s.apply(WsEnvelope::ResetDone);
+            s.apply(WsEnvelope::Text {
                 index: 0,
                 text: "x".into(),
             });
@@ -594,7 +594,7 @@ mod tests {
 
             let token = s.begin_loading(); // captured at fetch start
             // While the fetch is in flight, server broadcasts a delete:
-            s.apply(&WsMessage::SessionDeleted {
+            s.apply(WsEnvelope::SessionDeleted {
                 session_dir: "b".into(),
             });
             // Fetch returns with the *pre-delete* snapshot:
@@ -613,7 +613,7 @@ mod tests {
             let s = SessionListStore::new();
             let token = s.begin_loading();
             // Server-confirmed delete races in:
-            s.apply(&WsMessage::SessionDeleted {
+            s.apply(WsEnvelope::SessionDeleted {
                 session_dir: "x".into(),
             });
             // Stale fetch error tries to land:
@@ -641,7 +641,7 @@ mod tests {
             let s = SessionListStore::new();
             s.set_sessions(vec![item("a", None)]);
             let before = s.fetch_generation.get_untracked();
-            s.apply(&WsMessage::SessionRenamed {
+            s.apply(WsEnvelope::SessionRenamed {
                 session_dir: "a".into(),
                 name: "alpha".into(),
             });
@@ -659,7 +659,7 @@ mod tests {
             let s = SessionListStore::new();
             s.set_sessions(vec![item("a", None)]);
             let before = s.fetch_generation.get_untracked();
-            s.apply(&WsMessage::SessionDeleted {
+            s.apply(WsEnvelope::SessionDeleted {
                 session_dir: "a".into(),
             });
             let after = s.fetch_generation.get_untracked();
@@ -677,8 +677,8 @@ mod tests {
         with_owner(|| {
             let s = SessionListStore::new();
             let before = s.fetch_generation.get_untracked();
-            s.apply(&WsMessage::Ready);
-            s.apply(&WsMessage::ResetDone);
+            s.apply(WsEnvelope::Ready);
+            s.apply(WsEnvelope::ResetDone);
             assert_eq!(s.fetch_generation.get_untracked(), before);
         });
     }

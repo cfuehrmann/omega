@@ -147,13 +147,21 @@ impl WsClient {
                 };
                 match serde_json::from_str::<WsMessage>(&text) {
                     Ok(msg) => client.state.with_value(|s| {
-                        // Picker store sees envelope events first (immutable
-                        // borrow); then conversation store consumes the frame.
-                        s.list_store.apply(&msg);
+                        // Picker store sees envelope events first; then the
+                        // conversation store consumes the frame.
+                        s.list_store.apply(msg.clone());
                         s.store.apply(msg);
                     }),
                     Err(e) => {
-                        leptos::logging::warn!("ws frame parse error: {e}; raw={text}");
+                        // A frame the frontend cannot decode must never be
+                        // silently dropped: it means the canonical schema
+                        // drifted past what this build understands. Surface
+                        // it loudly in the store (visible error banner) *and*
+                        // the dev console.
+                        leptos::logging::error!("ws frame parse error: {e}; raw={text}");
+                        client.state.with_value(|s| {
+                            s.store.record_frame_parse_error(&text, &e.to_string())
+                        });
                     }
                 }
             })

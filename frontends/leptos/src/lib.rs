@@ -145,6 +145,7 @@ pub fn App() -> impl IntoView {
                 |si| si.as_ref().map(|s| s.dir.clone()).unwrap_or_default()
             )
         >
+            <TransportErrorBanner />
             <SessionPicker />
             <ConversationFeed />
             <UsagePanel />
@@ -229,6 +230,36 @@ mod tests {
         assert!(!should_auto_open_picker(false, true));
         assert!(!should_auto_open_picker(true, false));
         assert!(!should_auto_open_picker(false, false));
+    }
+}
+
+/// Always-visible banner that surfaces transport-level errors held in
+/// [`SessionStore::transport_errors`] — in particular WS frames that
+/// could not be parsed into a [`crate::protocol::WsMessage`] (§16).
+/// Without this, an unparseable frame would only reach the dev console;
+/// the debug panel is stripped from release builds, so the store error
+/// state would otherwise be invisible to operators.
+#[component]
+#[mutants::skip] // view-only banner; behaviour covered by SessionStore::record_frame_parse_error tests + e2e.
+fn TransportErrorBanner() -> impl IntoView {
+    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
+    view! {
+        <Show when=move || !store.transport_errors.with(Vec::is_empty) fallback=|| ()>
+            <div
+                data-testid="transport-error-banner"
+                role="alert"
+                style="background:#5c1a1a;color:#ffd7d7;padding:8px 12px;font-family:monospace;font-size:13px;border-bottom:2px solid #ff5252;"
+            >
+                {move || {
+                    store
+                        .transport_errors
+                        .get()
+                        .into_iter()
+                        .map(|m| view! { <div>{m}</div> })
+                        .collect_view()
+                }}
+            </div>
+        </Show>
     }
 }
 
