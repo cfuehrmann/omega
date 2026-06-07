@@ -9,22 +9,22 @@
 //!       └── QueueModal ← full-viewport modal toggled by the badge
 //! ```
 //!
-//! ## Discoverability design (§15 first-cut queue visualisation)
+//! ## Discoverability design (§15 queue visualisation)
 //!
-//! **Decision: badge visible only when the queue is non-empty.**
+//! **Decision: badge ALWAYS VISIBLE (never hidden when empty).**
 //!
-//! Rationale: the input queue is almost always empty — items are
-//! processed at the very next Gather seam, typically within
-//! milliseconds of enqueue.  An always-visible "0 pending" badge would
-//! add permanent visual noise for a state that is never interesting.
-//! When something *is* pending (e.g. a message sent while the agent is
-//! mid-turn), the badge appears immediately and draws the operator's
-//! attention — exactly when a review instrument is needed.
+//! Rationale: the queue panel is a *review instrument*. Hiding its
+//! entry point when the queue is empty makes the feature
+//! undiscoverable and untestable — the empty state is exactly when a
+//! reviewer needs to be able to find the control and confirm it works.
+//! This is the same lesson learned from the monitor badge (which was
+//! also initially gated and then made always-visible in Phase 5).
 //!
-//! The "persistent entry point" is therefore the *session* itself: the
-//! badge appears as soon as there is anything to review, remains
-//! visible and clickable throughout, and disappears once the queue
-//! drains.  No further UI decoration is needed for the empty state.
+//! The idle label is `"Queue"` so the badge reads naturally when
+//! nothing is pending, and `"N pending"` when items are waiting for
+//! delivery at the next Gather seam. Clicking on the always-visible
+//! badge opens the modal, which shows an explicit empty-state message
+//! when the queue is empty.
 //!
 //! Monitor sources join the queue in U2; the `source` field is already
 //! structured to carry them (currently always `"human"`).
@@ -103,13 +103,13 @@ pub fn pending_count(items: &[InputQueueItem]) -> usize {
 
 /// Label text for the queue badge.
 ///
-/// Returns `"1 pending"` / `"N pending"` for non-zero counts.
-/// (The badge is hidden entirely when count is zero, so a label for
-/// that case is not needed; an empty string is returned for safety.)
+/// Returns `"Queue"` when the queue is empty (idle / discoverable state)
+/// so the badge always reads naturally.  Returns `"1 pending"` /
+/// `"N pending"` when items are waiting for delivery.
 #[must_use]
 pub fn badge_label(count: usize) -> String {
     match count {
-        0 => String::new(),
+        0 => "Queue".to_owned(),
         1 => "1 pending".to_owned(),
         n => format!("{n} pending"),
     }
@@ -132,11 +132,12 @@ pub fn format_source(source: &str) -> String {
 // QueueBadge component
 // ---------------------------------------------------------------------------
 
-/// Header badge showing the number of items pending in the input queue.
+/// Header badge showing the number of items pending in the input queue —
+/// **always visible** (never gated on queue size).
 ///
-/// **Visible only when non-empty** (see module docs for the discoverability
-/// rationale).  When the queue is non-empty, clicking the badge opens
-/// [`QueueModal`].
+/// Shows `"Queue"` when idle and `"N pending"` when items are waiting.
+/// Clicking the badge opens [`QueueModal`], which shows an explicit
+/// empty-state message when nothing is pending.
 ///
 /// Marked `#[mutants::skip]` — reactive / DOM body is exercised by the
 /// snapshot tests; the pure derivation functions (`pending_count`,
@@ -150,18 +151,16 @@ pub fn QueueBadge() -> impl IntoView {
     let count = Memo::new(move |_| store.input_queue.with(|q| pending_count(q)));
 
     view! {
-        <Show when=move || count.get() != 0 fallback=|| ()>
-            <button
-                class="queue-badge"
-                data-testid="queue-badge"
-                title="Items pending delivery to the agent — click to review"
-                on:click=move |_| panel_open.toggle()
-            >
-                <span class="queue-badge-count" data-testid="queue-badge-count">
-                    {move || badge_label(count.get())}
-                </span>
-            </button>
-        </Show>
+        <button
+            class="queue-badge"
+            data-testid="queue-badge"
+            title="Items pending delivery to the agent — click to review"
+            on:click=move |_| panel_open.toggle()
+        >
+            <span class="queue-badge-count" data-testid="queue-badge-count">
+                {move || badge_label(count.get())}
+            </span>
+        </button>
         <QueueModal />
     }
 }
@@ -313,8 +312,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn badge_label_zero_returns_empty_string() {
-        assert_eq!(badge_label(0), "");
+    fn badge_label_zero_returns_idle_label() {
+        assert_eq!(badge_label(0), "Queue");
     }
 
     #[wasm_bindgen_test]

@@ -1177,10 +1177,12 @@ mod monitors_panel_snapshots {
 // forgot the CSS" failure mode.
 
 // ---------------------------------------------------------------------------
-// QueueBadge + QueueModal (§15 U1 first-cut queue visualisation)
+// QueueBadge + QueueModal (§15 queue visualisation)
 // ---------------------------------------------------------------------------
 //
-// Discoverability decision: badge is visible ONLY when the queue is non-empty.
+// Discoverability decision: badge is ALWAYS VISIBLE (never hidden when empty).
+// Same lesson as the monitor badge: hiding the entry point when idle makes
+// the feature undiscoverable and untestable.  Idle label: "Queue".
 // Monitor sources join the queue in U2; U1 is human-only.
 
 mod queue_panel_snapshots {
@@ -1206,17 +1208,25 @@ mod queue_panel_snapshots {
 
     // ── Badge ────────────────────────────────────────────────────────────
 
-    /// Empty queue — badge must NOT render (visible-when-non-empty design).
+    /// Empty queue — badge must ALWAYS render, showing the idle label
+    /// "Queue" so the feature remains discoverable and testable.
     #[test]
-    fn snap_queue_badge_hidden_when_empty() {
+    fn snap_queue_badge_always_visible_when_empty() {
         let html = render(|| {
             install_queue_context(vec![]);
             view! { <QueueBadge /> }
         });
         assert!(
-            !html.contains("data-testid=\"queue-badge\""),
-            "badge must be hidden when queue is empty; got: {html}"
+            html.contains("data-testid=\"queue-badge\""),
+            "badge must be visible even when queue is empty; got: {html}"
         );
+        assert!(
+            html.contains("Queue"),
+            "idle label must be 'Queue' when no items are pending; got: {html}"
+        );
+        // The badge span shows "Queue" not "N pending" when empty; the snapshot
+        // below pins the exact rendered HTML so regressions are caught structurally.
+        insta::assert_snapshot!(html);
     }
 
     /// Non-empty queue — badge must render.
