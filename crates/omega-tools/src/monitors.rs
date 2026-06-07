@@ -68,6 +68,26 @@ pub(crate) fn now_iso() -> String {
         .to_string()
 }
 
+/// Sink the [`MonitorManager`] pushes monitor *deliveries* into once the
+/// agent's `run()` loop is live (§15 U2 — Unified Input Model).
+///
+/// Implemented in `omega-agent` to enqueue monitor stdout/stop onto the
+/// shared `InputQueue`, so monitor output flows through the *same* inbox as
+/// human input.  `omega-tools` sits one crate below `omega-agent` and so
+/// cannot name `InputQueue`/`InputItem` directly — this trait is the
+/// decoupling seam.
+///
+/// `stderr` is deliberately **absent**: it is non-projected diagnostic
+/// output that never becomes `role:user` content, so it stays on the
+/// manager's pending queue ([`PendingItem::Stderr`]) and is drained directly
+/// into a `MonitorStderr` event by the agent loop.
+pub trait MonitorSink: Send + Sync + std::fmt::Debug {
+    /// One stdout line from monitor `monitor_id`.
+    fn deliver_stdout(&self, monitor_id: &str, line: String);
+    /// Monitor `monitor_id` self-terminated (waiter-observed natural exit).
+    fn deliver_stopped(&self, monitor_id: &str, reason: MonitorStopReason, exit_code: Option<i32>);
+}
+
 /// Lifecycle status of a monitor in the roster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorStatus {
@@ -168,6 +188,11 @@ struct ManagerInner {
     monitors: HashMap<String, MonitorEntry>,
     pending: VecDeque<PendingItem>,
     next_seq: u64,
+    /// Delivery sink for stdout/stop, attached by the agent's `run()` loop
+    /// (§15 U2).  `None` before attach (and in `omega-tools` unit tests):
+    /// stdout/stop then fall back to the pending queue.  `Some` after
+    /// attach: stdout/stop are pushed onto the shared `InputQueue` instead.
+    sink: Option<Arc<dyn MonitorSink>>,
 }
 
 /// Returned by [`MonitorManager::spawn`] so the caller can build the
@@ -207,6 +232,7 @@ impl MonitorManager {
                 monitors: HashMap::new(),
                 pending: VecDeque::new(),
                 next_seq: 0,
+                sink: None,
             }),
             item_notify: Notify::new(),
             roster_notify: Notify::new(),
@@ -226,6 +252,19 @@ impl MonitorManager {
     #[must_use]
     pub fn notify_roster(&self) -> &Notify {
         &self.roster_notify
+    }
+
+    /// Attach the delivery [`MonitorSink`] (§15 U2).  Called once by the
+    /// agent's `run()` loop at start-up.  After this, monitor stdout lines
+    /// and natural-stop notifications are routed to the sink (the shared
+    /// `InputQueue`) instead of the manager's own pending queue.
+    pub fn attach_sink(&self, sink: Arc<dyn MonitorSink>) {
+        self.lock().sink = Some(sink);
+    }
+
+    /// Clone out the currently attached sink, if any.
+    fn sink(&self) -> Option<Arc<dyn MonitorSink>> {
+        self.lock().sink.clone()
     }
 
     /// Number of monitors currently believed `Running`.  The loop parks iff
@@ -373,16 +412,28 @@ impl MonitorManager {
     }
 
     fn push_stdout(&self, id: &str, line: String) {
-        let mut inner = self.lock();
-        if let Some(entry) = inner.monitors.get_mut(id) {
-            entry.fired_count += 1;
+        let sink = {
+            let mut inner = self.lock();
+            if let Some(entry) = inner.monitors.get_mut(id) {
+                entry.fired_count += 1;
+            }
+            inner.sink.clone()
+        };
+        // §15 U2: with a sink attached, stdout flows onto the shared
+        // InputQueue (whose own notify wakes the parked loop).  Without a
+        // sink (unit tests) fall back to the pending queue + item_notify.
+        if let Some(sink) = sink {
+            sink.deliver_stdout(id, line);
+        } else {
+            {
+                let mut inner = self.lock();
+                inner.pending.push_back(PendingItem::Stdout {
+                    monitor_id: id.to_owned(),
+                    line,
+                });
+            }
+            self.item_notify.notify_one();
         }
-        inner.pending.push_back(PendingItem::Stdout {
-            monitor_id: id.to_owned(),
-            line,
-        });
-        drop(inner);
-        self.item_notify.notify_one();
     }
 
     fn push_stderr(&self, id: &str, chunk: String) {
@@ -429,15 +480,21 @@ impl MonitorManager {
     /// Enqueue a `Stopped` item for a self-terminated monitor and wake the
     /// parked loop.  Called by the waiter only after a natural transition.
     fn enqueue_stopped(&self, id: &str, reason: MonitorStopReason, exit_code: Option<i32>) {
-        {
-            let mut inner = self.lock();
-            inner.pending.push_back(PendingItem::Stopped {
-                monitor_id: id.to_owned(),
-                reason,
-                exit_code,
-            });
+        // §15 U2: route a natural stop to the sink (shared InputQueue) when
+        // attached; otherwise fall back to the pending queue + item_notify.
+        if let Some(sink) = self.sink() {
+            sink.deliver_stopped(id, reason, exit_code);
+        } else {
+            {
+                let mut inner = self.lock();
+                inner.pending.push_back(PendingItem::Stopped {
+                    monitor_id: id.to_owned(),
+                    reason,
+                    exit_code,
+                });
+            }
+            self.item_notify.notify_one();
         }
-        self.item_notify.notify_one();
     }
 
     /// Stop one monitor: kill its whole process tree and mark it Stopped.
@@ -730,6 +787,112 @@ mod tests {
             .await,
             "fired_count must reach 3, got roster {:?}",
             mgr.roster()
+        );
+        mgr.shutdown();
+    }
+
+    /// Recording [`MonitorSink`] for the U2 routing test.
+    #[derive(Debug, Default)]
+    struct RecordingSink {
+        stdout: std::sync::Mutex<Vec<(String, String)>>,
+        stopped: std::sync::Mutex<Vec<(String, MonitorStopReason, Option<i32>)>>,
+    }
+    impl MonitorSink for RecordingSink {
+        fn deliver_stdout(&self, monitor_id: &str, line: String) {
+            self.stdout
+                .lock()
+                .unwrap()
+                .push((monitor_id.to_owned(), line));
+        }
+        fn deliver_stopped(
+            &self,
+            monitor_id: &str,
+            reason: MonitorStopReason,
+            exit_code: Option<i32>,
+        ) {
+            self.stopped
+                .lock()
+                .unwrap()
+                .push((monitor_id.to_owned(), reason, exit_code));
+        }
+    }
+
+    /// §15 U2: with a sink attached, stdout + stop route to the sink (the
+    /// inbox), NOT the manager's pending queue.  This exercises the
+    /// `if let Some(sink)` branch of `push_stdout` / `enqueue_stopped`; the
+    /// other tests (no sink) cover the pending-queue fallback `else` branch.
+    #[tokio::test]
+    async fn attached_sink_receives_stdout_and_stop_bypassing_pending_queue() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let sink = Arc::new(RecordingSink::default());
+        mgr.attach_sink(Arc::clone(&sink) as Arc<dyn MonitorSink>);
+
+        let r = execute_tool(
+            "monitor",
+            json!({ "description": "d", "command": "printf 'one\\ntwo\\n'" }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        let id = started_event(&r).id.clone();
+
+        // stdout lines reach the SINK.
+        assert!(
+            poll_until(DL, || sink.stdout.lock().unwrap().len() >= 2).await,
+            "sink must receive both stdout lines, got {:?}",
+            sink.stdout.lock().unwrap()
+        );
+        let lines: Vec<String> = sink
+            .stdout
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(mid, _)| *mid == id)
+            .map(|(_, l)| l.clone())
+            .collect();
+        assert_eq!(lines, vec!["one", "two"], "sink stdout in order");
+
+        // natural exit → the stop routes to the SINK.
+        assert!(
+            poll_until(DL, || sink
+                .stopped
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(m, ..)| *m == id))
+            .await,
+            "sink must receive the stop, got {:?}",
+            sink.stopped.lock().unwrap()
+        );
+        let stop = sink
+            .stopped
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(m, ..)| *m == id)
+            .cloned()
+            .expect("stop recorded");
+        assert!(
+            matches!(stop.1, MonitorStopReason::ProcessExited),
+            "clean exit → ProcessExited, got {:?}",
+            stop.1
+        );
+        assert_eq!(stop.2, Some(0), "clean exit code");
+
+        // fired_count is still bumped on the manager even via the sink path.
+        assert!(
+            mgr.roster()
+                .iter()
+                .any(|m| m.id == id && m.fired_count == 2),
+            "fired_count must reach 2 via the sink path, roster {:?}",
+            mgr.roster()
+        );
+        // And nothing leaked into the pending queue (sink supersedes it).
+        assert!(
+            mgr.drain_pending()
+                .iter()
+                .all(|i| !matches!(i, PendingItem::Stdout { .. } | PendingItem::Stopped { .. })),
+            "stdout/stop must NOT land in the pending queue when a sink is attached"
         );
         mgr.shutdown();
     }

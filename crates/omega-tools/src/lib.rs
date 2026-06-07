@@ -31,7 +31,9 @@ mod tools;
 
 pub use cap_and_tee::{CappedOutput, TruncationBias, cap_and_tee};
 pub use format::format_tool_call;
-pub use monitors::{MonitorInfo, MonitorManager, MonitorStatus, PendingItem, SpawnedMonitor};
+pub use monitors::{
+    MonitorInfo, MonitorManager, MonitorSink, MonitorStatus, PendingItem, SpawnedMonitor,
+};
 pub use python_repl::PythonRepl;
 pub use python_repl::{DEFAULT_TIMEOUT_SECS, MAX_OUTPUT_CHARS, MAX_OUTPUT_LINES, MAX_TIMEOUT_SECS};
 pub use schemas::{

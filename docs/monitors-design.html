@@ -612,7 +612,7 @@ MonitorStopped { id, reason, exit_code, time }
   <h4>Deferred (not yet scheduled): kill button / KillMonitor</h4>
   <ul>
     <li><strong>Kill button / <code>KillMonitor</code> control frame.</strong> When picked up it needs: a new <code>MonitorManager</code> method that does the Running&rarr;Stopped status CAS, kills the process tree, enqueues a <code>PendingItem::Stopped{ reason: StoppedByUser, &hellip; }</code> (so the loop drains it into <code>MonitorStopped(StoppedByUser)</code> &mdash; single-writer preserved), and fires the roster-changed notify (so a loop parked on the last monitor wakes). Note <code>MonitorStopReason::StoppedByUser</code> exists in the schema but is currently unused. A <code>ClientFrame::KillMonitor{id}</code> would dispatch to it (mirror <code>handle_abort</code>). <strong>Deferred (not yet scheduled).</strong></li>
-    <li><strong>Live pending-queue visualisation:</strong> first-cut <span class="keep">✔ IMPLEMENTED (§15 U1, human-only)</span>; monitor sources join in U2.  Sub-seam real-time streaming remains deferred.</li>
+    <li><strong>Live pending-queue visualisation:</strong> first-cut <span class="keep">✔ IMPLEMENTED (§15 U1, human-only)</span>; monitor sources <span class="keep">✔ IMPLEMENTED (§15 U2)</span> &mdash; <code>source = "monitor:&lt;id&gt;"</code>, WS push on monitor enqueue via <code>InputQueue::on_change</code>.  Sub-seam real-time streaming remains deferred.</li>
     <li><strong>Real-time (per-line) badge updates</strong> &mdash; seam-aligned updates are sufficient now. <strong>Deferred.</strong></li>
   </ul>
 </div>
@@ -939,7 +939,7 @@ unification, not a patch.</p>
 <h3>Queue visualisation &mdash; a first-class UX goal (review instrument)</h3>
 <div class="box callout">
 <p>The queue is the <em>fundamental</em> construct; the <strong>monitor roster is really one filtered view onto it</strong> (&ldquo;what's live/queued from monitor sources&rdquo;). So a <strong>queue visualisation is arguably the more important UX</strong> than the monitor roster &mdash; and it is a <strong>critical instrument for human review</strong>: seeing what is queued (and from which <code>source</code> &mdash; human, monitor, &hellip;), pending delivery at the next seam, is how the reviewer stays oriented while steering.</p>
-<p><strong>Status: <span class="keep">✔ IMPLEMENTED (U1, human-only)</span>.</strong>  The first-cut queue visualisation shipped as part of the U1 inbox-to-<code>InputQueue</code> refactor.  Foundation: <code>InputQueue</code> (<small class="path">crates/omega-agent/src/input_queue.rs</small>) replaces the bare <code>mpsc</code> channel; <code>push()</code> returns an atomic snapshot, <code>pop().await</code> parks on empty (one item per Gather, U1 semantics preserved), <code>snapshot()</code> is always inspectable.  Transport: <code>WsMessage::InputQueue&nbsp;{ items:&nbsp;Vec&lt;InputQueueItem&gt; }</code> &mdash; transport-only, <strong>never written to <code>events.jsonl</code></strong> &mdash; pushed (a)&nbsp;on enqueue (carrying the just-pushed item atomically), (b)&nbsp;after each <code>UserMessage</code> event (queue drained), (c)&nbsp;on connect/reset/resume.  UI: <code>QueueBadge</code>&nbsp;/&nbsp;<code>QueueModal</code> (<small class="path">frontends/leptos/src/queue_panel.rs</small>); <code>input_queue:&nbsp;RwSignal</code> in <code>SessionStore</code>; cleared on <code>ResetDone</code>.</p><p><strong>Discoverability decision (updated): badge is <em>always visible</em></strong> &mdash; never hidden when empty.  The queue panel is a <em>review instrument</em>; hiding its entry point on an empty queue makes the feature undiscoverable and untestable.  The empty state is exactly when a reviewer needs to be able to find the control and confirm it works &mdash; the same lesson learned from the monitor badge (initially gated, made always-visible in Phase&nbsp;5).  Idle label: <code>&ldquo;Queue&rdquo;</code>; live label: <code>&ldquo;N pending&rdquo;</code>.  Clicking the always-visible badge opens the modal, which shows an explicit empty-state message when nothing is pending.  <strong>Monitor sources join in U2</strong> (the <code>source</code> field and <code>InputItem</code> enum are structured to admit <code>Monitor(id)</code> variants without schema changes).</p>
+<p><strong>Status: <span class="keep">✔ IMPLEMENTED (U1, human-only)</span>.</strong>  The first-cut queue visualisation shipped as part of the U1 inbox-to-<code>InputQueue</code> refactor.  Foundation: <code>InputQueue</code> (<small class="path">crates/omega-agent/src/input_queue.rs</small>) replaces the bare <code>mpsc</code> channel; <code>push()</code> returns an atomic snapshot, <code>pop().await</code> parks on empty (one item per Gather, U1 semantics preserved), <code>snapshot()</code> is always inspectable.  Transport: <code>WsMessage::InputQueue&nbsp;{ items:&nbsp;Vec&lt;InputQueueItem&gt; }</code> &mdash; transport-only, <strong>never written to <code>events.jsonl</code></strong> &mdash; pushed (a)&nbsp;on enqueue (carrying the just-pushed item atomically), (b)&nbsp;after each <code>UserMessage</code> event (queue drained), (c)&nbsp;on connect/reset/resume.  UI: <code>QueueBadge</code>&nbsp;/&nbsp;<code>QueueModal</code> (<small class="path">frontends/leptos/src/queue_panel.rs</small>); <code>input_queue:&nbsp;RwSignal</code> in <code>SessionStore</code>; cleared on <code>ResetDone</code>.</p><p><strong>Discoverability decision (updated): badge is <em>always visible</em></strong> &mdash; never hidden when empty.  The queue panel is a <em>review instrument</em>; hiding its entry point on an empty queue makes the feature undiscoverable and untestable.  The empty state is exactly when a reviewer needs to be able to find the control and confirm it works &mdash; the same lesson learned from the monitor badge (initially gated, made always-visible in Phase&nbsp;5).  Idle label: <code>&ldquo;Queue&rdquo;</code>; live label: <code>&ldquo;N pending&rdquo;</code>.  Clicking the always-visible badge opens the modal, which shows an explicit empty-state message when nothing is pending.  <strong>Monitor sources joined in U2</strong> <span class="keep">&#x2713; IMPLEMENTED</span>: monitor items carry <code>source = "monitor:&lt;id&gt;"</code> in <code>snapshot()</code>, and an <code>InputQueue::on_change</code> callback (registered server-side in <code>spawn_run_task</code>) pushes the <code>input_queue</code> WS frame on <em>monitor</em> enqueue too &mdash; not only human.</p>
 <p class="meta">It also subsumes the monitor-roster UX direction: once the queue is visualised by source, the monitor roster can be a saved filter rather than a bespoke panel.</p>
 </div>
 
@@ -1120,6 +1120,65 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
   <br/>The model/effort handlers were moved off the agent lock onto a lock-free
   <code>ModelEffortHandle</code> (shared cells + event store) so they no longer
   contend with the run task that owns the lock for the session's life.</div>
+<div class="box ok"><strong>U2 &mdash; IMPLEMENTED.</strong>
+  Monitors are live again, delivering through the <em>same</em>
+  <code>InputQueue</code> inbox as human input.
+  <br/><strong>InputItem shape:</strong> two new variants &mdash;
+  <code>InputItem::MonitorStdout&nbsp;{ monitor_id, lines:&nbsp;Vec&lt;String&gt; }</code>
+  and <code>InputItem::MonitorStopped&nbsp;{ monitor_id, reason, exit_code }</code>.
+  <code>MonitorStderr</code> is deliberately <em>absent</em>: it is non-projected
+  diagnostic output that never becomes <code>role:user</code> content, so it stays
+  a direct <code>MonitorStderr</code> event and never enters the queue.
+  <br/><strong>Manager &rarr; inbox:</strong> <code>omega-tools</code> sits one crate
+  <em>below</em> <code>omega-agent</code> and cannot name <code>InputQueue</code>, so
+  the <code>MonitorManager</code> pushes through a decoupling trait
+  <code>MonitorSink</code> (<code>deliver_stdout</code> / <code>deliver_stopped</code>).
+  <code>omega-agent</code>'s <code>InboxSink</code> implements it by enqueuing
+  <code>InputItem::Monitor*</code> onto the inbox; <code>Agent::run</code> attaches it
+  synchronously before the loop. The stdout reader / exit waiter thus supersede the
+  manager's own pending-queue delivery path (kept only as a sink-less fallback for
+  <code>omega-tools</code> unit tests, plus the diagnostic <code>Stderr</code> drain).
+  <br/><strong>Two-seam drain:</strong> a non-blocking
+  <code>InputQueue::drain_pending()&nbsp;-&gt;&nbsp;Vec&lt;InputItem&gt;</code> drains
+  <em>all</em> currently-pending items at <strong>both</strong> seams;
+  <code>pop().await</code> still parks one item for the idle wait.
+  <strong>Seam&nbsp;B survives</strong> &mdash; after each <code>tool_result</code> the
+  loop drains the inbox and injects each item <em>between</em> the tool result and the
+  next model call (not held to <code>end_turn</code>). Each drained item routes via its
+  own eventful <code>inject_*</code> helper
+  (<code>MonitorStdout&rarr;inject_monitor_delivery</code>,
+  <code>MonitorStopped&rarr;inject_monitor_stopped</code>,
+  <code>Human&rarr;inject_user_message</code>) &mdash; <strong>one role:user context
+  record + one event each</strong>, preserving the A1 invariant.
+  <br/><strong>Batching is projection, not a god record:</strong> a human message and a
+  monitor line pending at one seam produce <em>two</em> context records and <em>two</em>
+  events, which <code>project_messages</code> merges into <em>one</em> API user message at
+  request-build time. No batched context append.
+  <br/><strong>Park / terminate (landed early from U3):</strong> idle = empty inbox.
+  With a live monitor and an empty inbox the loop <code>pop().await</code>s (a monitor may
+  yet fire); a natural exit enqueues <code>MonitorStopped</code> which wakes the park.
+  Headless (<code>config.headless</code>) terminates only when the inbox is empty
+  <em>and</em> no monitor is live; interactive simply waits. The &sect;4 park-select on
+  the roster-changed notify is gone &mdash; a stop is an ordinary inbox item.
+  <br/><strong>Queue viz:</strong> monitor items appear in <code>snapshot()</code> with
+  <code>source = "monitor:&lt;id&gt;"</code>; <code>InputQueue</code> gained an
+  <code>on_change</code> callback (registered by the server in
+  <code>spawn_run_task</code>) so a <strong>monitor-side push reaches the WS layer</strong>
+  &mdash; the <code>input_queue</code> frame now fires on monitor enqueue, not only human.
+  Badge stays always-visible (&sect;9).
+  <br/><strong>Dead code removed:</strong> <code>drain_monitors</code>, the
+  <code>MonitorDrain</code> struct, and the U1 &ldquo;delivery dark&rdquo; comments,
+  superseded by the unified two-seam drain.
+  <br/><strong>Verified:</strong> Agent+MockProvider Seam-A/Seam-B/batching/park tests,
+  a real short-lived shell monitor through the sink, a server WS test asserting the
+  <code>monitor:&lt;id&gt;</code> queue frame, the A1 guard
+  (<code>user_role_context_appends_are_event_backed</code>), and the dog-food
+  multi-cycle coding turn &mdash; all green.
+  <br/><strong>U3 still owns:</strong> retire the interjection plumbing
+  (<code>request_pause</code> / <code>pending_continue</code>; <code>request_continue</code>
+  becomes an inbox push) while keeping <code>request_abort</code> (Halt); the UI
+  turn-state / block-boundary markers (running = in a block, idle = empty-inbox seam)
+  and dropping the per-message <code>current_turn</code> handle.</div>
 <ol>
   <li><strong>U1 &mdash; persistent <code>run</code> loop + inbox for human input;
     monitor <em>delivery</em> goes dark.</strong>
@@ -1141,13 +1200,15 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
       <li><em>Dog-food check:</em> human &rarr; inbox &rarr; Gather &rarr; Process
         &rarr; reply &rarr; park-on-inbox is an ordinary coding turn. &#x2713;</li>
     </ul></li>
-  <li><strong>U2 &mdash; re-attach monitors to the inbox.</strong>
-    Monitor stdout/stop push <code>InputItem::Monitor{&hellip;}</code> into the
-    <em>same</em> inbox; Gather batches human + monitor at the seam; the
-    <strong>Seam-B mid-turn drain is re-wired to the inbox</strong> (must survive
+  <li><strong>U2 &mdash; re-attach monitors to the inbox. <span class="keep">&#x2713; IMPLEMENTED</span></strong> (see the U2 box above).
+    Monitor stdout/stop push <code>InputItem::MonitorStdout</code> /
+    <code>InputItem::MonitorStopped</code> into the <em>same</em> inbox (via
+    <code>MonitorSink</code>/<code>InboxSink</code>); Gather batches human + monitor at the
+    seam; the <strong>Seam-B mid-turn drain is re-wired to the inbox</strong> (survives
     &mdash; monitor output injected between a <code>tool_result</code> and the next
-    model call); park awaits the inbox. <em>Dog-food check:</em> human turns still
-    work; monitor delivery + interjection back online. &#x2713;</li>
+    model call); park awaits the inbox. The headless park/terminate rule landed here
+    early (originally slated for U3). <em>Dog-food check:</em> human turns still
+    work; monitor delivery back online. &#x2713;</li>
   <li><strong>U3 &mdash; retire superseded machinery + reconcile.</strong>
     Remove <code>request_pause</code> + <code>pending_continue</code> (interjection
     = enqueue-at-seam; <code>request_continue(content)</code> becomes a push to the

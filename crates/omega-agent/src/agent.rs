@@ -56,7 +56,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{cap_effort_for_model, max_output_tokens_for_model};
 use crate::controls::{ControlHandle, TurnGuard};
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
-use crate::input_queue::InputQueue;
+use crate::input_queue::{InboxSink, InputQueue};
 use crate::session_resume::{
     RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
     extract_summary_from_response,
@@ -646,15 +646,39 @@ fn format_monitor_stopped(id: &str, reason: &MonitorStopReason, exit_code: Optio
 
 /// One item of input to the persistent agent loop ([`Agent::run`]).
 ///
-/// §15 Unified Input Model.  For U1 only the `Human` variant exists; U2
-/// will add a `Monitor { id, lines }` variant carrying drained monitor
-/// output.  Modelled as an enum from the start so growth is purely
-/// additive (old readers fail loudly on an unknown variant, per the
-/// Contract Authority rule).
+/// §15 Unified Input Model.  Both human input and (since U2) monitor
+/// output arrive through the same inbox, so the run loop has a single
+/// Gather seam.  Modelled as an enum so growth is purely additive (old
+/// readers fail loudly on an unknown variant, per the Contract Authority
+/// rule).
+///
+/// Monitor **stderr** is intentionally absent: it is non-projected
+/// diagnostic output that never becomes `role:user` content, so it stays
+/// on the [`MonitorManager`]'s pending queue and is drained directly into
+/// a `MonitorStderr` event — never an `InputItem`.
 #[derive(Debug, Clone)]
 pub enum InputItem {
     /// A human coding-turn message — the text the operator typed.
     Human { content: String },
+    /// One or more stdout lines from a monitor (§15 U2).  Projected to a
+    /// `role:user` `MonitorDelivery` via [`Agent::inject_monitor_delivery`].
+    MonitorStdout {
+        /// Id of the monitor that produced the lines.
+        monitor_id: String,
+        /// The stdout lines, oldest first.
+        lines: Vec<String>,
+    },
+    /// A monitor self-terminated (§15 U2).  Projected (for reasons that
+    /// project) to a `role:user` `MonitorStopped` via
+    /// [`Agent::inject_monitor_stopped`].
+    MonitorStopped {
+        /// Id of the monitor that stopped.
+        monitor_id: String,
+        /// Classified outcome (`ProcessExited` / `ProcessCrashed`).
+        reason: MonitorStopReason,
+        /// Exit code when it exited normally; `None` when killed by a signal.
+        exit_code: Option<i32>,
+    },
 }
 
 /// Lock-free handle for changing the active model / effort without
@@ -722,21 +746,6 @@ impl ModelEffortHandle {
         let _ = self.event_store.append(&ev).await;
         ev
     }
-}
-
-/// Outcome of one [`Agent::drain_monitors`] pass.
-//
-// U1 (§15): monitor delivery is dark — `drain_monitors` is no longer
-// called by the run loop.  Kept (with the type) for U2, which re-wires
-// delivery through `Agent::run`'s inbox.
-#[allow(dead_code)]
-#[derive(Default)]
-struct MonitorDrain {
-    /// Events the loop must yield (delivery / stderr / stopped), in order.
-    events: Vec<OmegaEvent>,
-    /// Whether any drained item projected into context (so the loop should
-    /// run another cycle to let the model react).
-    projected: bool,
 }
 
 impl Drop for Agent {
@@ -1473,91 +1482,86 @@ impl Agent {
         logged
     }
 
-    /// Drain the monitor pending-queue once and persist every drained item
-    /// as the matching `OmegaEvent`, returning the events to yield.
+    /// Route one gathered [`InputItem`] through its eventful inject_*
+    /// helper, returning the single backing `OmegaEvent` to yield (§15 U2).
     ///
-    /// This is the loop's single-writer projection of the queue (§4): the
-    /// manager only enqueues; this method (and only this method) turns queued
-    /// items into events.  `projected` is `true` iff at least one drained
-    /// item produced context the model must see (a `MonitorDelivery`, or a
-    /// `MonitorStopped` whose reason projects) — the Seam-A park loop uses it
-    /// to decide whether to run another cycle.
-    // U1 (§15): no longer called by the run loop (monitor delivery is dark);
-    // retained for U2 re-wiring through the inbox.
-    #[allow(dead_code)]
-    async fn drain_monitors(&mut self) -> MonitorDrain {
-        let items = self.monitors.drain_pending();
-        if items.is_empty() {
-            return MonitorDrain::default();
+    /// This is the unified projection seam: human and monitor input land
+    /// the same way, each producing exactly one role:user context record +
+    /// one event (A1 invariant — §15(a)).  Stderr is never an `InputItem`,
+    /// so it has no arm here — it is drained separately by
+    /// [`Self::drain_monitor_stderr`].
+    async fn inject_input_item(&mut self, item: InputItem) -> omega_store::Result<OmegaEvent> {
+        match item {
+            InputItem::Human { content } => self.inject_user_message(&content).await,
+            InputItem::MonitorStdout { monitor_id, lines } => {
+                self.inject_monitor_delivery(vec![MonitorDeliveryItem { monitor_id, lines }])
+                    .await
+            }
+            InputItem::MonitorStopped {
+                monitor_id,
+                reason,
+                exit_code,
+            } => {
+                self.inject_monitor_stopped(monitor_id, reason, exit_code)
+                    .await
+            }
         }
-        // Batch stdout lines per monitor, preserving first-seen order so the
-        // delivery reads chronologically.  Stderr / stopped stay per-item.
-        let mut stdout_groups: Vec<(String, Vec<String>)> = Vec::new();
-        let mut stderr: Vec<(String, String)> = Vec::new();
-        let mut stopped: Vec<(String, MonitorStopReason, Option<i32>)> = Vec::new();
+    }
+
+    /// Drain the manager's pending queue of **non-projected diagnostic**
+    /// monitor output and persist each as a `MonitorStderr` event (§15 U2).
+    ///
+    /// Monitor stdout/stop now flow through the inbox (the [`MonitorSink`]),
+    /// so with a sink attached the manager's pending queue holds only
+    /// [`PendingItem::Stderr`].  This is the single-writer projection of
+    /// that diagnostic stream into events: it never produces role:user
+    /// content (so it bypasses the inbox entirely and never wakes the loop).
+    /// Stdout/Stopped items appearing here (only without a sink, e.g. unit
+    /// tests) are routed through their inject_* helpers defensively.
+    async fn drain_monitor_stderr(&mut self) -> Vec<OmegaEvent> {
+        let items = self.monitors.drain_pending();
+        let mut events = Vec::new();
         for item in items {
-            match item {
-                PendingItem::Stdout { monitor_id, line } => {
-                    if let Some(group) = stdout_groups.iter_mut().find(|(id, _)| *id == monitor_id)
-                    {
-                        group.1.push(line);
-                    } else {
-                        stdout_groups.push((monitor_id, vec![line]));
-                    }
-                }
+            let ev = match item {
                 PendingItem::Stderr { monitor_id, chunk } => {
-                    stderr.push((monitor_id, chunk));
+                    self.append_monitor_stderr(monitor_id, chunk).await
+                }
+                PendingItem::Stdout { monitor_id, line } => {
+                    self.inject_monitor_delivery(vec![MonitorDeliveryItem {
+                        monitor_id,
+                        lines: vec![line],
+                    }])
+                    .await
                 }
                 PendingItem::Stopped {
                     monitor_id,
                     reason,
                     exit_code,
-                } => stopped.push((monitor_id, reason, exit_code)),
-            }
-        }
-
-        let mut events = Vec::new();
-        let mut projected = false;
-        if !stdout_groups.is_empty() {
-            let delivery: Vec<MonitorDeliveryItem> = stdout_groups
-                .into_iter()
-                .map(|(monitor_id, lines)| MonitorDeliveryItem { monitor_id, lines })
-                .collect();
-            if let Ok(ev) = self.inject_monitor_delivery(delivery).await {
-                events.push(ev);
-                projected = true;
-            }
-        }
-        for (monitor_id, chunk) in stderr {
-            if let Ok(ev) = self.append_monitor_stderr(monitor_id, chunk).await {
+                } => {
+                    self.inject_monitor_stopped(monitor_id, reason, exit_code)
+                        .await
+                }
+            };
+            if let Ok(ev) = ev {
                 events.push(ev);
             }
         }
-        for (monitor_id, reason, exit_code) in stopped {
-            let should_project = reason.should_project();
-            if let Ok(ev) = self
-                .inject_monitor_stopped(monitor_id, reason, exit_code)
-                .await
-            {
-                events.push(ev);
-                projected = projected || should_project;
-            }
-        }
-        MonitorDrain { events, projected }
+        events
     }
 
-    /// Run the persistent per-session agent loop (§15 Unified Input Model, U1).
+    /// Run the persistent per-session agent loop (§15 Unified Input Model, U2).
     ///
-    /// Borrows `&mut self` **once** for the whole session.  Human input
-    /// arrives through `inbox`; the loop gathers the next [`InputItem`],
-    /// drives one coding turn via [`Self::drive_turn`], then parks by
-    /// awaiting the inbox again.  Parking on an empty inbox is the normal
-    /// idle state — the loop does **not** terminate while the session is
-    /// alive.
+    /// Borrows `&mut self` **once** for the whole session.  Both human input
+    /// AND monitor output arrive through `inbox` (monitors via the attached
+    /// [`MonitorSink`]); the loop gathers the next batch of [`InputItem`]s,
+    /// drives one coding turn via [`Self::drive_turn`] (which also drains the
+    /// inbox mid-cycle at Seam B), then parks by awaiting the inbox again.
+    /// Parking on an empty inbox is the normal idle state.
     ///
     /// Termination: the loop ends when `cancel` (the run-level / session
-    /// teardown token) fires, or when `inbox` is closed (all senders
-    /// dropped).
+    /// teardown token) fires; or, in headless mode, when the inbox is empty
+    /// AND no monitor is still live (§15 park/terminate).  Interactive
+    /// sessions simply wait.
     ///
     /// Abort: each turn installs its own per-block cancel token (via
     /// [`ControlHandle::reset_for_turn`] inside `drive_turn`, forwarded
@@ -1569,37 +1573,60 @@ impl Agent {
         inbox: InputQueue,
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AgentItem> + Send + 'a>> {
+        // §15 U2: attach the monitor-delivery sink so live monitors push
+        // their stdout/stop straight onto THIS inbox — the same queue as
+        // human input.  From here monitor output flows through the unified
+        // Gather/seam-drain path; the manager's own pending queue is left
+        // only for non-projected stderr.
+        self.monitors
+            .attach_sink(Arc::new(InboxSink::new(inbox.clone())));
         Box::pin(stream! {
             loop {
                 // ---- Gather (park on empty inbox) -----------------------
-                // Parks on `inbox.pop()` — zero CPU cost while the queue is
-                // empty; the run-level `cancel` (session teardown) ends the
-                // loop via `tokio::select!`.  Cancellation via a closed
-                // sender (U1) is replaced by the external CancellationToken.
-                let item = tokio::select! {
+                // Parks on `inbox.pop()` for the FIRST item — zero CPU cost
+                // while the queue is empty; the run-level `cancel` (session
+                // teardown) ends the loop via `tokio::select!`.  A monitor
+                // line or self-stop is enqueued as an `InputItem`, so it
+                // wakes this park exactly like a human message — no separate
+                // roster-changed select needed (§15: the §4 park-select is
+                // gone).
+                let first = tokio::select! {
                     () = cancel.cancelled() => return,
                     item = inbox.pop() => item,
                 };
-                let content = match item {
-                    InputItem::Human { content } => content,
-                };
+                // Drain any items that piled up behind the first so a whole
+                // Gather lands as one batch (projection merges consecutive
+                // role:user records into one API message — §15 batching).
+                let mut items = vec![first];
+                items.extend(inbox.drain_pending());
 
                 // ---- Process one turn -----------------------------------
                 // `drive_turn` installs its own per-turn cancel token
                 // (forwarded from the run-level `cancel`) and TurnGuard, so an
-                // abort cancels just this turn and the guard drops here.
+                // abort cancels just this turn and the guard drops here.  The
+                // inbox is handed in so the mid-cycle Seam-B drain can pull
+                // monitor output that fires *during* the turn.
                 {
-                    let mut turn = self.drive_turn(content, cancel.clone());
+                    let mut turn = self.drive_turn(items, inbox.clone(), cancel.clone());
                     while let Some(item) = turn.next().await {
                         yield item;
                     }
                 }
 
-                // ---- Park-vs-terminate ----------------------------------
+                // ---- Park-vs-terminate (§15) ----------------------------
                 // The turn ended (TurnEnd / abort → TurnInterrupted / error).
-                // A run-level cancel terminates the session; otherwise loop
-                // back to Gather and park on the inbox.
+                // A run-level cancel terminates the session unconditionally.
                 if cancel.is_cancelled() {
+                    return;
+                }
+                // Idle == empty inbox.  Headless terminates only when the
+                // queue is empty AND no monitor is still live (a live monitor
+                // may yet produce output, so we must wait for it).  Interactive
+                // simply loops back and parks on `pop()`.
+                if self.config.headless
+                    && inbox.snapshot().is_empty()
+                    && self.monitors.live_count() == 0
+                {
                     return;
                 }
             }
@@ -1618,7 +1645,8 @@ impl Agent {
     #[allow(clippy::too_many_lines)] // single async generator; splitting requires plumbing yields through return types
     fn drive_turn<'a>(
         &'a mut self,
-        user_message: String,
+        items: Vec<InputItem>,
+        inbox: InputQueue,
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AgentItem> + Send + 'a>> {
         Box::pin(stream! {
@@ -1705,20 +1733,26 @@ impl Agent {
             }
 
             // -----------------------------------------------------------------
-            // Step 2: append the user message.
-            // Route through inject_user_message so the UserMessage event is
-            // emitted BEFORE the context append (A1 — §15(a)).
+            // Step 2: inject every gathered inbox item (§15 U2).
+            // Each item — human OR monitor — routes through its own eventful
+            // inject_* helper, so every role:user context record has exactly
+            // one backing OmegaEvent (A1 invariant — §15(a)).  Batching is a
+            // PROJECTION concern: `project_messages` merges the consecutive
+            // role:user records into a single API message at request-build
+            // time, so we do NOT batch into one god context append here.
             // -----------------------------------------------------------------
-            match self.inject_user_message(&user_message).await {
-                Ok(ev) => yield AgentItem::event(ev),
-                Err(e) => {
-                    let ev = OmegaEvent::AgentError(AgentErrorEvent {
-                        time: now_iso(),
-                        error: format!("context_store append failed: {e}"),
-                    });
-                    let _ = self.event_store.append(&ev).await;
-                    yield AgentItem::event(ev);
-                    return;
+            for item in items {
+                match self.inject_input_item(item).await {
+                    Ok(ev) => yield AgentItem::event(ev),
+                    Err(e) => {
+                        let ev = OmegaEvent::AgentError(AgentErrorEvent {
+                            time: now_iso(),
+                            error: format!("context_store append failed: {e}"),
+                        });
+                        let _ = self.event_store.append(&ev).await;
+                        yield AgentItem::event(ev);
+                        return;
+                    }
                 }
             }
 
@@ -2577,11 +2611,42 @@ impl Agent {
                         yield AgentItem::event(cont_ev);
                     }
 
-                    // ---- Seam B (§3/§15 U1): monitor delivery is DARK.
-                    // The Seam-B drain was removed in U1 of the Unified Input
-                    // Model migration; monitor delivery is re-wired through
-                    // `Agent::run`'s inbox in U2.  Monitor spawn/reap is
-                    // unaffected.  Continue to the next cycle.
+                    // ---- Seam B (§3/§15 U2): mid-cycle inbox drain. ------
+                    // After each tool_result batch lands, drain EVERYTHING
+                    // currently pending in the inbox and inject it before the
+                    // next model call.  This is the heart of U2: a monitor
+                    // that fires while the agent is working is injected
+                    // between a tool_result and the next model call — NOT
+                    // held to end_turn.  Each item gets its own eventful
+                    // inject_* call (A1 — §15(a)); projection merges the
+                    // consecutive role:user records into one API message.
+                    let mid_cycle = inbox.drain_pending();
+                    let mut seam_b_failed = false;
+                    for item in mid_cycle {
+                        match self.inject_input_item(item).await {
+                            Ok(ev) => yield AgentItem::event(ev),
+                            Err(e) => {
+                                let ev = OmegaEvent::AgentError(AgentErrorEvent {
+                                    time: now_iso(),
+                                    error: format!("context_store append failed: {e}"),
+                                });
+                                let _ = self.event_store.append(&ev).await;
+                                yield AgentItem::event(ev);
+                                seam_b_failed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if seam_b_failed {
+                        return;
+                    }
+                    // Non-projected monitor stderr lives on the manager's
+                    // pending queue (never the inbox).  Drain it here into
+                    // diagnostic MonitorStderr events — single-writer (this
+                    // loop) and WS fan-out preserved.
+                    for ev in self.drain_monitor_stderr().await {
+                        yield AgentItem::event(ev);
+                    }
                     empty_response_count = 0; // non-empty response received
                     continue;
                 }

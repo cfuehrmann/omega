@@ -1917,280 +1917,6 @@ fn any_message_contains(req: &LlmRequest, needle: &str) -> bool {
         .contains(needle)
 }
 
-// (a) A monitor's stdout line drained at Seam A (assistant idle / end_turn)
-//     appears as a role:user MonitorDelivery in the NEXT request's messages.
-#[tokio::test]
-#[ignore = "monitor delivery re-enabled in U2 (§15)"]
-async fn seam_a_stdout_becomes_user_message_in_next_request() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    let mgr = agent.monitor_manager();
-    let spawned = mgr
-        .spawn("ticker", "printf 'tickA\\n'")
-        .expect("spawn monitor");
-    // Barrier: stdout line + self-exit Stopped item both queued (2 items),
-    // and the monitor is Stopped so live_count is 0 after the drain.
-    poll_until(
-        || mgr.pending_len() >= 2 && mgr.status(&spawned.id) == Some(MonitorStatus::Stopped),
-        "monitor stdout + stop enqueued",
-    )
-    .await;
-
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
-    let items = collect_stream(drive(&mut agent, "go".to_owned(), CancellationToken::new())).await;
-
-    assert!(
-        tags(&items).contains(&"MonitorDelivery"),
-        "a MonitorDelivery event must be emitted at Seam A"
-    );
-    let reqs = provider.take_requests();
-    assert!(reqs.len() >= 2, "the delivery must drive a second cycle");
-    assert!(
-        user_text(&reqs[1]).contains("tickA"),
-        "the monitor line must appear as role:user in the next request, got: {}",
-        user_text(&reqs[1])
-    );
-}
-
-// (b) A line drained at Seam B (right after a tool_result) lands correctly and
-//     does NOT split the tool_use/tool_result pair.
-#[tokio::test]
-#[ignore = "monitor delivery re-enabled in U2 (§15)"]
-async fn seam_b_delivery_does_not_split_tool_use_tool_result() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    let mgr = agent.monitor_manager();
-    let spawned = mgr.spawn("blipper", "printf 'blip\\n'").expect("spawn");
-    poll_until(
-        || mgr.pending_len() >= 2 && mgr.status(&spawned.id) == Some(MonitorStatus::Stopped),
-        "blip + stop enqueued",
-    )
-    .await;
-
-    // cycle1: a benign tool call → tool_result → Seam B drain.
-    provider.push_response(make_tool_use_items(
-        "t1",
-        "run_command",
-        json!({ "command": "echo hi" }),
-    ));
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
-    let items = collect_stream(drive(&mut agent, "go".to_owned(), CancellationToken::new())).await;
-    assert!(tags(&items).contains(&"MonitorDelivery"));
-
-    let reqs = provider.take_requests();
-    // The request after the tool cycle (reqs[1]) must contain the assistant
-    // tool_use immediately followed by a user message whose FIRST block is the
-    // tool_result (pair intact), and that user message also carries the blip.
-    let req = &reqs[1];
-    let mut found_pair = false;
-    for w in req.messages.windows(2) {
-        let has_tool_use = w[0].role == Role::Assistant
-            && w[0]
-                .content
-                .iter()
-                .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
-        if has_tool_use {
-            assert_eq!(w[1].role, Role::User, "tool_result message must be user");
-            assert!(
-                matches!(w[1].content.first(), Some(ContentBlock::ToolResult { .. })),
-                "the tool_result must remain the FIRST block (pair not split)"
-            );
-            found_pair = true;
-        }
-    }
-    assert!(found_pair, "expected a tool_use/tool_result pair");
-    assert!(
-        user_text(req).contains("blip"),
-        "the monitor line must be merged into the tool_result user message"
-    );
-}
-
-// (c) MonitorStderr is present in the event stream but NOT projected into the
-//     model's context (never reaches a request).
-#[tokio::test]
-#[ignore = "monitor delivery re-enabled in U2 (§15)"]
-async fn stderr_is_emitted_but_not_projected() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    let mgr = agent.monitor_manager();
-    let spawned = mgr
-        .spawn("noisy", "printf 'errline\\n' 1>&2")
-        .expect("spawn");
-    poll_until(
-        || mgr.pending_len() >= 2 && mgr.status(&spawned.id) == Some(MonitorStatus::Stopped),
-        "stderr + stop enqueued",
-    )
-    .await;
-
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
-    let items = collect_stream(drive(&mut agent, "go".to_owned(), CancellationToken::new())).await;
-
-    assert!(
-        tags(&items).contains(&"MonitorStderr"),
-        "MonitorStderr must be emitted into the event stream"
-    );
-    let reqs = provider.take_requests();
-    for (i, r) in reqs.iter().enumerate() {
-        assert!(
-            !any_message_contains(r, "errline"),
-            "stderr must never be projected into context (request {i} contained it)"
-        );
-    }
-}
-
-// (d) A self-terminating monitor yields a MonitorStopped that PROJECTS, with
-//     the right reason + exit_code — both normal exit and signal death.
-#[tokio::test]
-#[ignore = "monitor delivery re-enabled in U2 (§15)"]
-async fn process_exited_stop_projects_with_exit_code() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    let mgr = agent.monitor_manager();
-    let spawned = mgr.spawn("exiter", "exit 7").expect("spawn");
-    poll_until(
-        || mgr.status(&spawned.id) == Some(MonitorStatus::Stopped) && mgr.pending_len() >= 1,
-        "process-exit stop enqueued",
-    )
-    .await;
-
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
-    let items = collect_stream(drive(&mut agent, "go".to_owned(), CancellationToken::new())).await;
-
-    let stopped = items
-        .iter()
-        .find_map(|it| match it {
-            AgentItem::Event(b) => match b.as_ref() {
-                OmegaEvent::MonitorStopped(e) => Some(e.clone()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .expect("a MonitorStopped event");
-    assert_eq!(stopped.reason, MonitorStopReason::ProcessExited);
-    assert_eq!(stopped.exit_code, Some(7));
-
-    let reqs = provider.take_requests();
-    assert!(
-        reqs.iter().any(|r| any_message_contains(r, "stopped")),
-        "the ProcessExited stop must project into context"
-    );
-}
-
-#[tokio::test]
-#[ignore = "monitor delivery re-enabled in U2 (§15)"]
-async fn crashed_stop_is_classified_from_signal() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    let mgr = agent.monitor_manager();
-    // Kill the bash leader with SIGKILL → no exit code → Crashed.
-    let spawned = mgr.spawn("crasher", "kill -9 $$").expect("spawn");
-    poll_until(
-        || mgr.status(&spawned.id) == Some(MonitorStatus::Stopped) && mgr.pending_len() >= 1,
-        "crash stop enqueued",
-    )
-    .await;
-
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
-    let items = collect_stream(drive(&mut agent, "go".to_owned(), CancellationToken::new())).await;
-
-    let stopped = items
-        .iter()
-        .find_map(|it| match it {
-            AgentItem::Event(b) => match b.as_ref() {
-                OmegaEvent::MonitorStopped(e) => Some(e.clone()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .expect("a MonitorStopped event");
-    assert_eq!(stopped.reason, MonitorStopReason::ProcessCrashed);
-    assert_eq!(stopped.exit_code, None, "signal death carries no exit code");
-}
-
-// (e) Parking: a live monitor + empty queue parks (does not terminate); a
-//     queued line wakes + runs a cycle; killing the last live monitor with an
-//     empty queue wakes + terminates (no hang).
-#[tokio::test]
-#[ignore = "monitor delivery/park re-enabled in U2 (§15)"]
-async fn parks_wakes_on_line_and_terminates_on_kill() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    let mgr = agent.monitor_manager();
-    let live = mgr.spawn("longlived", "sleep 30").expect("spawn");
-    poll_until(
-        || mgr.status(&live.id) == Some(MonitorStatus::Running),
-        "monitor running",
-    )
-    .await;
-
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
-    let mut stream = drive(&mut agent, "go".to_owned(), CancellationToken::new());
-
-    // Drive cycle 1 to its TurnEnd.
-    let mut saw_turn_end = false;
-    while !saw_turn_end {
-        match pull(&mut stream, 2000).await {
-            Pull::Item(item) => {
-                if tags(std::slice::from_ref(&item)) == vec!["TurnEnd"] {
-                    saw_turn_end = true;
-                }
-            }
-            Pull::Ended => panic!("stream ended before parking"),
-            Pull::Parked => panic!("cycle 1 stalled before TurnEnd"),
-        }
-    }
-
-    // With a live monitor and an empty queue the loop must PARK: the next pull
-    // blocks (times out) rather than ending the stream.
-    assert!(
-        matches!(pull(&mut stream, 300).await, Pull::Parked),
-        "loop must park with a live monitor and empty queue"
-    );
-
-    // Wake via a queued line: a second short monitor emits then exits.  Its
-    // self-exit may drive one or more extra projected cycles; drive the loop
-    // until it PARKS again (a pull times out) while tolerating those cycles.
-    mgr.spawn("waker", "printf 'wake\\n'").expect("spawn waker");
-    let mut saw_delivery = false;
-    loop {
-        match pull(&mut stream, 800).await {
-            Pull::Item(item) => {
-                if tags(std::slice::from_ref(&item)).contains(&"MonitorDelivery") {
-                    saw_delivery = true;
-                }
-            }
-            Pull::Ended => {
-                panic!("stream terminated while the long-lived monitor was still alive")
-            }
-            Pull::Parked => break, // re-parked (sleep 30 still alive)
-        }
-    }
-    assert!(saw_delivery, "the queued line must be delivered on wake");
-
-    // Kill the last live monitor with an empty queue → roster-changed wakes the
-    // loop and it terminates (no hang).
-    assert!(
-        mgr.stop(&live.id),
-        "stop should report the running->stopped transition"
-    );
-    match pull(&mut stream, 2000).await {
-        Pull::Ended => { /* terminated cleanly */ }
-        Pull::Item(item) => {
-            panic!(
-                "expected termination, got {:?}",
-                tags(std::slice::from_ref(&item))
-            )
-        }
-        Pull::Parked => panic!("killing the last live monitor must wake the loop (no hang)"),
-    }
-}
-
 // (f) Shutdown reaps live monitors on session end.
 #[tokio::test]
 async fn shutdown_reaps_live_monitors() {
@@ -2300,55 +2026,6 @@ async fn dropping_the_agent_reaps_live_monitors() {
         "dropping the agent must reap the live monitor group (pid {pid})"
     );
     drop(mgr);
-}
-
-// Multiple stdout lines from ONE monitor, drained in a single Seam A pass, must
-// batch into a SINGLE delivery item carrying all lines in order. Guards the
-// per-monitor grouping (`*mid == monitor_id`) in drain_monitors.
-#[tokio::test]
-#[ignore = "monitor delivery re-enabled in U2 (§15)"]
-async fn seam_a_batches_multiple_lines_from_one_monitor() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    let mgr = agent.monitor_manager();
-    let spawned = mgr.spawn("multi", "printf 'l1\\nl2\\n'").expect("spawn");
-    // Both lines + the self-exit Stopped item all queued before the loop runs.
-    poll_until(
-        || mgr.pending_len() >= 3 && mgr.status(&spawned.id) == Some(MonitorStatus::Stopped),
-        "two lines + stop enqueued",
-    )
-    .await;
-
-    for _ in 0..4 {
-        provider.push_response(vec![Ok(make_llm_response("end_turn", 5, 5))]);
-    }
-    let items = collect_stream(drive(&mut agent, "go".to_owned(), CancellationToken::new())).await;
-
-    let deliveries: Vec<Vec<omega_types::events::MonitorDeliveryItem>> = items
-        .iter()
-        .filter_map(|it| match it {
-            AgentItem::Event(boxed) => match boxed.as_ref() {
-                OmegaEvent::MonitorDelivery(e) => Some(e.items.clone()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        deliveries.len(),
-        1,
-        "all queued lines drain in one Seam A pass → exactly one delivery event"
-    );
-    let delivery = &deliveries[0];
-    assert_eq!(
-        delivery.len(),
-        1,
-        "lines from one monitor must batch into a single delivery item, got: {delivery:?}"
-    );
-    assert_eq!(
-        delivery[0].lines,
-        vec!["l1".to_owned(), "l2".to_owned()],
-        "batched lines must preserve order"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3423,5 +3100,466 @@ fn user_role_context_appends_are_event_backed() {
          backing OmegaEvent before the context append, then add the helper \
          to ALLOWLIST above.",
         violations.join("\n")
+    );
+}
+
+// ===========================================================================
+// U2 — Unified Input Model: monitor delivery re-attached to the inbox queue
+// (docs/monitors-design.html §15). Monitors deliver through the SAME inbox
+// as human input; drained at both seams; batching is a projection concern.
+// ===========================================================================
+
+/// Build a HEADLESS agent (terminates on idle when no monitor is live).
+fn make_headless_agent() -> (Agent, Arc<common::MockProvider>, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let provider = Arc::new(common::MockProvider::new());
+    let cwd = tmp.path().to_path_buf();
+    let agent = Agent::new(
+        provider.clone(),
+        ContextStore::new(tmp.path().join("context.jsonl")),
+        EventStore::new(tmp.path().join("events.jsonl")),
+        AgentConfig {
+            model: "claude-sonnet-4-6".to_owned(),
+            effort: None,
+            cwd: cwd.clone(),
+            session_dir: cwd,
+            headless: true,
+            features: None,
+            tool_selection: None,
+        },
+    );
+    (agent, provider, tmp)
+}
+
+// --- Seam B (THE heart of U2): a monitor that fires mid-turn is injected
+// between a tool_result and the NEXT model call — NOT held to end_turn. ----
+#[tokio::test]
+async fn u2_monitor_line_injected_at_seam_b_mid_turn() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    // Turn: call 1 = tool_use(run_command), call 2 = end_turn.
+    provider.push_response(make_tool_use_items(
+        "t1",
+        "run_command",
+        json!({ "command": "true" }),
+    ));
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let push_handle = queue.clone();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue, run_cancel.clone());
+    push_handle.push(InputItem::Human {
+        content: "build it".to_owned(),
+    });
+
+    let mut seen: Vec<&'static str> = Vec::new();
+    let mut pushed = false;
+    loop {
+        match pull(&mut stream, 3000).await {
+            Pull::Item(item) => {
+                let t = tags(std::slice::from_ref(&item));
+                let is_tool_result = t == vec!["ToolResult"];
+                let is_end = t == vec!["TurnEnd"];
+                seen.extend(t);
+                if is_tool_result && !pushed {
+                    // Monitor fires WHILE the agent is working.
+                    push_handle.push(InputItem::MonitorStdout {
+                        monitor_id: "mon-b".to_owned(),
+                        lines: vec!["seam-b-line".to_owned()],
+                    });
+                    pushed = true;
+                }
+                if is_end {
+                    break;
+                }
+            }
+            _ => panic!("loop ended/stalled before TurnEnd; seen={seen:?}"),
+        }
+    }
+    assert!(pushed, "test must observe a ToolResult to push at");
+
+    // PROOF Seam-B survives: the delivery is injected mid-turn, strictly
+    // BEFORE TurnEnd — not deferred to end_turn.
+    let md = seen.iter().position(|t| *t == "MonitorDelivery");
+    let te = seen.iter().position(|t| *t == "TurnEnd");
+    assert!(
+        md.is_some(),
+        "Seam-B: monitor must be delivered this turn; seen={seen:?}"
+    );
+    assert!(
+        md.unwrap() < te.unwrap(),
+        "Seam-B: delivery must precede end_turn; seen={seen:?}"
+    );
+
+    // And it reaches the LLM in the call AFTER the tool result.
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 2, "tool_use call then post-tool_result call");
+    assert!(
+        user_text(&reqs[1]).contains("seam-b-line"),
+        "Seam-B: 2nd request must carry the monitor line; got: {}",
+        user_text(&reqs[1])
+    );
+    run_cancel.cancel();
+}
+
+// --- Seam A: a monitor that fires while the loop is PARKED wakes it and is
+// delivered at the top of the next Gather. ---------------------------------
+#[tokio::test]
+async fn u2_monitor_line_injected_at_seam_a_after_park() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    provider.push_response(make_terminal_response("end_turn", 5, 5)); // human turn
+    provider.push_response(make_terminal_response("end_turn", 5, 5)); // monitor turn
+
+    let queue = InputQueue::new();
+    let push_handle = queue.clone();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue, run_cancel.clone());
+
+    push_handle.push(InputItem::Human {
+        content: "hello".to_owned(),
+    });
+    let _ = pull_to_turn_end(&mut stream).await;
+    // The loop parks on the empty inbox.
+    assert!(
+        matches!(pull(&mut stream, 300).await, Pull::Parked),
+        "loop must park after the turn"
+    );
+
+    // Monitor fires while parked → wakes the loop → delivered at Seam A.
+    push_handle.push(InputItem::MonitorStdout {
+        monitor_id: "mon-a".to_owned(),
+        lines: vec!["parked-line".to_owned()],
+    });
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(
+        seen.contains(&"MonitorDelivery"),
+        "Seam-A: parked loop must deliver the monitor line; seen={seen:?}"
+    );
+    let reqs = provider.take_requests();
+    assert!(
+        user_text(reqs.last().unwrap()).contains("parked-line"),
+        "Seam-A: monitor line must reach the LLM"
+    );
+    run_cancel.cancel();
+}
+
+// --- A self-terminating monitor's stop is delivered (projecting) and wakes a
+// parked loop. -------------------------------------------------------------
+#[tokio::test]
+async fn u2_monitor_stop_projects_and_wakes_parked_loop() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    provider.push_response(make_terminal_response("end_turn", 5, 5)); // human turn
+    provider.push_response(make_terminal_response("end_turn", 5, 5)); // stop turn
+
+    let queue = InputQueue::new();
+    let push_handle = queue.clone();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue, run_cancel.clone());
+
+    push_handle.push(InputItem::Human {
+        content: "go".to_owned(),
+    });
+    let _ = pull_to_turn_end(&mut stream).await;
+    assert!(
+        matches!(pull(&mut stream, 300).await, Pull::Parked),
+        "loop must park after the turn"
+    );
+
+    // The monitor self-terminates: a MonitorStopped item is enqueued.
+    push_handle.push(InputItem::MonitorStopped {
+        monitor_id: "mon-x".to_owned(),
+        reason: MonitorStopReason::ProcessExited,
+        exit_code: Some(0),
+    });
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(
+        seen.contains(&"MonitorStopped"),
+        "stop must wake the parked loop and emit MonitorStopped; seen={seen:?}"
+    );
+    let reqs = provider.take_requests();
+    let last = user_text(reqs.last().unwrap());
+    assert!(
+        last.contains("mon-x") && last.contains("process_exited"),
+        "ProcessExited stop must PROJECT the reason; got: {last}"
+    );
+    run_cancel.cancel();
+}
+
+// --- Batching is a PROJECTION concern: a human message + a monitor line
+// pending at one Gather become ONE merged API user message, but TWO context
+// records + TWO events. ----------------------------------------------------
+#[tokio::test]
+async fn u2_batching_human_and_monitor_one_api_message_two_records() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    // Both pending BEFORE the first poll: pop() takes one, drain_pending()
+    // the rest — one Gather, two items.
+    queue.push(InputItem::Human {
+        content: "human-ask".to_owned(),
+    });
+    queue.push(InputItem::MonitorStdout {
+        monitor_id: "mon-batch".to_owned(),
+        lines: vec!["monitor-line".to_owned()],
+    });
+
+    {
+        let mut stream = agent.run(queue, run_cancel.clone());
+        let seen = pull_to_turn_end(&mut stream).await;
+        // TWO events: one per item.
+        assert!(
+            seen.contains(&"UserMessage") && seen.contains(&"MonitorDelivery"),
+            "each item must produce its OWN event; seen={seen:?}"
+        );
+        run_cancel.cancel();
+    } // stream dropped here → &mut agent borrow released.
+
+    // TWO context records (NOT a god record).
+    let user_records = agent
+        .history()
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .count();
+    assert_eq!(
+        user_records, 2,
+        "two separate role:user context records (one per item)"
+    );
+
+    // ONE merged API user message carrying BOTH payloads (project_messages
+    // merges consecutive role:user records at request-build time).
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 1, "one LLM call for the batch");
+    let user_msgs = reqs[0]
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .count();
+    assert_eq!(
+        user_msgs, 1,
+        "projection must merge consecutive role:user into ONE API message"
+    );
+    let txt = user_text(&reqs[0]);
+    assert!(
+        txt.contains("human-ask") && txt.contains("monitor-line"),
+        "merged message must carry BOTH payloads; got: {txt}"
+    );
+}
+
+// --- Park/terminate (§15): headless + empty queue + no live monitor → the
+// loop terminates. ---------------------------------------------------------
+#[tokio::test]
+async fn u2_headless_terminates_when_idle_no_live_monitor() {
+    let (mut agent, provider, _tmp) = make_headless_agent();
+    agent.init().await.expect("init");
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let push_handle = queue.clone();
+    let mut stream = agent.run(queue, CancellationToken::new());
+    push_handle.push(InputItem::Human {
+        content: "go".to_owned(),
+    });
+    let _ = pull_to_turn_end(&mut stream).await;
+    // Empty queue + no live monitor + headless → the run loop terminates.
+    assert!(
+        matches!(pull(&mut stream, 1500).await, Pull::Ended),
+        "headless idle loop must terminate when no monitor is live"
+    );
+}
+
+// --- Park/terminate (§15): headless WAITS (does NOT terminate) while a
+// monitor is still live — it may yet produce output. -----------------------
+#[tokio::test]
+async fn u2_headless_parks_while_a_monitor_is_live() {
+    let (mut agent, provider, _tmp) = make_headless_agent();
+    agent.init().await.expect("init");
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let mgr = agent.monitor_manager();
+    let queue = InputQueue::new();
+    let push_handle = queue.clone();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue, run_cancel.clone());
+
+    // A long-lived monitor keeps the session alive even when idle.
+    mgr.spawn("sleeper", "sleep 30").expect("spawn sleeper");
+    push_handle.push(InputItem::Human {
+        content: "go".to_owned(),
+    });
+    let _ = pull_to_turn_end(&mut stream).await;
+
+    // Empty queue but a live monitor → headless must PARK, not terminate.
+    assert!(
+        matches!(pull(&mut stream, 800).await, Pull::Parked),
+        "headless must wait while a monitor is live"
+    );
+    run_cancel.cancel();
+    mgr.shutdown();
+}
+
+// --- Real short-lived shell monitor: stdout flows reader → MonitorSink →
+// THIS inbox → delivered as a role:user MonitorDelivery. --------------------
+#[tokio::test]
+async fn u2_real_monitor_stdout_delivered_through_inbox() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    // Delivery turn (+ a spare in case the self-stop opens a second turn).
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let mgr = agent.monitor_manager(); // Arc — survives the &mut borrow below.
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue, run_cancel.clone()); // sink attached now
+
+    // Real monitor: prints one line then exits. stdout + stop both flow
+    // through the manager → MonitorSink → inbox.
+    mgr.spawn("ticker", "printf 'real-tick\\n'")
+        .expect("spawn ticker");
+
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(
+        seen.contains(&"MonitorDelivery"),
+        "real monitor stdout must be delivered through the inbox; seen={seen:?}"
+    );
+    let reqs = provider.take_requests();
+    assert!(
+        reqs.iter().any(|r| any_message_contains(r, "real-tick")),
+        "monitor line must reach the LLM as role:user"
+    );
+    run_cancel.cancel();
+}
+
+// --- Multiple stdout lines arrive as separate InputItems (one delivery
+// event each) but MERGE into one API user message at projection. -----------
+#[tokio::test]
+async fn u2_multiple_monitor_lines_merge_into_one_api_message() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    for _ in 0..3 {
+        provider.push_response(make_terminal_response("end_turn", 5, 5));
+    }
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    // Two lines from one monitor, pending at one Gather.
+    queue.push(InputItem::MonitorStdout {
+        monitor_id: "multi".to_owned(),
+        lines: vec!["line-1".to_owned()],
+    });
+    queue.push(InputItem::MonitorStdout {
+        monitor_id: "multi".to_owned(),
+        lines: vec!["line-2".to_owned()],
+    });
+
+    let mut stream = agent.run(queue, run_cancel.clone());
+    let seen = pull_to_turn_end(&mut stream).await;
+    let deliveries = seen.iter().filter(|t| **t == "MonitorDelivery").count();
+    assert_eq!(
+        deliveries, 2,
+        "each line is its OWN delivery event; seen={seen:?}"
+    );
+
+    let reqs = provider.take_requests();
+    assert_eq!(reqs.len(), 1, "one LLM call");
+    let user_msgs = reqs[0]
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .count();
+    assert_eq!(
+        user_msgs, 1,
+        "projection merges both lines into ONE API message"
+    );
+    let txt = user_text(&reqs[0]);
+    assert!(
+        txt.contains("line-1") && txt.contains("line-2"),
+        "merged message must carry BOTH lines; got: {txt}"
+    );
+    run_cancel.cancel();
+}
+
+// --- MonitorStderr is NON-PROJECTED diagnostic: it becomes a MonitorStderr
+// event, NEVER a role:user record, and NEVER an InputItem in the queue. ----
+#[tokio::test]
+async fn u2_monitor_stderr_event_not_queued_not_projected() {
+    let (mut agent, _provider, _tmp) = make_test_agent();
+    agent.init().await.expect("init");
+
+    let queue = InputQueue::new();
+    let ev = agent
+        .append_monitor_stderr("mon-e".to_owned(), "boom".to_owned())
+        .await
+        .expect("append stderr");
+
+    assert!(
+        matches!(ev, OmegaEvent::MonitorStderr(_)),
+        "stderr must emit a MonitorStderr event"
+    );
+    assert_eq!(
+        agent.history().len(),
+        0,
+        "stderr must NOT project into the LLM context"
+    );
+    assert_eq!(
+        queue.snapshot().len(),
+        0,
+        "stderr must NEVER enter the InputQueue"
+    );
+}
+
+/// U2 (§15): a monitor's STDERR is non-projected diagnostic — it stays on the
+/// manager's pending queue (never the inbox) and is drained at Seam B into a
+/// `MonitorStderr` event by the run loop (`drain_monitor_stderr`), WITHOUT
+/// becoming role:user content.  Covers the agent-loop stderr drain path
+/// end-to-end with a real short-lived monitor.
+#[tokio::test]
+async fn u2_real_monitor_stderr_drained_at_seam_b_not_projected() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    // call1: spawn a monitor that writes to STDERR and stays briefly alive.
+    provider.push_response(make_tool_use_items(
+        "tu_mon",
+        "monitor",
+        json!({ "description": "errmon", "command": "printf 'errline\\n' 1>&2; sleep 3" }),
+    ));
+    // call2: a second tool turn whose completion gives the stderr time to land,
+    // and creates a Seam B at which drain_monitor_stderr runs.
+    provider.push_response(make_tool_use_items(
+        "tu_wait",
+        "run_command",
+        json!({ "command": "sleep 0.3" }),
+    ));
+    // call3: end the turn.
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let q2 = queue.clone();
+    let mut stream = agent.run(queue, run_cancel.clone());
+    q2.push(InputItem::Human {
+        content: "watch".to_owned(),
+    });
+
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(
+        seen.contains(&"MonitorStderr"),
+        "monitor stderr must be drained at Seam B into a MonitorStderr event; seen={seen:?}"
+    );
+    // It is NON-projected: it never becomes role:user content, so it must NOT
+    // be a MonitorDelivery and must NOT appear in the inbox snapshot.
+    assert!(
+        !q2.snapshot()
+            .iter()
+            .any(|v| v.source.starts_with("monitor:")),
+        "stderr must NEVER enter the InputQueue"
+    );
+    run_cancel.cancel();
+    drop(stream);
+    // No MonitorDelivery (stderr is not projected); the only role:user records
+    // are the human turn + any tool plumbing — never an stderr delivery.
+    assert!(
+        !seen.contains(&"MonitorDelivery"),
+        "stderr must NOT be projected as a MonitorDelivery; seen={seen:?}"
     );
 }

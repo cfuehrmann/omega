@@ -574,3 +574,33 @@ mutants-input-queue-router:
     cargo mutants -p omega-server --cap-lints=true \
         --file "crates/omega-server/src/router.rs" \
         -- --tmp-dir {{mutants-tmp}}
+
+# §15 U2 — the MonitorSink routing in the MonitorManager: `push_stdout` /
+# `enqueue_stopped` now route to the attached sink (the inbox) and fall back
+# to the pending queue only when no sink is attached; `attach_sink` installs
+# it.  Both branches are covered by omega-tools tests:
+# `attached_sink_receives_stdout_and_stop_bypassing_pending_queue` (sink) and
+# the existing no-sink stdout/stop tests (fallback).
+# All mutations must be CAUGHT or UNVIABLE.
+mutants-u2-monitor-sink:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/monitors.rs" \
+        --re 'push_stdout|enqueue_stopped|attach_sink|MonitorManager::sink'
+
+# §15 U2 — the InputQueue additions (drain_pending, on_change firing in push,
+# make_view monitor-source arms, InboxSink).  Covered by the input_queue unit
+# tests.  Reuses the U1 file scope; all mutations must be CAUGHT or UNVIABLE.
+mutants-u2-input-queue: mutants-input-queue
+
+# §15 U2 — the two plain-async drain/routing helpers on Agent:
+# `inject_input_item` (routes each drained InputItem through its inject_*
+# helper) and `drain_monitor_stderr` (emits non-projected MonitorStderr +
+# defensive stdout/stop fallback).  The seam drains themselves live inside the
+# async_stream! macro body and come back UNVIABLE (opaque generators);
+# the helpers are CAUGHT by the Seam-A/Seam-B/batching tests in
+# tests/internal.rs.  Uses --in-place to avoid copying the 6 GB target dir.
+mutants-u2-drain-routing:
+    cargo mutants -p omega-agent --cap-lints=true --in-place \
+        --file "crates/omega-agent/src/agent.rs" \
+        --re 'inject_input_item|drain_monitor_stderr'

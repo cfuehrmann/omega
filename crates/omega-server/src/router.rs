@@ -105,6 +105,25 @@ pub fn is_user_message_event(item: &AgentItem) -> bool {
     )
 }
 
+/// Returns `true` if `item` is an event that marks an inbox item having just
+/// been **drained** (delivered) — a human `UserMessage` or, since §15 U2, a
+/// monitor `MonitorDelivery` / `MonitorStopped`.  At each of these moments
+/// the [`InputQueue`] has shrunk, so [`spawn_run_task`] pushes a fresh queue
+/// snapshot to keep the always-visible badge (§9) current.
+#[must_use]
+pub fn is_inbox_drain_event(item: &AgentItem) -> bool {
+    matches!(
+        item,
+        AgentItem::Event(ev)
+            if matches!(
+                ev.as_ref(),
+                OmegaEvent::UserMessage(_)
+                    | OmegaEvent::MonitorDelivery(_)
+                    | OmegaEvent::MonitorStopped(_)
+            )
+    )
+}
+
 /// Build a [`WsMessage::InputQueue`] snapshot from a slice of [`QueuedItemView`]s.
 /// The snapshot is ephemeral and transport-only — it MUST NOT be written to
 /// `events.jsonl`.
@@ -915,6 +934,22 @@ async fn spawn_run_task(state: &AppState) {
     };
 
     let slot_arc = Arc::clone(&state.active_session);
+
+    // §15 U2 queue-viz: forward a fresh queue snapshot on EVERY enqueue —
+    // human OR monitor.  Monitor pushes happen on a background reader task
+    // (no WS handler in scope), so the InputQueue itself notifies us here.
+    // We pass the atomic post-push snapshot through so the just-enqueued
+    // item is guaranteed visible even if the agent drains it immediately.
+    {
+        let slot_for_cb = Arc::clone(&slot_arc);
+        input_queue.set_on_change(Arc::new(move |snap: Vec<QueuedItemView>| {
+            let slot = Arc::clone(&slot_for_cb);
+            tokio::spawn(async move {
+                send_to_active(&slot, queue_snapshot_msg(snap)).await;
+            });
+        }));
+    }
+
     let handle = tokio::spawn(async move {
         // Owns the agent lock for the whole session (incl. while parked).
         let mut guard = agent.lock().await;
@@ -926,14 +961,16 @@ async fn spawn_run_task(state: &AppState) {
             };
             // Detect push points *before* moving `item` into `WsMessage::Item`.
             let push_roster = is_monitor_event(&item);
-            let push_queue = is_user_message_event(&item);
+            let push_queue = is_inbox_drain_event(&item);
             send_to_active(&slot_arc, WsMessage::Item(Box::new(item))).await;
             // Push a fresh roster snapshot after every monitor lifecycle event.
             if push_roster {
                 let roster = roster_snapshot_msg(&monitor_manager);
                 send_to_active(&slot_arc, roster).await;
             }
-            // Push a fresh queue snapshot after UserMessage (item just popped).
+            // Push a fresh queue snapshot after any inbox item is drained
+            // (UserMessage / MonitorDelivery / MonitorStopped — the item just
+            // left the queue).
             if push_queue {
                 let snap = input_queue.snapshot();
                 send_to_active(&slot_arc, queue_snapshot_msg(snap)).await;

@@ -1624,3 +1624,85 @@ async fn input_queue_frame_not_persisted_to_events_jsonl() {
         "input_queue must NOT appear in events.jsonl; got:\n{events}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// U2 (§15) — monitor enqueues reach the WS layer
+// ---------------------------------------------------------------------------
+
+/// U2 (§15 / §9 always-visible): when a MONITOR enqueues output onto the
+/// inbox, the server pushes an `input_queue` WS frame whose item carries a
+/// `monitor:<id>` source — not only on human enqueue.  Proves the
+/// `InputQueue::on_change` callback registered in `spawn_run_task` reaches
+/// the WS layer for manager-side (monitor) pushes too.
+#[tokio::test(flavor = "multi_thread")]
+async fn input_queue_frame_on_monitor_enqueue() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    // Turn 1: the model spawns a short-lived monitor via the (hidden) tool.
+    provider.push(tool_use_items(
+        "tu_mon",
+        "monitor",
+        serde_json::json!({
+            "description": "ws monitor",
+            "command": "printf 'wsline\\n'; sleep 2",
+        }),
+    ));
+    // Generous terminal turns: post-tool continuation + the monitor-delivery
+    // turn(s) the enqueue wakes.  Surplus responses are harmless.
+    for _ in 0..6 {
+        provider.push(text_llm_response_event("end_turn"));
+    }
+
+    let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root.clone())).await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+
+    // Reset with the (otherwise hidden) `monitor` tool enabled for this session.
+    send_json(
+        &mut ws,
+        serde_json::json!({
+            "type": "reset",
+            "allowDirty": true,
+            "toolSelection": ["monitor", "run_command"],
+        }),
+    )
+    .await;
+    let _ = recv_until_type(&mut ws, "ready").await;
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "watch it" }),
+    )
+    .await;
+
+    // Recv frames until an input_queue frame carries a `monitor:<id>` item.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut found = false;
+    let mut frame_count = 0usize;
+    while tokio::time::Instant::now() < deadline {
+        let v = match tokio::time::timeout(Duration::from_secs(10), ws.next()).await {
+            Ok(Some(Ok(TMessage::Text(t)))) => {
+                serde_json::from_str::<serde_json::Value>(&t).unwrap()
+            }
+            _ => break,
+        };
+        frame_count += 1;
+        if v["type"] == "input_queue"
+            && v["items"].as_array().is_some_and(|items| {
+                items.iter().any(|it| {
+                    it["source"]
+                        .as_str()
+                        .is_some_and(|s| s.starts_with("monitor:"))
+                })
+            })
+        {
+            found = true;
+            break;
+        }
+    }
+    assert!(
+        found,
+        "expected an input_queue WS frame with a monitor:<id> source after monitor enqueue; saw {frame_count} frames",
+    );
+}

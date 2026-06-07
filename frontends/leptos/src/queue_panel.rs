@@ -26,17 +26,23 @@
 //! badge opens the modal, which shows an explicit empty-state message
 //! when the queue is empty.
 //!
-//! Monitor sources join the queue in U2; the `source` field is already
-//! structured to carry them (currently always `"human"`).
+//! U2 (§15): monitor sources now join the queue — monitor stdout/stop are
+//! delivered through the *same* inbox as human input and carry a
+//! `"monitor:<id>"` source (rendered as `"Monitor <id>"` by
+//! [`format_source`]).
 //!
 //! ## Server push points
 //!
 //! The server emits [`WsMessage::InputQueue`] frames:
-//! 1. Immediately after `handle_user_message` pushes the item (snapshot
-//!    atomically includes the new item).
-//! 2. After the agent drains the item (triggered by the `UserMessage`
-//!    event flowing through `spawn_run_task`); snapshot is now empty.
-//! 3. On connect / reset / resume — initial state.
+//! 1. Immediately after `handle_user_message` pushes a human item.
+//! 2. On ANY `InputQueue` push — human OR monitor — via the queue's
+//!    `on_change` callback registered in `spawn_run_task` (U2: this is how
+//!    a monitor enqueue reaches the WS layer, even though it originates on a
+//!    background reader task).
+//! 3. After the agent drains an item (triggered by `UserMessage` /
+//!    `MonitorDelivery` / `MonitorStopped` events flowing through
+//!    `spawn_run_task`); snapshot reflects the post-drain queue.
+//! 4. On connect / reset / resume — initial state.
 //!
 //! The frontend stores the latest snapshot in
 //! [`SessionStore::input_queue`] and this module reads from that signal.
@@ -118,13 +124,17 @@ pub fn badge_label(count: usize) -> String {
 /// Human-readable source label from the raw `source` field.
 ///
 /// `"human"` → `"Human"` (capitalised).
-/// Unknown values are returned as-is so future U2 monitor sources
-/// render without a code change.
+/// `"monitor:<id>"` → `"Monitor <id>"` (U2 — monitors deliver through the
+/// same inbox as human input; their queued items carry a `monitor:`-prefixed
+/// source).  Any other value is returned as-is.
 #[must_use]
 pub fn format_source(source: &str) -> String {
     match source {
         "human" => "Human".to_owned(),
-        other => other.to_owned(),
+        other => match other.strip_prefix("monitor:") {
+            Some(id) => format!("Monitor {id}"),
+            None => other.to_owned(),
+        },
     }
 }
 
@@ -344,9 +354,21 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
+    fn format_source_monitor_renders_label_with_id() {
+        // U2: monitor sources are `monitor:<id>` and render as `Monitor <id>`.
+        assert_eq!(format_source("monitor:abc"), "Monitor abc");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn format_source_monitor_empty_id() {
+        assert_eq!(format_source("monitor:"), "Monitor ");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
     fn format_source_unknown_passes_through() {
-        // Future U2 monitor sources should render as-is.
-        assert_eq!(format_source("monitor:abc"), "monitor:abc");
+        assert_eq!(format_source("system"), "system");
     }
 
     #[wasm_bindgen_test]

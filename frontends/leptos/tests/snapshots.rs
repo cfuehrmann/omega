@@ -1355,6 +1355,30 @@ mod queue_panel_snapshots {
             "second item preview must appear; got: {html}"
         );
     }
+
+    /// U2 (§15): a monitor-sourced queued item renders with a
+    /// `"Monitor <id>"` source label — monitors now deliver through the
+    /// same inbox/queue as human input.
+    #[test]
+    fn snap_queue_modal_monitor_source_renders_label() {
+        let html = render(|| {
+            let panel = install_queue_context(vec![qi("monitor:watch-1", "build failed")]);
+            panel.0.set(true);
+            view! { <QueueModal /> }
+        });
+        assert!(
+            html.contains("data-testid=\"queue-item-source\""),
+            "source label must be present; got: {html}"
+        );
+        assert!(
+            html.contains("Monitor watch-1"),
+            "monitor source must render as 'Monitor <id>'; got: {html}"
+        );
+        assert!(
+            html.contains("build failed"),
+            "monitor content preview must appear; got: {html}"
+        );
+    }
 }
 
 // CSS guard — queue panel styles defined in style.css

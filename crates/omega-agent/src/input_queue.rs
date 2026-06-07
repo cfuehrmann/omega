@@ -23,9 +23,17 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use chrono::SecondsFormat;
+use omega_tools::MonitorSink;
+use omega_types::events::MonitorStopReason;
 use tokio::sync::Notify;
 
 use crate::agent::InputItem;
+
+/// Callback fired on every [`InputQueue::push`], receiving the atomic
+/// post-push snapshot.  The server registers one to forward a
+/// `WsMessage::InputQueue` frame so the queue badge updates on **any**
+/// enqueue — human *or* monitor (§15 U2 / §9 always-visible).
+pub type OnChange = Arc<dyn Fn(Vec<QueuedItemView>) + Send + Sync>;
 
 /// Preview of one pending item in the queue.
 ///
@@ -53,6 +61,8 @@ struct InnerItem {
 
 struct Inner {
     queue: VecDeque<InnerItem>,
+    /// Optional push-notification callback (§15 U2 queue-viz).
+    on_change: Option<OnChange>,
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +110,7 @@ impl InputQueue {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 queue: VecDeque::new(),
+                on_change: None,
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -115,16 +126,47 @@ impl InputQueue {
     // need it (e.g. the server's WS handler) use it; test code may not.
     #[allow(clippy::must_use_candidate)]
     pub fn push(&self, item: InputItem) -> Vec<QueuedItemView> {
-        let snapshot = {
+        let (snapshot, on_change): (Vec<QueuedItemView>, Option<OnChange>) = {
             let mut guard = self.inner.lock().expect("InputQueue lock poisoned in push");
             let view = make_view(&item);
             guard.queue.push_back(InnerItem { item, view });
-            guard.queue.iter().map(|i| i.view.clone()).collect()
+            let snapshot = guard.queue.iter().map(|i| i.view.clone()).collect();
+            (snapshot, guard.on_change.clone())
         };
         // Notify outside the lock so a waking consumer can acquire
         // immediately without finding the lock still held.
         self.notify.notify_one();
+        // Fire the queue-viz callback (§15 U2) with the atomic snapshot so
+        // the just-pushed item is guaranteed visible — even when the push
+        // comes from a background monitor reader task, not a WS handler.
+        if let Some(cb) = on_change {
+            cb(snapshot.clone());
+        }
         snapshot
+    }
+
+    /// Register the on-push callback (§15 U2 queue-viz).  Idempotent
+    /// replace; the server installs one per active session so monitor
+    /// enqueues reach the WS layer.
+    pub fn set_on_change(&self, cb: OnChange) {
+        self.inner
+            .lock()
+            .expect("InputQueue lock poisoned in set_on_change")
+            .on_change = Some(cb);
+    }
+
+    /// Drain **all** currently-pending items without parking (§15 U2 Seam
+    /// drain).  Returns them in FIFO order; the queue is left empty.
+    /// Complements [`pop`](Self::pop) (which parks and takes exactly one):
+    /// the run loop pops/parks for the first item of a Gather, then drains
+    /// the rest at each seam.
+    #[must_use]
+    pub fn drain_pending(&self) -> Vec<InputItem> {
+        let mut guard = self
+            .inner
+            .lock()
+            .expect("InputQueue lock poisoned in drain_pending");
+        guard.queue.drain(..).map(|i| i.item).collect()
     }
 
     /// Remove and return the front item, parking until one is available.
@@ -172,15 +214,70 @@ impl InputQueue {
 const PREVIEW_LEN: usize = 120;
 
 /// Build the display view for one `InputItem`.
+///
+/// `source` is `"human"` for human input and `"monitor:<id>"` for monitor
+/// deliveries (§15 U2 queue-viz), letting the UI tag each pending item.
 fn make_view(item: &InputItem) -> QueuedItemView {
-    let (source, raw_content) = match item {
-        InputItem::Human { content } => ("human", content.as_str()),
+    let (source, raw_content): (String, String) = match item {
+        InputItem::Human { content } => ("human".to_owned(), content.clone()),
+        InputItem::MonitorStdout { monitor_id, lines } => {
+            (format!("monitor:{monitor_id}"), lines.join("\n"))
+        }
+        InputItem::MonitorStopped {
+            monitor_id,
+            reason,
+            exit_code,
+        } => (
+            format!("monitor:{monitor_id}"),
+            format!(
+                "[stopped: {reason:?}{}]",
+                match exit_code {
+                    Some(c) => format!(" exit={c}"),
+                    None => String::new(),
+                }
+            ),
+        ),
     };
-    let content_preview = truncate_preview(raw_content);
+    let content_preview = truncate_preview(&raw_content);
     QueuedItemView {
-        source: source.to_owned(),
+        source,
         content_preview,
         enqueued_at: chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+    }
+}
+
+/// [`MonitorSink`] implementation that routes monitor stdout/stop onto an
+/// [`InputQueue`] (§15 U2).  The agent's `run()` loop attaches one of these
+/// to the [`MonitorManager`] so monitor output flows through the *same*
+/// inbox as human input.  Pushing fires the queue's `on_change` callback,
+/// so monitor enqueues reach the WS layer for free.
+#[derive(Debug, Clone)]
+pub struct InboxSink {
+    inbox: InputQueue,
+}
+
+impl InboxSink {
+    /// Wrap `inbox` as a monitor delivery sink.
+    #[must_use]
+    pub fn new(inbox: InputQueue) -> Self {
+        Self { inbox }
+    }
+}
+
+impl MonitorSink for InboxSink {
+    fn deliver_stdout(&self, monitor_id: &str, line: String) {
+        let _ = self.inbox.push(InputItem::MonitorStdout {
+            monitor_id: monitor_id.to_owned(),
+            lines: vec![line],
+        });
+    }
+
+    fn deliver_stopped(&self, monitor_id: &str, reason: MonitorStopReason, exit_code: Option<i32>) {
+        let _ = self.inbox.push(InputItem::MonitorStopped {
+            monitor_id: monitor_id.to_owned(),
+            reason,
+            exit_code,
+        });
     }
 }
 
@@ -217,6 +314,159 @@ mod tests {
         InputItem::Human {
             content: s.to_owned(),
         }
+    }
+
+    fn mon_stdout(id: &str, line: &str) -> InputItem {
+        InputItem::MonitorStdout {
+            monitor_id: id.to_owned(),
+            lines: vec![line.to_owned()],
+        }
+    }
+
+    // --- drain_pending (§15 U2 Seam drain) ----------------------------------
+
+    #[test]
+    fn drain_pending_on_empty_queue_is_empty() {
+        let q = InputQueue::new();
+        assert!(q.drain_pending().is_empty());
+    }
+
+    #[test]
+    fn drain_pending_returns_all_in_fifo_and_empties_queue() {
+        let q = InputQueue::new();
+        q.push(human("a"));
+        q.push(mon_stdout("m1", "b"));
+        q.push(human("c"));
+        let drained = q.drain_pending();
+        assert_eq!(drained.len(), 3, "drain must take ALL pending items");
+        assert!(matches!(&drained[0], InputItem::Human { content } if content == "a"));
+        assert!(matches!(&drained[1], InputItem::MonitorStdout { lines, .. } if lines == &["b"]));
+        assert!(matches!(&drained[2], InputItem::Human { content } if content == "c"));
+        assert!(
+            q.snapshot().is_empty(),
+            "queue must be empty after drain_pending"
+        );
+    }
+
+    #[test]
+    fn drain_pending_then_push_does_not_resurrect_drained_items() {
+        let q = InputQueue::new();
+        q.push(human("old"));
+        let _ = q.drain_pending();
+        q.push(human("new"));
+        let again = q.drain_pending();
+        assert_eq!(again.len(), 1, "only the post-drain item remains");
+        assert!(matches!(&again[0], InputItem::Human { content } if content == "new"));
+    }
+
+    // --- monitor-source views (§15 U2 queue-viz) ----------------------------
+
+    #[test]
+    fn view_source_is_monitor_id_for_monitor_stdout() {
+        let q = InputQueue::new();
+        let snap = q.push(mon_stdout("build-watch", "compiling"));
+        assert_eq!(snap[0].source, "monitor:build-watch");
+        assert!(snap[0].content_preview.contains("compiling"));
+    }
+
+    #[test]
+    fn view_source_is_monitor_id_for_monitor_stopped() {
+        let q = InputQueue::new();
+        let snap = q.push(InputItem::MonitorStopped {
+            monitor_id: "ticker".to_owned(),
+            reason: MonitorStopReason::ProcessExited,
+            exit_code: Some(0),
+        });
+        assert_eq!(snap[0].source, "monitor:ticker");
+        assert!(
+            snap[0].content_preview.contains("stopped"),
+            "stopped preview must mention the stop: {}",
+            snap[0].content_preview
+        );
+        assert!(
+            snap[0].content_preview.contains("exit=0"),
+            "stopped preview must carry the exit code: {}",
+            snap[0].content_preview
+        );
+    }
+
+    #[test]
+    fn view_monitor_stopped_without_exit_code_omits_exit() {
+        let q = InputQueue::new();
+        let snap = q.push(InputItem::MonitorStopped {
+            monitor_id: "x".to_owned(),
+            reason: MonitorStopReason::ProcessCrashed,
+            exit_code: None,
+        });
+        assert!(
+            !snap[0].content_preview.contains("exit="),
+            "no exit code → no exit= segment: {}",
+            snap[0].content_preview
+        );
+    }
+
+    // --- on_change callback (§15 U2 WS queue-viz) ---------------------------
+
+    #[test]
+    fn on_change_fires_on_push_with_the_atomic_snapshot() {
+        use std::sync::Mutex as StdMutex;
+        let q = InputQueue::new();
+        let seen: Arc<StdMutex<Vec<Vec<QueuedItemView>>>> = Arc::new(StdMutex::new(Vec::new()));
+        let seen2 = Arc::clone(&seen);
+        q.set_on_change(Arc::new(move |snap| seen2.lock().unwrap().push(snap)));
+        q.push(human("first"));
+        q.push(mon_stdout("m", "second"));
+        let calls = seen.lock().unwrap();
+        assert_eq!(calls.len(), 2, "on_change must fire once per push");
+        assert_eq!(calls[0].len(), 1, "first snapshot has one item");
+        assert_eq!(calls[1].len(), 2, "second snapshot has both items");
+        assert_eq!(calls[1][1].source, "monitor:m");
+    }
+
+    #[test]
+    fn no_on_change_set_push_still_works() {
+        // Absence of a callback must not panic; the else branch is exercised.
+        let q = InputQueue::new();
+        let snap = q.push(human("x"));
+        assert_eq!(snap.len(), 1);
+    }
+
+    // --- InboxSink (§15 U2 manager → inbox) ---------------------------------
+
+    #[test]
+    fn inbox_sink_deliver_stdout_enqueues_monitor_stdout_item() {
+        let q = InputQueue::new();
+        let sink = InboxSink::new(q.clone());
+        sink.deliver_stdout("mon-a", "hello line".to_owned());
+        let snap = q.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].source, "monitor:mon-a");
+        assert!(snap[0].content_preview.contains("hello line"));
+        // Confirm the variant/payload, not just the view.
+        let drained = q.drain_pending();
+        assert!(
+            matches!(&drained[0], InputItem::MonitorStdout { monitor_id, lines }
+                if monitor_id == "mon-a" && lines == &["hello line"]),
+            "deliver_stdout must enqueue MonitorStdout: {:?}",
+            drained[0]
+        );
+    }
+
+    #[test]
+    fn inbox_sink_deliver_stopped_enqueues_monitor_stopped_item() {
+        let q = InputQueue::new();
+        let sink = InboxSink::new(q.clone());
+        sink.deliver_stopped("mon-b", MonitorStopReason::ProcessExited, Some(3));
+        let drained = q.drain_pending();
+        assert_eq!(drained.len(), 1);
+        assert!(
+            matches!(&drained[0], InputItem::MonitorStopped { monitor_id, reason, exit_code }
+                if monitor_id == "mon-b"
+                    && matches!(reason, MonitorStopReason::ProcessExited)
+                    && *exit_code == Some(3)),
+            "deliver_stopped must enqueue MonitorStopped with reason+exit: {:?}",
+            drained[0]
+        );
     }
 
     // --- push / snapshot ----------------------------------------------------
