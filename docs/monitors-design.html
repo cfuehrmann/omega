@@ -58,21 +58,32 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h1>Async Monitors for Omega</h1>
 <p class="meta">
-  <span class="tag tag-status">ALL PHASES (0–4) IMPLEMENTED</span>
-  <span class="tag tag-status">UNIFIED INPUT MODEL (§15) COMPLETE</span><br/>
-  <span class="meta">The Unified Input Model migration is fully landed: U1 (persistent
-  <code>run</code> loop + <code>InputQueue</code>), U2 (monitors through the inbox,
-  two-seam drain) and U3 (controls reconciled — pause-for-injection retired,
-  <strong>Halt</strong>/<strong>Abort</strong> kept, accurate turn-state markers).
-  Three orthogonal controls now: <strong>Queue</strong> (Send, always enqueues),
-  <strong>Halt</strong> (stop advancing at the next seam and wait),
-  <strong>Abort</strong> (cancel the in-flight block now).</span><br/>
-  <span class="meta">Phase 0 (event schema + context projection) landed in commit <code>0edc8d5</code>; Phase 4 (shutdown/resume/headless teardown + <code>MonitorStopReason</code> rename) completed the feature. The four <code>OmegaEvent</code> variants and the §12 decisions are locked in <small class="path">crates/omega-types/src/events.rs</small> and <small class="path">crates/omega-agent/src/agent.rs</small>. §12 documents the single-source-of-truth interlude refactor (between Phases 3 and 4).</span><br/>
+  <span class="tag tag-status">CORE SHIPPED</span>
+  <span class="tag tag-status">NEXT: §16 ELIMINATE THE WS MIRROR</span><br/>
   Design &amp; cold-start resume document. Self-contained: a future session with
   <em>no prior context</em> should be able to read this and either start
-  implementing or continue the discussion. Written because the authoring session
-  is about to be lost to a machine reboot.
+  implementing or continue the discussion.
 </p>
+
+<div class="box ok">
+  <h4>Where we are now (read this first)</h4>
+  <p><strong>The monitor feature is built and the agent loop is sound.</strong>
+  Phases&nbsp;0&ndash;4 (event schema, tool surface, context projection,
+  shutdown/resume/headless), the §12 single-source-of-truth refactor, and the
+  §15 Unified Input Model (U1 persistent <code>run</code> loop +
+  <code>InputQueue</code>, U2 monitors-through-the-inbox two-seam drain, U3
+  control reconciliation) are all landed. Three orthogonal controls exist:
+  <strong>Queue</strong> (Send, always enqueues), <strong>Halt</strong> (stop at
+  the next seam and wait), <strong>Abort</strong> (cancel the in-flight block).
+  Sections&nbsp;1&ndash;15 are kept as the <em>architectural record</em> of how
+  and why &mdash; not as a to-do list.</p>
+  <p><strong>The live frontier is §16.</strong> User testing surfaced one
+  concrete defect (monitor deliveries invisible in the live UI) whose root cause
+  is structural: the frontend re-declares a hand-maintained <code>WsMessage</code>
+  enum that mirrors the canonical <code>OmegaEvent</code> with no compiler link
+  between them. §16 records the diagnosis and the planned fix &mdash;
+  <strong>eliminate the mirror</strong>. Start there.</p>
+</div>
 
 <div class="toc">
   <h4>Contents</h4>
@@ -91,7 +102,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <li><a href="#sst">Single-source-of-truth refactor (implemented)</a></li>
     <li><a href="#open">Open items (deferred, non-blocking)</a></li>
     <li><a href="#codefacts">Codebase facts gathered</a></li>
-    <li><a href="#unified"><strong>Unified input model (planned refactor)</strong></a></li>
+    <li><a href="#unified">Unified input model (implemented)</a></li>
+    <li><a href="#mirror"><strong>Eliminate the WS-message mirror (next — frontend protocol projection)</strong></a></li>
   </ol></div>
 
 <h2 id="goal">1. Goal &amp; motivation</h2>
@@ -902,7 +914,7 @@ MonitorStopped { id, reason, exit_code, time }
 </ul>
 
 <hr/>
-<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: Phases&nbsp;0&ndash;4 and the &sect;12 refactor are shipped. The current frontier is <a href="#unified">&sect;15, the unified input model</a> &mdash; read it and its migration plan before any further monitor work. &sect;13 lists remaining soft spots.</p>
+<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: the monitor core (Phases&nbsp;0&ndash;4), the &sect;12 refactor, and the &sect;15 unified input model are all shipped &mdash; &sect;1&ndash;15 are the architectural record, not open work. The live frontier is <a href="#mirror">&sect;16, eliminating the WS-message mirror</a>; &sect;13 lists remaining soft spots.</p>
 
 <h2 id="unified">15. Unified input model (planned refactor — supersedes &sect;4's parking)</h2>
 
@@ -1279,6 +1291,135 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
 mid-turn drain</strong> (monitor output injected mid-block) &mdash; only the
 Seam-A idle wait is being relocated. U1 is the invasive backbone; U2/U3 are
 incremental on top of it.</p>
+
+<h2 id="mirror">16. Eliminate the WS-message mirror (frontend protocol projection)</h2>
+
+<p><strong>This is the live frontier.</strong> Everything above is shipped; this
+section is the one piece of open implementation work. It begins with a concrete
+defect found in user testing and ends in a structural fix.</p>
+
+<div class="box warn">
+  <h4>Symptom (observed in user testing)</h4>
+  <p>With a <code>tail -F</code> monitor live, <strong>monitor delivery events do
+  not appear in the UI</strong> while the session is running. They <em>do</em>
+  appear after a page reload. So the data is on disk and the renderer works &mdash;
+  only the <em>live</em> path drops them.</p>
+</div>
+
+<h3>Root cause &mdash; two unlinked enums (Contract-Authority drift)</h3>
+<p>The frontend re-declares its own <code>WsMessage</code> enum
+(<small class="path">frontends/leptos/src/protocol.rs</small>,
+<code>#[serde(tag="type", rename_all="snake_case")]</code>) as a
+<strong>hand-maintained mirror</strong> of the wire protocol. It is a
+<em>structurally independent type</em> from the canonical
+<code>omega_types::OmegaEvent</code> &mdash; different crate, no shared definition,
+no codegen, <strong>no compiler-enforced link</strong>. That mirror is missing the
+four monitor variants <code>MonitorStarted</code>, <code>MonitorDelivery</code>,
+<code>MonitorStderr</code>, <code>MonitorStopped</code> (it carries only the
+ephemeral <code>MonitorRoster</code>). <code>HarnessRecovery</code> <em>is</em>
+present; by enumeration the four monitor events are the <em>only</em> gap today.</p>
+
+<p>The asymmetry that makes this insidious:</p>
+<ul>
+  <li><strong>Server is exhaustive over <code>OmegaEvent</code> for free.</strong>
+    It forwards events generically &mdash;
+    <small class="path">crates/omega-server/src/ws_message.rs</small>
+    <code>Self::Item(item) =&gt; serde_json::to_value(item.as_ref())</code>.
+    Adding a variant to <code>omega-types</code> ships it on the wire with
+    <em>zero</em> server edits and <em>zero</em> compile errors.</li>
+  <li><strong>Frontend mirror is silently incomplete.</strong> Adding that variant
+    produces no frontend compile error, because the two enums are unrelated types.
+    The new frame arrives as <code>{"type":"monitor_delivery",&hellip;}</code> and
+    fails to deserialize into <code>WsMessage</code>.</li>
+  <li><strong>The failure is swallowed.</strong>
+    <small class="path">frontends/leptos/src/ws.rs</small> does
+    <code>serde_json::from_str::&lt;WsMessage&gt;(&amp;text)</code> and, on
+    <code>Err</code>, only <code>leptos::logging::warn!(&hellip;)</code> then drops
+    the frame. No toast, no error block &mdash; a console warning nobody watches.</li>
+  <li><strong>Reload works by a different path.</strong> History replay parses into
+    <code>HistoryPayload { events: Vec&lt;OmegaEvent&gt; }</code> &mdash; the
+    <em>canonical</em> type &mdash; so persisted monitor events render after reload.
+    Server replay only excludes <code>ready</code>/<code>text</code>
+    (<code>REPLAY_EXCLUDE</code>), so the events are present; only the live
+    <code>WsMessage</code> hop drops them.</li>
+</ul>
+
+<div class="box callout">
+  <h4>Why the type system can't catch it, and why there's no runtime error</h4>
+  <p>This is exactly the <strong>Contract-Authority drift</strong> AGENTS.md warns
+  about: <code>OmegaEvent</code> is canonical; <code>WsMessage</code> is a derived
+  projection that <em>must</em> conform &mdash; but conformance here is maintained
+  by hand, not enforced. Because the mirror is a separate type, neither
+  <code>match</code> exhaustiveness nor any other check binds. And because the
+  parse error is deliberately tolerated (resilience to protocol skew), drift
+  degrades <em>silently</em> instead of failing loudly &mdash; the opposite of the
+  &ldquo;loud schema change&rdquo; rule.</p>
+</div>
+
+<h3>The fix &mdash; eliminate the mirror (the real correction)</h3>
+<p>Patching the four missing variants by hand restores monitors but leaves the
+structure that produced the bug: the <em>next</em> event variant added to
+<code>omega-types</code> will drift again, just as silently. The decided fix is
+structural:</p>
+<ol>
+  <li><strong>Deserialize event-carrying frames straight into
+    <code>omega_types::OmegaEvent</code>.</strong> Stop re-declaring the ~30 event
+    variants in the frontend. The canonical type already derives serde and is
+    already a dependency (the History path uses it). Adding a variant to
+    <code>omega-types</code> then flows to the UI with no frontend edit &mdash; the
+    mirror can no longer be incomplete.</li>
+  <li><strong>Keep only the genuinely frontend-specific frames in a thin
+    envelope.</strong> Envelope / signal / ephemeral messages that are <em>not</em>
+    <code>OmegaEvent</code>s &mdash; <code>Ready</code>, streaming
+    <code>Text</code>/<code>Thinking</code> deltas, <code>MonitorRoster</code>,
+    <code>InputQueue</code>, <code>History</code>, session-info, reset/ack frames
+    &mdash; stay as a small hand-written enum. The likely shape: an outer enum that
+    is <em>either</em> one of those envelope frames <em>or</em> a transparent
+    <code>OmegaEvent</code> (e.g. via <code>#[serde(untagged)]</code> over the two,
+    or an explicit <code>Event(OmegaEvent)</code> arm fed by the server's existing
+    flat <code>type</code>-tagged projection). Whoever implements decides the exact
+    serde wiring; the invariant is: <em>no event variant is ever re-typed in the
+    frontend.</em></li>
+  <li><strong>Make parse failure loud, not swallowed.</strong> In
+    <code>ws.rs</code>, an unparseable frame must surface visibly (an error block /
+    dev banner), not just <code>warn!</code>. A dropped frame is diagnostic signal;
+    it must not be invisible.</li>
+  <li><strong>Install a drift-guard test.</strong> Round-trip <em>every</em>
+    <code>OmegaEvent</code> variant through the server's serialization
+    (<code>serde_json::to_value</code>) &rarr; the frontend parse &rarr; back to
+    <code>OmegaEvent</code>, asserting each yields the matching variant. This turns
+    any future omission into a red test the moment it is introduced &mdash; it would
+    have caught this one. This guard is what answers the broader worry
+    (&ldquo;do we have comparable omissions for other recently-introduced
+    events?&rdquo;) permanently, rather than by one-time enumeration.</li>
+</ol>
+
+<div class="box ok">
+  <h4>Acceptance criteria</h4>
+  <ul>
+    <li>Monitor deliveries appear in the UI <strong>live</strong> (not only after
+      reload), verified against a <code>tail -F</code> monitor.</li>
+    <li>The frontend no longer re-declares per-event variants for the event-carrying
+      frames; adding a variant to <code>omega-types</code> requires <em>no</em>
+      frontend enum edit to display it.</li>
+    <li>An unparseable WS frame produces a <strong>visible</strong> signal, not a
+      silent drop.</li>
+    <li>A drift-guard test exercises all <code>OmegaEvent</code> variants and fails
+      if any cannot round-trip through the frontend.</li>
+    <li>The gate is green; targeted <code>cargo mutants</code> on the changed files
+      leaves no survivors (or documented skips), with a named Justfile recipe.</li>
+  </ul>
+</div>
+
+<p class="meta"><strong>Note on Observation&nbsp;2 (not a bug).</strong> Appending
+two lines to a watched file produces <em>two</em> queue items: the monitor stdout
+reader is line-oriented
+(<small class="path">crates/omega-tools/src/monitors.rs</small> &rarr;
+<code>InboxSink::deliver_stdout</code> enqueues one
+<code>InputItem::MonitorStdout { lines: vec![line] }</code> per line). The two items
+become two <code>MonitorDelivery</code> events that <code>project_messages</code>
+merges into a single <code>role:user</code> API message when they land at the same
+seam (&sect;8, &sect;15). One-item-per-line is the intended design; this is correct.</p>
 
 </main>
 </body>
