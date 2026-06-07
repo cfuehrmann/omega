@@ -908,12 +908,7 @@ unification, not a patch.</p>
 <div class="box callout">
   <h4>The settled model</h4>
   <ol>
-    <li><strong>One input queue.</strong> All user-role content — human messages,
-      monitor lines, monitor-stop notices, hook/synthetic output — flows through a
-      single queue. <strong>A human message is just a one-shot &ldquo;monitor&rdquo;:
-      one item, then done.</strong> <code>source</code> is a tag that affects
-      <em>rendering</em> (<code>&lt;monitor id=&hellip;&gt;</code> vs raw text),
-      never <em>handling</em>.</li>
+    <li><strong>One input queue for <em>async</em> user-role input.</strong> Everything that arrives asynchronously &mdash; human messages, monitor lines, monitor-stop notices, future async hook output &mdash; flows through a single queue. <strong>A human message is just a one-shot &ldquo;monitor&rdquo;: one item, then done.</strong> <code>source</code> is a tag affecting <em>rendering</em> (<code>&lt;monitor id=&hellip;&gt;</code> vs raw text), never <em>handling</em>. <strong>Carve-out:</strong> the agent's <em>synchronous self-repairs</em> (<code>HarnessRecovery</code> &mdash; empty-response continuation, tool-JSON nudge) are eventful but <em>not</em> queued; they are injected inline and re-sent immediately, since queuing would wrongly delay them to a seam.</li>
     <li><strong>Inputs are enqueued, never injected by acquiring the agent.</strong>
       The server's human-input handler does exactly what the monitor manager does:
       <em>append&nbsp;+&nbsp;notify</em>. Nothing reaches in to &ldquo;start&rdquo;
@@ -928,17 +923,22 @@ unification, not a patch.</p>
     <li><strong>Idle = an empty-queue seam.</strong> Waiting for the human and
       &ldquo;parked on a monitor&rdquo; become the <em>same</em> state. The
       park/terminate/roster-changed machinery dissolves.</li>
-    <li><strong>Abort is the only forceful control,</strong> fully outside this
-      picture. Cooperative input lands at the next seam; &ldquo;stop now&rdquo; is
-      abort.</li>
+    <li><strong>Three orthogonal controls</strong> sit outside the queue. <strong>Queue</strong> &mdash; cooperative input; lands at the next seam; the agent keeps going unless halted. <strong>Halt</strong> &mdash; optional, graceful: stop advancing at the next seam and <em>wait</em> (the modernised &ldquo;pause&rdquo;). <strong>Abort</strong> &mdash; forceful: cancel the in-flight block now. Queuing never requires halting; you may halt <em>and</em> queue a steering message, or queue without halting. <strong>Halt is load-bearing</strong>: when the agent heads the wrong way, halt it so it stops advancing while you compose a steering message at leisure (vital for human review), then it resumes on your queued input. Abort, by contrast, discards the in-flight step.</li>
     <li><strong>Headless</strong> is the sole place a termination rule survives:
       empty queue + no live monitor &rarr; done. Interactive simply waits at the
       seam.</li>
     <li><strong>Interjection is preserved, modernised.</strong> Typing while a
       block runs enqueues and is folded in at the next seam &mdash; automatically,
       no pause-then-continue dance. The pause/continue <em>plumbing</em> for
-      interjection is superseded; the <em>capability</em> remains and is smoother.</li>
+      interjection is superseded; the <em>capability</em> remains and is smoother. (The <strong>halt</strong> control above is the separate, retained piece of the old pause &mdash; &ldquo;freeze while I compose&rdquo; &mdash; <em>not</em> the interjection plumbing, which the queue supersedes.)</li>
   </ol>
+</div>
+
+<h3>Queue visualisation &mdash; a first-class UX goal (review instrument)</h3>
+<div class="box callout">
+<p>The queue is the <em>fundamental</em> construct; the <strong>monitor roster is really one filtered view onto it</strong> (&ldquo;what's live/queued from monitor sources&rdquo;). So a <strong>queue visualisation is arguably the more important UX</strong> than the monitor roster &mdash; and it is a <strong>critical instrument for human review</strong>: seeing what is queued (and from which <code>source</code> &mdash; human, monitor, &hellip;), pending delivery at the next seam, is how the reviewer stays oriented while steering.</p>
+<p><strong>Status:</strong> unbuilt. This is the &ldquo;pending-queue visualisation&rdquo; deferred back in Phase&nbsp;3 (marked PLANNED in &sect;9). Given its role as a review instrument it should be <strong>promoted in priority</strong> &mdash; treat it as a first-class goal alongside (not after) the loop work, not a nice-to-have. It is UI work, separable from the U2/U3 loop plumbing, but it depends on the queue being the real substrate (U1 onward).</p>
+<p class="meta">It also subsumes the monitor-roster UX direction: once the queue is visualised by source, the monitor roster can be a saved filter rather than a bespoke panel.</p>
 </div>
 
 <h3>From &rarr; to</h3>
