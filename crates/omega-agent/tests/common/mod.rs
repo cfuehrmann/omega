@@ -24,9 +24,10 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use async_stream::stream;
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use omega_agent::{Agent, AgentConfig, InputItem};
+use omega_agent::{Agent, AgentConfig, InputItem, InputQueue};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_store::{ContextStore, EventStore};
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
@@ -209,25 +210,49 @@ pub fn make_terminal_response(
 // Stream-collection helpers
 // ---------------------------------------------------------------------------
 
+/// Returns `true` when `item` marks the end of a single turn
+/// (`TurnEnd` or `TurnInterrupted`).
+///
+/// `AgentError` is NOT terminal here: it may be followed by
+/// `TurnInterrupted` in the same turn (e.g. when the empty-response cap is
+/// exceeded), so stopping at `AgentError` would drop the subsequent event.
+///
+/// Used by [`drive`] to stop the forwarding stream after one turn so the
+/// test doesn't hang waiting for the persistent run loop to park.
+fn is_turn_terminal(item: &AgentItem) -> bool {
+    use omega_types::OmegaEvent;
+    matches!(
+        item,
+        AgentItem::Event(ev)
+            if matches!(ev.as_ref(), OmegaEvent::TurnEnd(_) | OmegaEvent::TurnInterrupted(_))
+    )
+}
+
 /// Drive a single human turn through the persistent [`Agent::run`] loop
 /// (§15 Unified Input Model) and return the run stream.
 ///
-/// Queues one `Human` [`InputItem`] then **closes** the inbox, so after the
-/// single turn the run loop's next Gather sees a closed inbox and returns —
-/// reproducing the one-turn-then-finish shape of the old `send_message`
-/// without an explicit channel dance at every call site.  `cancel` is the
-/// run-level token (firing it aborts the in-flight turn and terminates the
-/// loop), matching the old per-message cancel semantics.
+/// Pushes one `Human` item into a fresh [`InputQueue`] and forwards the
+/// run stream until the first `TurnEnd` / `TurnInterrupted` / `AgentError`
+/// (inclusive).  The persistent run loop parks after the turn; this wrapper
+/// stops the forwarding stream at the terminal event so tests don't hang,
+/// reproducing the one-turn-then-finish shape of the old inbox-close approach.
 pub fn drive(
     agent: &mut Agent,
     content: String,
     cancel: CancellationToken,
-) -> impl futures::Stream<Item = AgentItem> + '_ {
-    let (tx, rx) = tokio::sync::mpsc::channel(8);
-    tx.try_send(InputItem::Human { content })
-        .expect("seed inbox");
-    drop(tx); // close inbox => run() returns after this single turn
-    agent.run(rx, cancel)
+) -> futures::stream::BoxStream<'_, AgentItem> {
+    let queue = InputQueue::new();
+    queue.push(InputItem::Human { content });
+    let mut inner = agent.run(queue, cancel);
+    Box::pin(stream! {
+        while let Some(item) = inner.next().await {
+            let terminal = is_turn_terminal(&item);
+            yield item;
+            if terminal {
+                break;
+            }
+        }
+    })
 }
 
 /// Drive an agent stream to completion and return every item produced.

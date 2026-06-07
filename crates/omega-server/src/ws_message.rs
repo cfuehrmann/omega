@@ -21,6 +21,19 @@ use omega_core::AgentItem;
 use omega_types::FeatureFlags;
 use omega_types::ids::LoggedEvent;
 
+/// One pending item in the ephemeral input-queue snapshot.
+/// Transport-only projection — never written to `events.jsonl`.
+/// Structured to admit `"monitor:<id>"` sources in U2.
+#[derive(Debug, Clone)]
+pub struct InputQueueItem {
+    /// Who queued this item.  Currently always `"human"`.
+    pub source: String,
+    /// First 120 characters of the content string.
+    pub content_preview: String,
+    /// RFC 3339 enqueue timestamp.
+    pub enqueued_at: String,
+}
+
 /// One entry in an ephemeral roster snapshot.
 /// Transport-only projection — never written to `events.jsonl`.
 #[derive(Debug, Clone)]
@@ -126,6 +139,18 @@ pub enum WsMessage {
         /// All monitors registered in the current session, in insertion order.
         monitors: Vec<MonitorRosterItem>,
     },
+
+    /// Ephemeral input-queue snapshot — pushed (a) when an item is enqueued
+    /// and (b) after the agent drains one (detected via `UserMessage` event).
+    /// Also pushed on connect/reset/resume alongside the roster snapshot.
+    ///
+    /// **NOT** persisted to `events.jsonl`; transport-only projection of
+    /// [`omega_agent::InputQueue::snapshot()`].  The client stores the
+    /// latest snapshot in a reactive store signal; the queue panel reads it.
+    InputQueue {
+        /// Pending items not yet consumed by the agent, in arrival order.
+        items: Vec<InputQueueItem>,
+    },
 }
 
 /// What the operator was about to do when the dirty-tree gate fired.
@@ -171,6 +196,10 @@ impl WsMessage {
     ///
     /// Pure function so it can be exercised by direct unit tests; the
     /// writer task only ever calls [`Self::to_text`].
+    // The function is a single match with one arm per WsMessage variant.
+    // A match cannot be meaningfully split; the line count will grow with
+    // each new variant.  Suppressing the lint is correct here.
+    #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         match self {
@@ -261,6 +290,22 @@ impl WsMessage {
                 serde_json::json!({
                     "type": "monitor_roster",
                     "monitors": items,
+                })
+            }
+            Self::InputQueue { items } => {
+                let entries: Vec<serde_json::Value> = items
+                    .iter()
+                    .map(|it| {
+                        serde_json::json!({
+                            "source": it.source,
+                            "contentPreview": it.content_preview,
+                            "enqueuedAt": it.enqueued_at,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "type": "input_queue",
+                    "items": entries,
                 })
             }
         }

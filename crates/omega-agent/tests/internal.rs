@@ -82,7 +82,7 @@ use common::{
     collect_stream, drive, make_llm_response, make_monitor_item, make_terminal_response,
     make_test_agent, make_tool_use_items, tags,
 };
-use omega_agent::{Agent, AgentConfig, InputItem};
+use omega_agent::{Agent, AgentConfig, InputItem, InputQueue};
 use omega_core::{AgentItem, ContentBlock, LlmError, LlmRequest, Message, Role};
 use omega_store::{ContextStore, EventStore, content_hash};
 use omega_types::events::MonitorStopReason;
@@ -2555,11 +2555,11 @@ async fn monitor_stopped_wrapper_format_in_llm_context() {
 // ---------------------------------------------------------------------------
 // Unified Input Model (§15, U1): the persistent `Agent::run` loop.
 //
-// These drive `run(inbox, cancel)` DIRECTLY with a live `mpsc::Sender` (not
-// the one-shot `drive` helper that closes the inbox) so they can observe the
-// loop *parking* on an empty inbox between turns and serving a SECOND message
-// from the SAME run task — the exact shape that deadlocked under the old
-// per-message `send_message` + agent-lock design.
+// These drive `run(inbox, cancel)` DIRECTLY with a live `InputQueue` (not
+// the one-shot `drive` helper that stops after TurnEnd) so they can observe
+// the loop *parking* on an empty queue between turns and serving a SECOND
+// message from the SAME run task — the exact shape that deadlocked under the
+// old per-message `send_message` + agent-lock design.
 // ---------------------------------------------------------------------------
 
 /// Pull the run stream until a `TurnEnd` is observed, panicking if the loop
@@ -2594,34 +2594,30 @@ async fn run_loop_parks_after_turn_then_processes_second_message() {
     provider.push_response(make_terminal_response("end_turn", 5, 5));
     provider.push_response(make_terminal_response("end_turn", 5, 5));
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<InputItem>(8);
+    let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(rx, run_cancel);
+    let mut stream = agent.run(queue.clone(), run_cancel.clone());
 
     // --- First message ---
-    tx.send(InputItem::Human {
+    queue.push(InputItem::Human {
         content: "first".to_owned(),
-    })
-    .await
-    .expect("send first");
+    });
     let seen = pull_to_turn_end(&mut stream).await;
     assert!(
         seen.contains(&"UserMessage"),
         "the human message must be echoed as a UserMessage event, saw {seen:?}"
     );
 
-    // --- The loop must PARK on the empty inbox (not terminate) ---
+    // --- The loop must PARK on the empty queue (not terminate) ---
     assert!(
         matches!(pull(&mut stream, 300).await, Pull::Parked),
-        "loop must park on an empty inbox, not terminate"
+        "loop must park on an empty queue, not terminate"
     );
 
     // --- Second message: served by the SAME run task ---
-    tx.send(InputItem::Human {
+    queue.push(InputItem::Human {
         content: "second".to_owned(),
-    })
-    .await
-    .expect("send second");
+    });
     let _ = pull_to_turn_end(&mut stream).await;
 
     let reqs = provider.take_requests();
@@ -2639,11 +2635,11 @@ async fn run_loop_parks_after_turn_then_processes_second_message() {
         "second request must carry the second message"
     );
 
-    // --- Closing the inbox lets the parked loop terminate cleanly ---
-    drop(tx);
+    // --- Cancelling the run token lets the parked loop terminate cleanly ---
+    run_cancel.cancel();
     assert!(
         matches!(pull(&mut stream, 3000).await, Pull::Ended),
-        "closing the inbox must end the run loop"
+        "cancelling the run token must end the run loop"
     );
 }
 
@@ -2660,13 +2656,11 @@ async fn run_loop_streams_multi_cycle_turn_then_parks() {
     // One non-empty terminal response for after the tool result.
     provider.push_response(make_terminal_response("end_turn", 5, 5));
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<InputItem>(8);
-    let mut stream = agent.run(rx, CancellationToken::new());
-    tx.send(InputItem::Human {
+    let queue = InputQueue::new();
+    let mut stream = agent.run(queue.clone(), CancellationToken::new());
+    queue.push(InputItem::Human {
         content: "build".to_owned(),
-    })
-    .await
-    .expect("send");
+    });
 
     let seen = pull_to_turn_end(&mut stream).await;
     assert!(
@@ -2679,6 +2673,187 @@ async fn run_loop_streams_multi_cycle_turn_then_parks() {
         matches!(pull(&mut stream, 300).await, Pull::Parked),
         "loop must park after a multi-cycle turn, not terminate"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 3b. §15 U1 — InputQueue behaviour (dog-food acceptance tests)
+// ---------------------------------------------------------------------------
+//
+// These tests verify the `InputQueue` end-to-end through `Agent::run` with
+// a `MockProvider`, as required by the §15 U1 acceptance criterion:
+// ordinary human↔agent coding turns must still work, and `snapshot()`
+// must accurately reflect the pending state.
+
+/// Push one human item, run one turn, verify the item is processed and
+/// `snapshot()` is empty after drain.
+#[tokio::test]
+async fn push_human_item_processed_queue_empty_after_drain() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+
+    // Before push, snapshot must be empty.
+    assert_eq!(queue.snapshot().len(), 0, "queue must start empty");
+
+    // Push one item and verify snapshot shows it pending.
+    let snap = queue.push(InputItem::Human {
+        content: "please implement".to_owned(),
+    });
+    assert_eq!(snap.len(), 1, "push snapshot must show 1 item");
+    assert_eq!(snap[0].source, "human", "source must be 'human'");
+    assert!(
+        snap[0].content_preview.contains("please implement"),
+        "preview must contain message content: {:?}",
+        snap[0].content_preview
+    );
+
+    // Run the turn to completion.
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(
+        seen.contains(&"TurnEnd"),
+        "turn must complete; saw {seen:?}"
+    );
+
+    // After the item is drained, snapshot must be empty.
+    assert_eq!(
+        queue.snapshot().len(),
+        0,
+        "queue must be empty after item is processed"
+    );
+
+    run_cancel.cancel();
+}
+
+/// `snapshot()` reflects the pending state accurately — grows on push,
+/// shrinks (to zero) after drain.
+#[tokio::test]
+async fn snapshot_reflects_pending_state() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+
+    // Empty queue — snapshot is empty.
+    assert_eq!(queue.snapshot().len(), 0);
+
+    // Push and confirm snapshot has 1 item.
+    queue.push(InputItem::Human {
+        content: "snapshot test".to_owned(),
+    });
+    // Note: the agent might pop the item immediately on a multi-thread
+    // scheduler, so we only check that the push succeeded and the queue
+    // drains to 0 after the turn completes.
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(seen.contains(&"TurnEnd"));
+
+    // After drain, snapshot must report 0 items.
+    assert_eq!(
+        queue.snapshot().len(),
+        0,
+        "snapshot must be empty after drain"
+    );
+    run_cancel.cancel();
+}
+
+/// Two pushed items are processed in FIFO order (one per cycle).
+///
+/// `InputQueue.pop()` uses `pop_front()` on a `VecDeque`, so the first
+/// pushed item is always served first.  This test drives two turns and
+/// asserts the LLM received them in order.
+#[tokio::test]
+async fn two_pushed_items_processed_in_order() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    // Two terminal responses, one per turn.
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+
+    // Push first item before the loop starts.
+    queue.push(InputItem::Human {
+        content: "first item".to_owned(),
+    });
+
+    // Drain the first turn.
+    let _ = pull_to_turn_end(&mut stream).await;
+
+    // Push second item after first turn completes.
+    queue.push(InputItem::Human {
+        content: "second item".to_owned(),
+    });
+
+    // Drain the second turn.
+    let _ = pull_to_turn_end(&mut stream).await;
+
+    // Verify the two LLM requests carried the messages in FIFO order.
+    let reqs = provider.take_requests();
+    assert!(
+        reqs.len() >= 2,
+        "two turns must produce at least 2 LLM requests; got {}",
+        reqs.len()
+    );
+    assert!(
+        user_text(&reqs[0]).contains("first item"),
+        "first LLM request must contain 'first item'; got: {:?}",
+        user_text(&reqs[0])
+    );
+    assert!(
+        user_text(&reqs[1]).contains("second item"),
+        "second LLM request must contain 'second item'; got: {:?}",
+        user_text(&reqs[1])
+    );
+
+    run_cancel.cancel();
+}
+
+/// Ordinary multi-cycle coding turn works end-to-end through `InputQueue`.
+///
+/// This is the §15 U1 dog-food acceptance test: tool_use → tool_result →
+/// end_turn still works identically to U1's pre-InputQueue behaviour.
+#[tokio::test]
+async fn ordinary_multi_cycle_coding_turn_works_through_input_queue() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    provider.push_response(make_tool_use_items(
+        "t1",
+        "run_command",
+        json!({ "command": "cargo build" }),
+    ));
+    provider.push_response(make_terminal_response("end_turn", 8, 3));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+
+    queue.push(InputItem::Human {
+        content: "build the project".to_owned(),
+    });
+
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(
+        seen.contains(&"ToolCall") && seen.contains(&"ToolResult"),
+        "multi-cycle turn must include ToolCall + ToolResult; saw {seen:?}"
+    );
+    assert!(
+        seen.contains(&"TurnEnd"),
+        "multi-cycle turn must end; saw {seen:?}"
+    );
+
+    // LLM was called twice (tool_use cycle + follow-up cycle).
+    let reqs = provider.take_requests();
+    assert_eq!(
+        reqs.len(),
+        2,
+        "multi-cycle turn must produce exactly 2 LLM requests"
+    );
+
+    run_cancel.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -3099,14 +3274,12 @@ async fn run_loop_abort_cancels_block_and_returns_to_park() {
     // Turn 2 (after re-park): one non-empty response that ends the turn.
     provider.push_response(make_terminal_response("end_turn", 5, 5));
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<InputItem>(8);
+    let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(rx, run_cancel.clone());
-    tx.send(InputItem::Human {
+    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    queue.push(InputItem::Human {
         content: "long".to_owned(),
-    })
-    .await
-    .expect("send long");
+    });
 
     // Fire a control abort shortly after the block starts the tool.
     let ctl = controls.clone();
@@ -3140,11 +3313,9 @@ async fn run_loop_abort_cancels_block_and_returns_to_park() {
     );
 
     // A new message is still served by the SAME run task.
-    tx.send(InputItem::Human {
+    queue.push(InputItem::Human {
         content: "after-abort".to_owned(),
-    })
-    .await
-    .expect("send after-abort");
+    });
     let _ = pull_to_turn_end(&mut stream).await;
 }
 

@@ -558,3 +558,19 @@ install-hooks:
     cp scripts/pre-commit .git/hooks/pre-commit
     chmod +x .git/hooks/pre-commit
     @echo "✅  Git hooks installed."
+
+# §15 U1 — mutation-test the InputQueue logic (push/pop/snapshot).
+# All mutations must be CAUGHT or UNVIABLE; a survivor means a test gap.
+mutants-input-queue:
+    mkdir -p {{mutants-tmp}}
+    cargo mutants -p omega-agent --cap-lints=true \
+        --file "crates/omega-agent/src/input_queue.rs" \
+        -- --tmp-dir {{mutants-tmp}}
+
+# §15 U1 — mutation-test the server push decision points in router.rs.
+# Target: `is_user_message_event`, `queue_snapshot_msg`, enqueue/drain push hooks.
+mutants-input-queue-router:
+    mkdir -p {{mutants-tmp}}
+    cargo mutants -p omega-server --cap-lints=true \
+        --file "crates/omega-server/src/router.rs" \
+        -- --tmp-dir {{mutants-tmp}}

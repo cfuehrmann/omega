@@ -31,7 +31,7 @@ use axum::{
     routing::get,
 };
 use futures::{SinkExt, StreamExt};
-use omega_agent::{Agent, AgentConfig, InputItem};
+use omega_agent::{Agent, AgentConfig, InputItem, InputQueue, QueuedItemView};
 use omega_store::{ContextRecord, ContextStore, EventStore, SessionMetadata, session_dir_re};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -47,7 +47,7 @@ use omega_types::ids::LoggedEvent;
 
 use crate::AppState;
 use crate::session::{ActiveSession, SessionInfoCache};
-use crate::ws_message::{MonitorRosterItem, PendingChangesIntent, WsMessage};
+use crate::ws_message::{InputQueueItem, MonitorRosterItem, PendingChangesIntent, WsMessage};
 
 // ---------------------------------------------------------------------------
 // History replay — filter constants and helper
@@ -91,6 +91,35 @@ pub fn is_monitor_event(item: &AgentItem) -> bool {
                     | OmegaEvent::MonitorStopped(_)
             )
     )
+}
+
+/// Returns `true` if `item` is a `UserMessage` event — the moment at which
+/// the agent has just dequeued one item from the [`InputQueue`].
+/// Used by [`spawn_run_task`] to push a fresh queue snapshot after the
+/// forwarded event is written to the client.
+#[must_use]
+pub fn is_user_message_event(item: &AgentItem) -> bool {
+    matches!(
+        item,
+        AgentItem::Event(ev) if matches!(ev.as_ref(), OmegaEvent::UserMessage(_))
+    )
+}
+
+/// Build a [`WsMessage::InputQueue`] snapshot from a slice of [`QueuedItemView`]s.
+/// The snapshot is ephemeral and transport-only — it MUST NOT be written to
+/// `events.jsonl`.
+#[must_use]
+fn queue_snapshot_msg(items: Vec<QueuedItemView>) -> WsMessage {
+    WsMessage::InputQueue {
+        items: items
+            .into_iter()
+            .map(|v| InputQueueItem {
+                source: v.source,
+                content_preview: v.content_preview,
+                enqueued_at: v.enqueued_at,
+            })
+            .collect(),
+    }
 }
 
 /// Build a [`WsMessage::MonitorRoster`] snapshot from the current roster.
@@ -323,19 +352,18 @@ async fn create_active_session(
         has_pending_changes,
         features,
     };
-    // §15 (Unified Input Model, U1): human input flows through this inbox to
-    // the persistent run task spawned at reset/resume — not by acquiring the
-    // agent lock per message.  Bounded so a runaway producer can't grow the
-    // queue unboundedly; 64 is far more than the UI ever queues.
-    let (inbox, inbox_rx) = tokio::sync::mpsc::channel::<InputItem>(64);
+    // §15 (Unified Input Model, U1): human input flows through this inspectable
+    // queue to the persistent run task spawned at reset/resume — not by acquiring
+    // the agent lock per message.  `InputQueue::push` returns a snapshot that is
+    // forwarded to the UI for queue visualisation (Step 2).
+    let input_queue = InputQueue::new();
     let session = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
         controls,
         paths,
         ws_tx: None,
         current_turn: None,
-        inbox,
-        inbox_rx: Some(inbox_rx),
+        input_queue,
         run_cancel: CancellationToken::new(),
         model_effort,
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
@@ -630,12 +658,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Ready frame signals end-of-batch to the client.
     let _ = tx.send(WsMessage::Ready);
 
-    // Roster snapshot — push once on connect so the badge reflects the
-    // live roster immediately (e.g. after a browser reconnect mid-session).
+    // Roster + queue snapshots — push once on connect so the badges reflect
+    // the live state immediately (e.g. after a browser reconnect mid-session).
     {
         let slot = state.active_session.lock().await;
         if let Some(active) = slot.as_ref() {
             let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
+            let _ = tx.send(queue_snapshot_msg(active.input_queue.snapshot()));
         }
     }
 
@@ -820,66 +849,68 @@ async fn handle_delete_session(
     Ok(())
 }
 
-/// Push a human message onto the persistent run loop's inbox (§15 Unified
-/// Input Model, U1).
+/// Push a human message into the inspectable input queue and broadcast a
+/// fresh queue snapshot to the connected client (§15 Unified Input Model, U1).
 ///
 /// This is the deadlock fix: instead of acquiring the agent lock and
 /// calling `send_message` per message (the old per-message re-entry that
 /// deadlocked when a new message arrived while the prior turn was parked),
-/// we hand the message to the single per-session run task via its inbox.
-/// That task owns the agent lock for the session's life and streams every
-/// turn to the WebSocket (see [`spawn_run_task`]).  No `agent.lock()`, no
-/// spawned per-message stream.
+/// we push the item into the shared [`InputQueue`] which the single
+/// per-session run task drains.  `InputQueue::push` returns a snapshot
+/// taken atomically while the item is still in the queue, so the client
+/// always sees the item appear before it disappears.
 async fn handle_user_message(
     content: String,
     state: &AppState,
-    _tx: &UnboundedSender<WsMessage>,
+    tx: &UnboundedSender<WsMessage>,
 ) -> Result<(), String> {
-    let inbox = {
+    let input_queue = {
         let slot = state.active_session.lock().await;
         let Some(active) = slot.as_ref() else {
             return Err("no active session — send `reset` first".to_owned());
         };
-        active.inbox.clone()
+        active.input_queue.clone()
     };
-    inbox
-        .send(InputItem::Human { content })
-        .await
-        .map_err(|_| "agent run loop is not accepting input".to_owned())
+    let snapshot = input_queue.push(InputItem::Human { content });
+    let _ = tx.send(queue_snapshot_msg(snapshot));
+    Ok(())
 }
 
 /// Spawn the single per-session `Agent::run` task and stash its handle.
 ///
 /// §15 (Unified Input Model, U1): called once at reset/resume.  The task
 /// acquires the agent lock and holds it for the session's life, driving
-/// the persistent run loop (parked on an empty inbox until input arrives)
-/// and forwarding every yielded item to whichever WebSocket is currently
-/// installed in `active_session.ws_tx`.
+/// the persistent run loop (parked on an empty input queue until input
+/// arrives) and forwarding every yielded item to whichever WebSocket is
+/// currently installed in `active_session.ws_tx`.
 ///
-/// The WS-forwarding loop (turn-state transitions via `next_turn_state_for`
-/// and the `is_monitor_event` roster push) moved here from the old
-/// `handle_user_message`.  Looking up `ws_tx` on each send (rather than
-/// capturing a clone) lets a turn survive a browser reload — events
-/// emitted *after* the new connection takes over still reach the client.
+/// The WS-forwarding loop pushes:
+/// - A fresh roster snapshot after every monitor lifecycle event.
+/// - A fresh queue snapshot after every `UserMessage` event (the moment
+///   the just-popped item has left the queue, so the client sees it drain).
+/// - Turn-state transitions via `next_turn_state_for`.
+///
+/// Looking up `ws_tx` on each send (rather than capturing a clone) lets a
+/// turn survive a browser reload — events emitted after the new connection
+/// takes over still reach the client.
 async fn spawn_run_task(state: &AppState) {
     let prepared = {
-        let mut slot = state.active_session.lock().await;
-        slot.as_mut().and_then(|active| {
-            active.inbox_rx.take().map(|rx| {
-                (
-                    rx,
-                    Arc::clone(&active.agent),
-                    Arc::clone(&active.turn_state),
-                    Arc::clone(&active.info_cache),
-                    Arc::clone(&active.monitor_manager),
-                    active.run_cancel.clone(),
-                )
-            })
+        let slot = state.active_session.lock().await;
+        slot.as_ref().map(|active| {
+            (
+                active.input_queue.clone(),
+                Arc::clone(&active.agent),
+                Arc::clone(&active.turn_state),
+                Arc::clone(&active.info_cache),
+                Arc::clone(&active.monitor_manager),
+                active.run_cancel.clone(),
+            )
         })
     };
-    let Some((inbox_rx, agent, turn_state, info_cache_arc, monitor_manager, run_cancel)) = prepared
+    let Some((input_queue, agent, turn_state, info_cache_arc, monitor_manager, run_cancel)) =
+        prepared
     else {
-        // No active session, or the run task was already spawned.
+        // No active session.
         return;
     };
 
@@ -887,20 +918,25 @@ async fn spawn_run_task(state: &AppState) {
     let handle = tokio::spawn(async move {
         // Owns the agent lock for the whole session (incl. while parked).
         let mut guard = agent.lock().await;
-        let mut stream = guard.run(inbox_rx, run_cancel);
+        let mut stream = guard.run(input_queue.clone(), run_cancel);
         while let Some(item) = stream.next().await {
             let next = match &item {
                 AgentItem::Event(ev) => next_turn_state_for(ev),
                 AgentItem::Signal(_) => None,
             };
-            // Detect monitor events *before* moving `item` into `WsMessage::Item`.
+            // Detect push points *before* moving `item` into `WsMessage::Item`.
             let push_roster = is_monitor_event(&item);
+            let push_queue = is_user_message_event(&item);
             send_to_active(&slot_arc, WsMessage::Item(Box::new(item))).await;
-            // Push a fresh roster snapshot immediately after every monitor
-            // lifecycle event so the badge and modal reflect the new state.
+            // Push a fresh roster snapshot after every monitor lifecycle event.
             if push_roster {
                 let roster = roster_snapshot_msg(&monitor_manager);
                 send_to_active(&slot_arc, roster).await;
+            }
+            // Push a fresh queue snapshot after UserMessage (item just popped).
+            if push_queue {
+                let snap = input_queue.snapshot();
+                send_to_active(&slot_arc, queue_snapshot_msg(snap)).await;
             }
             if let Some(target) = next {
                 let mut ts = turn_state.lock().await;
@@ -1094,15 +1130,16 @@ async fn handle_reset(
     });
     // 4. ready — client is ready to interact.
     let _ = tx.send(WsMessage::Ready);
-    // 5. roster snapshot — empty for a fresh session; clears any stale badge.
+    // 5. roster + queue snapshots — empty for a fresh session; clears any stale badge.
     {
         let slot = state.active_session.lock().await;
         if let Some(active) = slot.as_ref() {
             let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
+            let _ = tx.send(queue_snapshot_msg(active.input_queue.snapshot()));
         }
     }
     // 6. Spawn the single per-session run task (§15 U1).  It parks on the
-    //    empty inbox and owns the agent lock for the session's life.
+    //    empty input queue and owns the agent lock for the session's life.
     spawn_run_task(state).await;
     Ok(())
 }
@@ -1214,16 +1251,17 @@ async fn handle_resume_session(
     .await;
 
     let _ = tx.send(WsMessage::Ready);
-    // Roster snapshot — empty for a freshly-resumed session.
+    // Roster + queue snapshots — empty for a freshly-resumed session.
     {
         let slot = state.active_session.lock().await;
         if let Some(active) = slot.as_ref() {
             let _ = tx.send(roster_snapshot_msg(&active.monitor_manager));
+            let _ = tx.send(queue_snapshot_msg(active.input_queue.snapshot()));
         }
     }
     // Spawn the per-session run task only AFTER the inline resumption block
     // above has released the agent lock (§15 U1).  The run task then acquires
-    // the lock and parks on the empty inbox.
+    // the lock and parks on the empty input queue.
     spawn_run_task(state).await;
     Ok(())
 }

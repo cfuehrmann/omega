@@ -258,16 +258,14 @@ async fn run(
 
     // ---- Stream the turn -----------------------------------------------
     // Headless one-shot: feed the single instruction through the persistent
-    // run loop's inbox, then close the inbox so the loop terminates after
-    // this one turn instead of parking.
-    let (inbox_tx, inbox_rx) = tokio::sync::mpsc::channel(1);
-    let _ = inbox_tx
-        .send(omega_agent::InputItem::Human {
-            content: instruction,
-        })
-        .await;
-    drop(inbox_tx);
-    let mut stream = agent.run(inbox_rx, cancel);
+    // run loop's inbox.  Because InputQueue::pop() parks (never returns None),
+    // we cancel the CancellationToken when the turn ends so the run loop
+    // exits cleanly instead of parking on the empty queue.
+    let inbox = omega_agent::InputQueue::new();
+    inbox.push(omega_agent::InputItem::Human {
+        content: instruction,
+    });
+    let mut stream = agent.run(inbox, cancel.clone());
 
     let mut exit_code = 0i32;
 
@@ -300,6 +298,9 @@ async fn run(
                             te.metrics.cache_creation_tokens.unwrap_or(0),
                         );
                         exit_code = 0;
+                        // Cancel so the run loop exits instead of parking on
+                        // the empty InputQueue.
+                        cancel.cancel();
                     }
                     OmegaEvent::TurnInterrupted(ti) => {
                         println!();
@@ -310,6 +311,7 @@ async fn run(
                                 .map_or_else(|| "unknown".to_owned(), |r| format!("{r:?}"))
                         );
                         exit_code = 1;
+                        cancel.cancel();
                     }
                     OmegaEvent::AgentError(ae) => {
                         eprintln!("\n[agent error: {}]", ae.error);

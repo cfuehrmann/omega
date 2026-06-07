@@ -279,6 +279,15 @@ pub enum WsMessage {
     MonitorRoster {
         monitors: Vec<MonitorRosterEntry>,
     },
+
+    /// Ephemeral input-queue snapshot pushed by the server (a) right after
+    /// a human message is enqueued, (b) right after the agent drains it, and
+    /// (c) on connect / reset / resume.  **Not** an `OmegaEvent`;
+    /// `into_omega_event` returns `None` and the queue is never written to
+    /// `events.jsonl`.  U1: human-only; monitor sources join in U2.
+    InputQueue {
+        items: Vec<InputQueueItem>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +318,26 @@ pub struct MonitorRosterEntry {
     pub stderr_tail: Vec<String>,
 }
 
+// ---------------------------------------------------------------------------
+// InputQueueItem — one entry in a queue snapshot
+// ---------------------------------------------------------------------------
+
+/// One pending item in an [`WsMessage::InputQueue`] snapshot.
+///
+/// Transport-only projection — never written to `events.jsonl`.
+/// Structured to admit `"monitor:<id>"` sources in U2.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputQueueItem {
+    /// Who queued this item.  Currently always `"human"`; will gain
+    /// `"monitor:<id>"` variants in U2.
+    pub source: String,
+    /// First 120 characters of the content, for display.
+    pub content_preview: String,
+    /// RFC 3339 timestamp (millisecond precision) when the item was pushed.
+    pub enqueued_at: String,
+}
+
 impl WsMessage {
     /// If this frame carries an [`OmegaEvent`] payload (forwarded `Item`
     /// or an `agent_error` *event*), reconstruct the original event so
@@ -326,7 +355,9 @@ impl WsMessage {
             | Self::SessionRenamed { .. }
             | Self::PendingChangesWarning { .. }
             // Ephemeral roster snapshot — never an OmegaEvent.
-            | Self::MonitorRoster { .. } => return None,
+            | Self::MonitorRoster { .. }
+            // Ephemeral input-queue snapshot — never an OmegaEvent.
+            | Self::InputQueue { .. } => return None,
             // Stream signals — never persisted as events.
             Self::Text { .. }
             | Self::Thinking { .. }

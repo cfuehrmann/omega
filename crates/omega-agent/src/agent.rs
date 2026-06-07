@@ -56,6 +56,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{cap_effort_for_model, max_output_tokens_for_model};
 use crate::controls::{ControlHandle, TurnGuard};
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
+use crate::input_queue::InputQueue;
 use crate::session_resume::{
     RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
     extract_summary_from_response,
@@ -1565,20 +1566,22 @@ impl Agent {
     /// terminating.  Only the run-level `cancel` ends the whole loop.
     pub fn run<'a>(
         &'a mut self,
-        mut inbox: tokio::sync::mpsc::Receiver<InputItem>,
+        inbox: InputQueue,
         cancel: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AgentItem> + Send + 'a>> {
         Box::pin(stream! {
             loop {
                 // ---- Gather (park on empty inbox) -----------------------
-                // Awaiting the inbox IS the idle/park state.  The run-level
-                // `cancel` (session teardown) or a closed inbox ends the loop.
-                let content = tokio::select! {
+                // Parks on `inbox.pop()` — zero CPU cost while the queue is
+                // empty; the run-level `cancel` (session teardown) ends the
+                // loop via `tokio::select!`.  Cancellation via a closed
+                // sender (U1) is replaced by the external CancellationToken.
+                let item = tokio::select! {
                     () = cancel.cancelled() => return,
-                    item = inbox.recv() => match item {
-                        Some(InputItem::Human { content }) => content,
-                        None => return,
-                    },
+                    item = inbox.pop() => item,
+                };
+                let content = match item {
+                    InputItem::Human { content } => content,
                 };
 
                 // ---- Process one turn -----------------------------------

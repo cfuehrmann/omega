@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt, stream::BoxStream};
-use omega_agent::{Agent, AgentConfig};
+use omega_agent::{Agent, AgentConfig, InputQueue};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_server::{ActiveSession, AppState, build_router};
 use omega_store::{ContextStore, EventStore, SessionPaths};
@@ -756,7 +756,6 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         has_pending_changes: false,
         features: FeatureFlags::default(),
     };
-    let (inbox, inbox_rx) = tokio::sync::mpsc::channel(64);
     let active = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
         controls,
@@ -764,8 +763,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         paths,
         ws_tx: None,
         current_turn: None,
-        inbox,
-        inbox_rx: Some(inbox_rx),
+        input_queue: InputQueue::new(),
         run_cancel: tokio_util::sync::CancellationToken::new(),
         turn_state: Arc::new(tokio::sync::Mutex::new("idle".to_owned())),
         info_cache: Arc::new(tokio::sync::Mutex::new(info_cache)),
@@ -946,11 +944,17 @@ async fn rename_session_updates_metadata_for_active_session() {
     )
     .await;
     let _ = recv_until_type(&mut ws, "ready").await;
-    // Drain the monitor_roster snapshot pushed right after ready.
+    // Drain the ephemeral snapshots pushed right after ready:
+    // monitor_roster then input_queue.
     let roster_after_reset = recv_json(&mut ws).await;
     assert_eq!(
         roster_after_reset["type"], "monitor_roster",
         "expected monitor_roster after ready; got {roster_after_reset:?}"
+    );
+    let queue_after_reset = recv_json(&mut ws).await;
+    assert_eq!(
+        queue_after_reset["type"], "input_queue",
+        "expected input_queue after monitor_roster; got {queue_after_reset:?}"
     );
 
     // The active session's directory is the only one in `sessions_root`.
@@ -1050,11 +1054,16 @@ async fn rename_session_targets_client_provided_dir_not_active_session() {
     )
     .await;
     let _ = recv_until_type(&mut ws, "ready").await;
-    // Drain the monitor_roster snapshot pushed right after ready.
+    // Drain the ephemeral snapshots (monitor_roster + input_queue) pushed right after ready.
     let roster_after_reset = recv_json(&mut ws).await;
     assert_eq!(
         roster_after_reset["type"], "monitor_roster",
         "expected monitor_roster after ready; got {roster_after_reset:?}"
+    );
+    let queue_after_reset = recv_json(&mut ws).await;
+    assert_eq!(
+        queue_after_reset["type"], "input_queue",
+        "expected input_queue after monitor_roster; got {queue_after_reset:?}"
     );
     let session_a_name = std::fs::read_dir(&sessions_root)
         .unwrap()
@@ -1347,18 +1356,19 @@ async fn roster_sent_on_reconnect_after_session_created() {
     )
     .await;
     let _ = recv_until_type(&mut ws1, "ready").await;
-    // Drain the roster pushed after reset's ready.
+    // Drain the ephemeral snapshots (monitor_roster + input_queue) pushed after reset's ready.
     let roster_after_reset = recv_json(&mut ws1).await;
     assert_eq!(
         roster_after_reset["type"], "monitor_roster",
         "expected monitor_roster after reset ready; got {roster_after_reset:?}"
     );
+    let _ = recv_json(&mut ws1).await; // input_queue snapshot
     ws1.close(None).await.ok();
     drop(ws1);
     // Give the server a moment to process the close.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // ws2: reconnect — session exists → ready then monitor_roster.
+    // ws2: reconnect — session exists → ready then monitor_roster then input_queue.
     let mut ws2 = connect(addr).await;
     let _ = recv_until_type(&mut ws2, "ready").await;
     let roster_on_reconnect = recv_json(&mut ws2).await;
@@ -1366,6 +1376,7 @@ async fn roster_sent_on_reconnect_after_session_created() {
         roster_on_reconnect["type"], "monitor_roster",
         "expected monitor_roster after ready on reconnect; got {roster_on_reconnect:?}"
     );
+    let _ = recv_json(&mut ws2).await; // input_queue snapshot
     let monitors = roster_on_reconnect["monitors"]
         .as_array()
         .expect("monitors must be an array");
@@ -1401,6 +1412,15 @@ async fn monitor_roster_frame_not_persisted_to_events_jsonl() {
         roster["type"], "monitor_roster",
         "sanity: expected monitor_roster here; got {roster:?}"
     );
+    let queue_snap = recv_json(&mut ws).await;
+    assert_eq!(
+        queue_snap["type"], "input_queue",
+        "expected input_queue after monitor_roster; got {queue_snap:?}"
+    );
+    assert!(
+        queue_snap["items"].as_array().is_none_or(|a| a.is_empty()),
+        "empty queue snapshot must have empty items; got {queue_snap:?}"
+    );
 
     // Allow time for all writes to flush.
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1416,5 +1436,9 @@ async fn monitor_roster_frame_not_persisted_to_events_jsonl() {
     assert!(
         !content.contains("monitor_roster"),
         "monitor_roster must NOT appear in events.jsonl; content: {content:?}"
+    );
+    assert!(
+        !content.contains("input_queue"),
+        "input_queue must NOT appear in events.jsonl; content: {content:?}"
     );
 }

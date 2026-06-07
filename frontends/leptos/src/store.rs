@@ -31,7 +31,7 @@ use omega_types::OmegaEvent;
 use serde::Serialize;
 
 use crate::protocol::{
-    AgentErrorPayload, MonitorRosterEntry, SessionInfoPayload, TurnState, WsMessage,
+    AgentErrorPayload, InputQueueItem, MonitorRosterEntry, SessionInfoPayload, TurnState, WsMessage,
 };
 
 // ---------------------------------------------------------------------------
@@ -100,6 +100,10 @@ pub struct SessionState {
     /// Updated by [`WsMessage::MonitorRoster`] frames; never persisted.
     /// See [`SessionStore::roster`].
     pub roster: Vec<MonitorRosterEntry>,
+    /// Latest ephemeral input-queue snapshot from the server.
+    /// Updated by [`WsMessage::InputQueue`] frames; never persisted.
+    /// See [`SessionStore::input_queue`].
+    pub input_queue: Vec<InputQueueItem>,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +154,11 @@ pub struct SessionStore {
     /// Replaced on every [`WsMessage::MonitorRoster`] frame; never
     /// persisted to events.  The badge and modal read from this signal.
     pub roster: RwSignal<Vec<MonitorRosterEntry>>,
+    /// Latest ephemeral input-queue snapshot from the server.
+    /// Replaced on every [`WsMessage::InputQueue`] frame; never
+    /// persisted to events.  The queue badge and panel read from this
+    /// signal.  U1: human-only; monitor sources join in U2.
+    pub input_queue: RwSignal<Vec<InputQueueItem>>,
 }
 
 impl Default for SessionStore {
@@ -179,6 +188,7 @@ impl SessionStore {
             pending_changes_warning: RwSignal::new(None),
             agent_time_zone: RwSignal::new("UTC".to_owned()),
             roster: RwSignal::new(Vec::new()),
+            input_queue: RwSignal::new(Vec::new()),
         }
     }
 
@@ -257,6 +267,9 @@ impl SessionStore {
                 // disappears immediately on reset before the fresh
                 // MonitorRoster snapshot arrives.
                 self.roster.set(Vec::new());
+                // Ephemeral queue is per-session; clear it immediately on
+                // reset so the badge disappears before the fresh snapshot.
+                self.input_queue.set(Vec::new());
             }
 
             WsMessage::AgentError(AgentErrorPayload::Envelope { message }) => {
@@ -283,6 +296,14 @@ impl SessionStore {
                 // the latest state.  This frame is NEVER passed to
                 // `into_omega_event` and NEVER appended to `events`.
                 self.roster.set(monitors);
+            }
+
+            WsMessage::InputQueue { items } => {
+                // Ephemeral queue snapshot from the server.  Replace the
+                // stored slice so reactive consumers (queue badge, panel)
+                // see the latest pending items.  This frame is NEVER passed
+                // to `into_omega_event` and NEVER appended to `events`.
+                self.input_queue.set(items);
             }
 
             WsMessage::Text { index, text } => {
@@ -374,6 +395,7 @@ impl SessionStore {
             pending_changes_warning: self.pending_changes_warning.get_untracked(),
             agent_time_zone: self.agent_time_zone.get_untracked(),
             roster: self.roster.get_untracked(),
+            input_queue: self.input_queue.get_untracked(),
         }
     }
 }

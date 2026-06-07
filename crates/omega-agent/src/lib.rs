@@ -11,6 +11,7 @@ pub mod agent;
 pub mod config;
 pub mod controls;
 pub mod error_classify;
+pub mod input_queue;
 pub mod session_resume;
 pub mod system_prompt;
 
@@ -18,6 +19,7 @@ pub use agent::{Agent, AgentConfig, DEFAULT_EFFORT, InputItem, ModelEffortHandle
 pub use config::max_output_tokens_for_model;
 pub use controls::ControlHandle;
 pub use error_classify::{is_context_too_long, is_invalid_tool_json};
+pub use input_queue::{InputQueue, QueuedItemView};
 pub use session_resume::{
     RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
     extract_resumption_basis, extract_summary_from_response, extract_tool_selection,

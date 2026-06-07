@@ -41,6 +41,7 @@ pub mod markdown;
 pub mod monitors_panel;
 pub mod picker;
 pub mod protocol;
+pub mod queue_panel;
 pub mod sessions;
 pub mod store;
 pub mod text_modal;
@@ -56,6 +57,8 @@ use crate::feed::ConversationFeed;
 use crate::monitors_panel::{MonitorsBadge, MonitorsPanelOpen};
 use crate::picker::{PickerOpen, SessionPicker};
 use crate::protocol::TurnState;
+pub use crate::queue_panel::QueueBadge;
+use crate::queue_panel::QueuePanelOpen;
 use crate::sessions::SessionListStore;
 use crate::store::SessionStore;
 use crate::text_modal::{TextModal, TextModalState};
@@ -80,6 +83,7 @@ pub fn App() -> impl IntoView {
     let picker_open = PickerOpen::new();
     let usage_panel_open = UsagePanelOpen::new();
     let monitors_panel_open = MonitorsPanelOpen::new();
+    let queue_panel_open = QueuePanelOpen::new();
     provide_context(store);
     provide_context(list_store);
     provide_context(modal_state);
@@ -87,6 +91,7 @@ pub fn App() -> impl IntoView {
     provide_context(picker_open);
     provide_context(usage_panel_open);
     provide_context(monitors_panel_open);
+    provide_context(queue_panel_open);
 
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {
@@ -144,6 +149,7 @@ pub fn App() -> impl IntoView {
             <ConversationFeed />
             <UsagePanel />
             <MonitorsBadge />
+            <QueueBadge />
             <Show when=move || session_has_loaded(store.session_info.with(Option::is_some)) fallback=|| ()>
                 <Composer />
             </Show>

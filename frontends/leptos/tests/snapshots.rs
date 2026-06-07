@@ -42,7 +42,8 @@ use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
 use omega_web::monitors_panel::{MonitorsBadge, MonitorsModal, MonitorsPanelOpen};
 use omega_web::picker::PickerOpen;
-use omega_web::protocol::{MonitorRosterEntry, SessionInfoPayload, TurnState};
+use omega_web::protocol::{InputQueueItem, MonitorRosterEntry, SessionInfoPayload, TurnState};
+use omega_web::queue_panel::{QueueBadge, QueueModal, QueuePanelOpen};
 use omega_web::store::SessionStore;
 use omega_web::text_modal::TextModalState;
 use omega_web::usage_panel::UsagePanelOpen;
@@ -1174,6 +1175,207 @@ mod monitors_panel_snapshots {
 // browser will actually find a matching CSS rule.  This unit test reads the
 // raw CSS file and asserts the rule exists, closing the "shipped HTML but
 // forgot the CSS" failure mode.
+
+// ---------------------------------------------------------------------------
+// QueueBadge + QueueModal (§15 U1 first-cut queue visualisation)
+// ---------------------------------------------------------------------------
+//
+// Discoverability decision: badge is visible ONLY when the queue is non-empty.
+// Monitor sources join the queue in U2; U1 is human-only.
+
+mod queue_panel_snapshots {
+    use super::*;
+
+    fn qi(source: &str, preview: &str) -> InputQueueItem {
+        InputQueueItem {
+            source: source.into(),
+            content_preview: preview.into(),
+            enqueued_at: "2025-01-01T00:00:00.000Z".into(),
+        }
+    }
+
+    /// Install the contexts that `QueueBadge` and `QueueModal` require.
+    fn install_queue_context(items: Vec<InputQueueItem>) -> QueuePanelOpen {
+        let store = SessionStore::new();
+        store.input_queue.set(items);
+        provide_context(store);
+        let panel = QueuePanelOpen::new();
+        provide_context(panel);
+        panel
+    }
+
+    // ── Badge ────────────────────────────────────────────────────────────
+
+    /// Empty queue — badge must NOT render (visible-when-non-empty design).
+    #[test]
+    fn snap_queue_badge_hidden_when_empty() {
+        let html = render(|| {
+            install_queue_context(vec![]);
+            view! { <QueueBadge /> }
+        });
+        assert!(
+            !html.contains("data-testid=\"queue-badge\""),
+            "badge must be hidden when queue is empty; got: {html}"
+        );
+    }
+
+    /// Non-empty queue — badge must render.
+    #[test]
+    fn snap_queue_badge_visible_when_pending() {
+        let html = render(|| {
+            install_queue_context(vec![qi("human", "hello world")]);
+            view! { <QueueBadge /> }
+        });
+        assert!(
+            html.contains("data-testid=\"queue-badge\""),
+            "badge must be visible when queue has items; got: {html}"
+        );
+    }
+
+    /// Badge count text — shows \"1 pending\" for a single item.
+    #[test]
+    fn snap_queue_badge_shows_singular_count() {
+        let html = render(|| {
+            install_queue_context(vec![qi("human", "test")]);
+            view! { <QueueBadge /> }
+        });
+        assert!(
+            html.contains("1 pending"),
+            "badge must show '1 pending' for a single item; got: {html}"
+        );
+    }
+
+    /// Badge count text — shows \"N pending\" for multiple items.
+    #[test]
+    fn snap_queue_badge_shows_plural_count() {
+        let html = render(|| {
+            install_queue_context(vec![qi("human", "first"), qi("human", "second")]);
+            view! { <QueueBadge /> }
+        });
+        assert!(
+            html.contains("2 pending"),
+            "badge must show '2 pending' for two items; got: {html}"
+        );
+    }
+
+    // ── Modal ────────────────────────────────────────────────────────────
+
+    /// Modal closed by default — no modal DOM.
+    #[test]
+    fn snap_queue_modal_closed() {
+        let html = render(|| {
+            install_queue_context(vec![qi("human", "msg")]);
+            view! { <QueueModal /> }
+        });
+        assert!(
+            !html.contains("data-testid=\"queue-modal\""),
+            "modal DOM must be absent when closed; got: {html}"
+        );
+    }
+
+    /// Modal open, queue empty — shows empty-state message.
+    #[test]
+    fn snap_queue_modal_open_empty_queue() {
+        let html = render(|| {
+            let panel = install_queue_context(vec![]);
+            panel.0.set(true);
+            view! { <QueueModal /> }
+        });
+        assert!(
+            html.contains("data-testid=\"queue-modal\""),
+            "modal DOM must be present when open; got: {html}"
+        );
+        assert!(
+            html.contains("data-testid=\"queue-empty-state\""),
+            "empty-state element must be present when queue is empty; got: {html}"
+        );
+        assert!(
+            !html.contains("data-testid=\"queue-item\""),
+            "no item rows must appear for empty queue; got: {html}"
+        );
+    }
+
+    /// Modal open, one pending human item — shows item with source label.
+    #[test]
+    fn snap_queue_modal_open_with_item() {
+        let html = render(|| {
+            let panel = install_queue_context(vec![qi("human", "fix the bug please")]);
+            panel.0.set(true);
+            view! { <QueueModal /> }
+        });
+        assert!(
+            html.contains("data-testid=\"queue-item\""),
+            "item row must be present when queue has items; got: {html}"
+        );
+        assert!(
+            html.contains("data-testid=\"queue-item-source\""),
+            "source label must be present; got: {html}"
+        );
+        assert!(
+            html.contains("Human"),
+            "source label must show 'Human' for human items; got: {html}"
+        );
+        assert!(
+            html.contains("fix the bug please"),
+            "content preview must appear; got: {html}"
+        );
+        assert!(
+            html.contains("pending delivery at the next seam"),
+            "delivery note must appear; got: {html}"
+        );
+    }
+
+    /// Modal open, two pending items — both rendered.
+    #[test]
+    fn snap_queue_modal_shows_all_items() {
+        let html = render(|| {
+            let panel = install_queue_context(vec![
+                qi("human", "first message"),
+                qi("human", "second message"),
+            ]);
+            panel.0.set(true);
+            view! { <QueueModal /> }
+        });
+        assert!(
+            html.contains("first message"),
+            "first item preview must appear; got: {html}"
+        );
+        assert!(
+            html.contains("second message"),
+            "second item preview must appear; got: {html}"
+        );
+    }
+}
+
+// CSS guard — queue panel styles defined in style.css
+// ---------------------------------------------------------------------------
+//
+// Parallel to the monitors-table CSS guard: verifies that the CSS rules
+// used by queue_panel.rs are actually present in style.css so the panel
+// ships styled rather than as unstyled HTML.
+
+#[test]
+#[cfg(feature = "ssr")]
+fn queue_panel_css_is_defined_in_style_css() {
+    let manifest =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set during tests");
+    let css_path = std::path::Path::new(&manifest).join("style.css");
+    let css = std::fs::read_to_string(&css_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", css_path.display()));
+
+    assert!(
+        css.contains(".queue-badge"),
+        "style.css must define .queue-badge; add the rule or the queue badge will be unstyled"
+    );
+    assert!(
+        css.contains(".queue-modal"),
+        "style.css must define .queue-modal; add the rule or the queue modal will be unstyled"
+    );
+    assert!(
+        css.contains(".queue-item"),
+        "style.css must define .queue-item; add the rule or queue items will be unstyled"
+    );
+}
 
 #[test]
 #[cfg(feature = "ssr")]

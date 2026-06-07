@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
-use omega_agent::{Agent, ControlHandle, InputItem, ModelEffortHandle};
+use omega_agent::{Agent, ControlHandle, InputQueue, ModelEffortHandle};
 use omega_store::SessionPaths;
 use omega_tools::MonitorManager;
 use omega_types::FeatureFlags;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -63,19 +63,21 @@ pub struct ActiveSession {
     /// Input Model, U1).
     ///
     /// Spawned **once** at reset/resume; it owns the agent lock for the
-    /// session's life, parks on an empty [`Self::inbox`], and forwards the
-    /// run stream to the WebSocket continuously.  Consumed by graceful
+    /// session's life, parks on an empty [`Self::input_queue`], and forwards
+    /// the run stream to the WebSocket continuously.  Consumed by graceful
     /// shutdown / session teardown so the server can cancel
     /// ([`Self::run_cancel`]) and `join` the task (with a deadline) before
     /// reaping monitors.
     pub current_turn: Option<JoinHandle<()>>,
-    /// Inbox sender for human (and, in U2, monitor) input to the persistent
-    /// run loop.  `handle_user_message` pushes [`InputItem::Human`] here
-    /// instead of acquiring the agent lock — this is the deadlock fix.
-    pub inbox: Sender<InputItem>,
-    /// Receiver half of the inbox, taken (`Option::take`) by the spawner
-    /// when the run task is launched.  `None` once the task is running.
-    pub inbox_rx: Option<Receiver<InputItem>>,
+    /// Shared inspectable input queue for the persistent run loop (§15 U1).
+    ///
+    /// `handle_user_message` calls [`InputQueue::push`] instead of sending
+    /// on a bare `mpsc::Sender` — this preserves the no-agent-lock contract
+    /// while also making pending items visible via [`InputQueue::snapshot`]
+    /// for server→client queue-visualisation pushes.  Multiple producers
+    /// (server WS handler, future monitor callbacks in U2) share the same
+    /// `Arc`-backed handle via `Clone`.
+    pub input_queue: InputQueue,
     /// Run-level cancel token for the persistent run task.  Firing it tells
     /// the run loop to terminate (and aborts any in-flight turn via the
     /// forwarder), releasing the agent lock so teardown can reap monitors.

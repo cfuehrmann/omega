@@ -206,7 +206,7 @@ async fn send_json(ws: &mut WsClient, v: serde_json::Value) {
     ws.send(TMessage::Text(v.to_string().into())).await.unwrap();
 }
 
-/// Perform reset and drain to `ready` and the following `monitor_roster`;
+/// Perform reset and drain to `ready`, `monitor_roster`, and `input_queue`;
 /// return the session dir name from the `session_info` frame.
 async fn reset_and_ready(ws: &mut WsClient) -> String {
     send_json(
@@ -215,11 +215,16 @@ async fn reset_and_ready(ws: &mut WsClient) -> String {
     )
     .await;
     let frames = recv_until_type(ws, "ready").await;
-    // Drain the `monitor_roster` snapshot pushed right after `ready`.
+    // Drain the ephemeral snapshots pushed right after `ready`.
     let roster = recv_json(ws).await;
     assert_eq!(
         roster["type"], "monitor_roster",
         "expected monitor_roster after reset ready; got {roster:?}"
+    );
+    let queue = recv_json(ws).await;
+    assert_eq!(
+        queue["type"], "input_queue",
+        "expected input_queue after monitor_roster; got {queue:?}"
     );
     frames
         .iter()
@@ -1491,5 +1496,131 @@ async fn reset_reaps_prior_sessions_live_monitor() {
     assert!(
         events.contains("monitor_stopped"),
         "reset must reap the live monitor and persist MonitorStopped to session A; got:\n{events}"
+    );
+}
+
+// ===========================================================================
+// §15 U1 — InputQueue snapshot tests
+// ===========================================================================
+
+/// After enqueueing a human message, an `input_queue` WS frame is sent
+/// that contains the pending item.
+///
+/// Design: `handle_user_message` calls `input_queue.push()` which returns an
+/// atomic snapshot (item is guaranteed to be in the queue at snapshot time),
+/// then sends `WsMessage::InputQueue` via the WS sender.
+#[tokio::test(flavor = "multi_thread")]
+async fn input_queue_snapshot_sent_on_enqueue() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    // One text turn so the agent has something to reply with.
+    provider.push(text_llm_response_event("end_turn"));
+
+    let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root.clone())).await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    let _ = reset_and_ready(&mut ws).await;
+
+    // Send a user message and collect all frames until the turn ends.
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "hello queue" }),
+    )
+    .await;
+    let frames = recv_until_type(&mut ws, "turn_end").await;
+
+    // At least one `input_queue` frame must have been received.
+    let queue_frames: Vec<_> = frames
+        .iter()
+        .filter(|f| f["type"] == "input_queue")
+        .collect();
+    assert!(
+        !queue_frames.is_empty(),
+        "at least one input_queue frame must be sent after enqueue; got frames: {frames:?}"
+    );
+
+    // At least one of those frames must contain the pending item.
+    let had_item = queue_frames
+        .iter()
+        .any(|f| f["items"].as_array().is_some_and(|arr| !arr.is_empty()));
+    assert!(
+        had_item,
+        "at least one input_queue frame must show the pending item; got queue frames: {queue_frames:?}"
+    );
+
+    // The first item in the first non-empty frame must have source == "human".
+    let first_with_item = queue_frames
+        .iter()
+        .find(|f| f["items"].as_array().is_some_and(|arr| !arr.is_empty()))
+        .unwrap();
+    assert_eq!(
+        first_with_item["items"][0]["source"], "human",
+        "queue item source must be 'human'; got: {first_with_item:?}"
+    );
+}
+
+/// After the agent drains the pending item (visible as the `user_message`
+/// event flowing through `spawn_run_task`), an `input_queue` frame is
+/// sent showing an empty queue.
+#[tokio::test(flavor = "multi_thread")]
+async fn input_queue_snapshot_empty_after_drain() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    provider.push(text_llm_response_event("end_turn"));
+
+    let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root.clone())).await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    let _ = reset_and_ready(&mut ws).await;
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "drain me" }),
+    )
+    .await;
+    let frames = recv_until_type(&mut ws, "turn_end").await;
+
+    // There must be an input_queue frame that shows 0 items (queue drained).
+    let had_empty = frames
+        .iter()
+        .any(|f| f["type"] == "input_queue" && f["items"].as_array().is_some_and(Vec::is_empty));
+    assert!(
+        had_empty,
+        "an input_queue frame with 0 items must be sent after drain; got frames: {frames:?}"
+    );
+}
+
+/// `input_queue` WS frames must NOT be persisted to `events.jsonl`.
+///
+/// This is a transport-only projection (like `MonitorRoster`): it carries
+/// ephemeral UI state, not domain events.
+#[tokio::test(flavor = "multi_thread")]
+async fn input_queue_frame_not_persisted_to_events_jsonl() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    let provider = Arc::new(MockProvider::new());
+    provider.push(text_llm_response_event("end_turn"));
+
+    let addr = spawn_server(make_state(Arc::clone(&provider), sessions_root.clone())).await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    let dir = reset_and_ready(&mut ws).await;
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "persist check" }),
+    )
+    .await;
+    let _ = recv_until_type(&mut ws, "turn_end").await;
+
+    let events_path = sessions_root.join(&dir).join("events.jsonl");
+    let events = std::fs::read_to_string(&events_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", events_path.display()));
+
+    assert!(
+        !events.contains("input_queue"),
+        "input_queue must NOT appear in events.jsonl; got:\n{events}"
     );
 }
