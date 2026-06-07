@@ -87,3 +87,6 @@ __pycache__/
 *.pyc
 .phase4-notes.md
 *.snap.new
+
+# Golden-test failure-diff artifacts (written next to the golden on drift; never commit)
+*.jsonl.actual

@@ -1,3 +1,0 @@
-{"hash":"d66e26b2ce28ea05","time":"<scrubbed>","role":"user","content":[{"type":"text","text":"what files are here?"}]}
-{"hash":"8a695152444485fe","time":"<scrubbed>","role":"assistant","content":[{"type":"text","text":"Let me look around."},{"type":"tool_use","id":"tu_1","name":"list_files","input":{"path":"."}},{"type":"tool_use","id":"tu_2","name":"list_files","input":{"path":"src"}}]}
-{"hash":"9b346608a73e99df","time":"<scrubbed>","role":"assistant","content":[{"type":"text","text":"Done."}]}
