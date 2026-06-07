@@ -1,0 +1,4 @@
+{"hash":"b98d213ecad02e52","time":"<scrubbed>","role":"user","content":[{"type":"text","text":"explore and summarise"}]}
+{"hash":"35c30c557a00d8dd","time":"<scrubbed>","role":"assistant","content":[{"type":"thinking","thinking":"Plan: list, then read.","signature":"sig-plan"},{"type":"text","text":"Looking at the workspace."},{"type":"tool_use","id":"tu_a","name":"list_files","input":{"path":"."}}]}
+{"hash":"0a068ce7c5073d72","time":"<scrubbed>","role":"assistant","content":[{"type":"thinking","thinking":"Now I will pick a file.","signature":"sig-pick"},{"type":"tool_use","id":"tu_b","name":"read_file","input":{"path":"README.md"}}]}
+{"hash":"c88b89e6eef8b81a","time":"<scrubbed>","role":"assistant","content":[{"type":"text","text":"All done."}]}

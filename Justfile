@@ -371,6 +371,19 @@ mutants-harness-recovery-agent:
     cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
         --re 'inject_harness_recovery'
 
+# §15(a) A1 — the three inject_* helpers introduced by A1:
+# inject_user_message, inject_dangling_tool_results, inject_tool_results_batch.
+# The call sites inside the async_stream! macro body report UNVIABLE
+# (stream generators are opaque to cargo-mutants); the helpers themselves,
+# being plain async methods, have their body-replacement mutations CAUGHT.
+# The guard test (user_role_context_appends_are_event_backed) is a
+# string-scan assertion and is not mutation-testable; that is documented
+# in the test's comment in tests/internal.rs.
+# Uses --in-place to avoid copying the 6 GB target directory.
+mutants-a1-inject-helpers:
+    cargo mutants -p omega-agent --cap-lints=true --in-place --file "crates/omega-agent/src/agent.rs" \
+        --re 'inject_user_message|inject_dangling_tool_results|inject_tool_results_batch'
+
 # §15 U1 — the server glue for the persistent run task: handle_user_message
 # (now just inbox.send), spawn_run_task (owns the agent lock + forwards the
 # run stream to WS, incl. turn-state + roster pushes), and teardown_prior_run

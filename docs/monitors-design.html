@@ -995,6 +995,39 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
   </p>
   <p><strong>Enforcement plan.</strong> The invariant will be made structural, not asserted:
   <strong>A1 (now):</strong> funnel every <code>context_store.append(Role::User, …)</code> through a named event-emitting <code>inject_*</code> helper (or a documented bootstrap exemption), guarded by a source test that fails if any user-role append appears outside the allowlist. This settles the current state (including the seed) by construction. <strong>A2 (later, with U3):</strong> upgrade the guard from a source test to a <em>compile-time</em> guarantee &mdash; change the <code>ContextStore</code> API so a free <code>append(Role::User, …)</code> is unreachable and user-role appends must be made through a path that takes the backing event (omitting it becomes a compile error, not a test failure). A2 is the natural end-state of U3&rsquo;s single-writer inbox.</p>
+  <div class="box ok"><strong>A1 &mdash; IMPLEMENTED (2025-06-07).</strong>
+    <p>All nine <code>context_store.append(Role::User, …)</code> call sites in
+    <code>crates/omega-agent/src/agent.rs</code> are now inside a named
+    <code>inject_*</code> helper that emits the backing event <em>before</em> the
+    context append, or in a documented bootstrap function that does the same.</p>
+    <p><strong>Per-site disposition</strong> (4 inline <code>drive_turn</code> sites +
+    2 bootstrap sites; 3 pre-existing <code>inject_*</code> helpers were already
+    correct):</p>
+    <table style="border-collapse:collapse;font-size:0.88em;width:100%">
+      <thead><tr style="background:#e8f4e8">
+        <th style="padding:4px 8px;text-align:left">Site / function</th>
+        <th style="padding:4px 8px;text-align:left">Backing event</th>
+        <th style="padding:4px 8px;text-align:left">Disposition</th>
+      </tr></thead>
+      <tbody>
+        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; dangling <code>tool_use</code> repair</td><td style="padding:4px 8px"><code>ToolResult</code> (one per dangling tool)</td><td style="padding:4px 8px">New helper <code>inject_dangling_tool_results</code>; events now emitted BEFORE context append (was: after &mdash; ordering gap closed)</td></tr>
+        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; Step&nbsp;2 user message</td><td style="padding:4px 8px"><code>UserMessage</code></td><td style="padding:4px 8px">New helper <code>inject_user_message</code>; event now emitted BEFORE context append (was: after &mdash; ordering gap closed)</td></tr>
+        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; tool results batch</td><td style="padding:4px 8px"><code>ToolResult</code> events (emitted by tool dispatch loop before the helper is called)</td><td style="padding:4px 8px">New helper <code>inject_tool_results_batch</code>; individual <code>ToolResult</code> events already preceded the context append &mdash; funneled for structural enforcement</td></tr>
+        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; pause/continue interjection</td><td style="padding:4px 8px"><code>UserMessage</code></td><td style="padding:4px 8px">Reuses <code>inject_user_message</code>; event now emitted BEFORE context append (was: after &mdash; ordering gap closed)</td></tr>
+        <tr><td style="padding:4px 8px"><code>seed_with_resumption_summary</code> (bootstrap)</td><td style="padding:4px 8px"><code>SessionResumed</code></td><td style="padding:4px 8px">Already correctly ordered; added to allowlist with comment</td></tr>
+        <tr><td style="padding:4px 8px"><code>perform_resumption</code> (bootstrap)</td><td style="padding:4px 8px"><code>ResumingSession</code></td><td style="padding:4px 8px">Reordered: <code>ResumingSession</code> now emitted BEFORE context append (was: after &mdash; ordering gap closed); added to allowlist. Basis record is NOT pushed onto in-memory history (special contract); no <code>inject_*</code> wrapper used.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Guard test:</strong> <code>user_role_context_appends_are_event_backed</code> in
+    <code>crates/omega-agent/tests/internal.rs</code> &mdash; source scan that goes RED if any
+    <code>context_store.append(Role::User, …)</code> appears outside the allowlist of
+    8 functions. No new <code>OmegaEvent</code> variants; no frontend changes.</p>
+    <p><strong>Mutation testing (<code>just mutants-a1-inject-helpers</code>):</strong>
+    4 mutations generated; 2 caught, 2 unviable (body-replacement of return types that lack
+    <code>Default</code>), 0 missed.</p>
+  </div>
+  <p><strong>A2</strong> remains a future upgrade (with U3); the
+  <code>ContextStore</code> API is unchanged by A1.</p>
 </div>
 <div class="box callout">
   <h4>(b) Principle — events are agent-level; the wire role is a projection</h4>

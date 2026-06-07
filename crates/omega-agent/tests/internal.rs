@@ -55,6 +55,16 @@
 //! All three tests use the `MockProvider` in `tests/common/mod.rs`.
 //! Nothing else does — keeping that scaffolding alive for these three
 //! tests is the explicit cost of the carve-out.
+//!
+//! 4. **A1 structural guard.** `user_role_context_appends_are_event_backed`
+//!    is a source-scan test (not a runtime test) that verifies every
+//!    `context_store.append(Role::User, …)` call in `agent.rs` is inside
+//!    an allowlisted `inject_*` helper or a documented bootstrap function.
+//!    It turns RED whenever someone adds a new unguarded user-role context
+//!    append, enforcing the invariant from §15(a) of
+//!    `docs/monitors-design.html` by construction.  This is a string-scan
+//!    assertion and is not suitable for mutation testing; that is noted in
+//!    the Justfile recipe `mutants-a1-guard`.
 
 #![allow(
     clippy::expect_used,
@@ -3136,4 +3146,111 @@ async fn run_loop_abort_cancels_block_and_returns_to_park() {
     .await
     .expect("send after-abort");
     let _ = pull_to_turn_end(&mut stream).await;
+}
+
+// =============================================================================
+// A1 structural guard — §15(a) of docs/monitors-design.html
+// =============================================================================
+//
+// Source-scan test: every `context_store.append(Role::User, …)` in agent.rs
+// must live inside one of the allowlisted functions below.
+//
+// This is a carve-out (string-scan, not a runtime assertion).  See the module
+// doc comment for the rationale.  Mutation testing is NOT applicable here
+// (the test body is a structural assertion with no numeric/boolean mutations
+// that could be missed); see Justfile recipe `mutants-a1-guard` for
+// documentation of that decision.
+
+/// Scan `lines` backwards from `line_idx` (0-based) to find the name of the
+/// nearest enclosing Rust `fn`.  Skips comment and doc-comment lines so that
+/// a `// fn old_name` comment above a real fn doesn't produce a false result.
+///
+/// Returns `"<unknown>"` if no enclosing `fn` is found.
+fn enclosing_fn(lines: &[&str], line_idx: usize) -> String {
+    for i in (0..=line_idx).rev() {
+        let line = lines[i];
+        let trimmed = line.trim();
+        // Skip comment lines (// and doc-comment lines starting with *).
+        if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("/*") {
+            continue;
+        }
+        if let Some(fn_pos) = line.find("fn ") {
+            let after = &line[fn_pos + 3..];
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+    }
+    "<unknown>".to_owned()
+}
+
+/// A1 invariant guard: every `context_store.append(Role::User, …)` call in
+/// `agent.rs` must be inside an allowlisted function.
+///
+/// ALLOWLIST rules:
+///   - `inject_*` helpers: each emits a backing `OmegaEvent` BEFORE the
+///     context append, so the invariant holds by construction within the fn.
+///   - bootstrap fns: event is emitted immediately before the append
+///     (ordering fixed by A1); documented here and in §15(a).
+///
+/// If this test turns RED, route the new append through an existing or new
+/// `inject_*` helper that emits the backing event first, then add the
+/// helper to the allowlist.
+#[test]
+fn user_role_context_appends_are_event_backed() {
+    /// Functions allowed to call `context_store.append(Role::User, …)`.
+    ///
+    /// inject_* helpers emit their backing OmegaEvent before the context
+    /// append.  Bootstrap fns are documented below.
+    const ALLOWLIST: &[&str] = &[
+        // --- inject_* helpers (event emitted BEFORE context append) ---------
+        "inject_monitor_delivery",      // backed by MonitorDelivery
+        "inject_harness_recovery",      // backed by HarnessRecovery
+        "inject_monitor_stopped",       // backed by MonitorStopped (projecting path)
+        "inject_user_message",          // backed by UserMessage
+        "inject_dangling_tool_results", // backed by ToolResult events (emitted first)
+        "inject_tool_results_batch",    // backed by ToolResult events emitted by caller
+        // --- bootstrap fns (documented exemptions; see §15(a) A1 note) ------
+        // SessionResumed is emitted before the context append.
+        "seed_with_resumption_summary",
+        // ResumingSession is emitted before the context append (A1 fixed
+        // ordering).  The basis record is NOT pushed onto in-memory history
+        // (special contract); routing through inject_* would obscure that.
+        "perform_resumption",
+    ];
+
+    let src = include_str!("../src/agent.rs");
+    let lines: Vec<&str> = src.lines().collect();
+
+    let mut violations: Vec<String> = Vec::new();
+    let pattern = "append(Role::User,";
+    let mut pos = 0;
+    while let Some(rel) = src[pos..].find(pattern) {
+        let abs = pos + rel;
+        // Count newlines up to `abs` to get a 0-based line index.
+        let line_idx = src[..abs].chars().filter(|&c| c == '\n').count();
+        let fn_name = enclosing_fn(&lines, line_idx);
+        if !ALLOWLIST.contains(&fn_name.as_str()) {
+            violations.push(format!(
+                "  line {}: in fn `{fn_name}` — not in the A1 allowlist",
+                line_idx + 1
+            ));
+        }
+        pos = abs + 1;
+    }
+
+    assert!(
+        violations.is_empty(),
+        "INVARIANT VIOLATION (A1 — §15(a) of docs/monitors-design.html):\n\
+         context_store.append(Role::User, …) found outside allowlisted fns:\n\
+         {}\n\
+         Route each site through a named inject_* helper that emits the \
+         backing OmegaEvent before the context append, then add the helper \
+         to ALLOWLIST above.",
+        violations.join("\n")
+    );
 }
