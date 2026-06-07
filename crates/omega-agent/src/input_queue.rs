@@ -78,6 +78,7 @@ pub struct InputQueue {
 }
 
 impl std::fmt::Debug for InputQueue {
+    #[mutants::skip] // display-only: body-replacement cannot be meaningfully tested
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let len = self.inner.lock().map_or(0, |g| g.queue.len());
         f.debug_struct("InputQueue")
@@ -259,7 +260,11 @@ mod tests {
     async fn pop_returns_item_and_queue_is_empty_after() {
         let q = InputQueue::new();
         q.push(human("hello"));
-        let item = q.pop().await;
+        // Bounded wait so a `push → vec![]` mutation (which omits notify_one)
+        // causes a timeout-failure rather than hanging the test binary.
+        let item = tokio::time::timeout(tokio::time::Duration::from_millis(500), q.pop())
+            .await
+            .expect("pop must resolve within 500 ms when item is already queued");
         assert!(
             matches!(item, InputItem::Human { ref content } if content == "hello"),
             "unexpected item: {item:?}"
@@ -272,8 +277,12 @@ mod tests {
         let q = InputQueue::new();
         q.push(human("first"));
         q.push(human("second"));
-        let a = q.pop().await;
-        let b = q.pop().await;
+        let a = tokio::time::timeout(tokio::time::Duration::from_millis(500), q.pop())
+            .await
+            .expect("first pop must resolve within 500 ms");
+        let b = tokio::time::timeout(tokio::time::Duration::from_millis(500), q.pop())
+            .await
+            .expect("second pop must resolve within 500 ms");
         assert!(
             matches!(&a, InputItem::Human { content } if content == "first"),
             "wrong first: {a:?}"
@@ -308,10 +317,16 @@ mod tests {
         let q = InputQueue::new();
         q.push(human("hello"));
         let cancel = CancellationToken::new();
-        let item = tokio::select! {
-            () = cancel.cancelled() => panic!("unexpected cancel"),
-            item = q.pop() => item,
-        };
+        // Bounded wait: a `push → vec![]` mutation omits notify_one, causing
+        // pop() to hang.  The timeout converts that hang into a fast failure.
+        let item = tokio::time::timeout(tokio::time::Duration::from_millis(500), async {
+            tokio::select! {
+                () = cancel.cancelled() => panic!("unexpected cancel"),
+                item = q.pop() => item,
+            }
+        })
+        .await
+        .expect("select must resolve within 500 ms when item is already queued");
         assert!(
             matches!(item, InputItem::Human { ref content } if content == "hello"),
             "unexpected item: {item:?}"

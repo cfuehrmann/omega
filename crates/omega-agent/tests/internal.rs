@@ -2823,7 +2823,7 @@ async fn ordinary_multi_cycle_coding_turn_works_through_input_queue() {
     provider.push_response(make_tool_use_items(
         "t1",
         "run_command",
-        json!({ "command": "cargo build" }),
+        json!({ "command": "echo hello" }),
     ));
     provider.push_response(make_terminal_response("end_turn", 8, 3));
 
@@ -2832,7 +2832,7 @@ async fn ordinary_multi_cycle_coding_turn_works_through_input_queue() {
     let mut stream = agent.run(queue.clone(), run_cancel.clone());
 
     queue.push(InputItem::Human {
-        content: "build the project".to_owned(),
+        content: "echo hello in the shell".to_owned(),
     });
 
     let seen = pull_to_turn_end(&mut stream).await;

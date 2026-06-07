@@ -867,7 +867,7 @@ async fn handle_user_message(
     let input_queue = {
         let slot = state.active_session.lock().await;
         let Some(active) = slot.as_ref() else {
-            return Err("no active session — send `reset` first".to_owned());
+            return Err("no active session \u{2014} send `reset` first".to_owned());
         };
         active.input_queue.clone()
     };
