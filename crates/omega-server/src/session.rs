@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use crate::ws_message::WsMessage;
 
 /// Snapshot of the fields needed to build a [`WsMessage::SessionInfo`]
-/// without locking the agent. Lets handlers (notably `handle_pause`) and
+/// without locking the agent. Lets handlers (notably `handle_halt`) and
 /// the per-turn streaming loop broadcast session info while another task
 /// holds the agent mutex.
 #[derive(Clone, Debug)]
@@ -48,8 +48,8 @@ pub struct ActiveSession {
     /// The running agent.  Wrapped in `Arc<Mutex<…>>` so the WebSocket
     /// handler can hold a reference while the HTTP handler also holds one.
     pub agent: Arc<Mutex<Agent>>,
-    /// Pause / continue / abort handle cloned from the agent before the
-    /// session slot is filled.  Used by future control endpoints.
+    /// Halt / resume / abort handle cloned from the agent before the
+    /// session slot is filled.  Drives the §15 three-controls model.
     pub controls: ControlHandle,
     /// Resolved file paths for this session (dir, context.jsonl, events.jsonl).
     pub paths: SessionPaths,
@@ -87,12 +87,15 @@ pub struct ActiveSession {
     /// persist the change without acquiring the agent lock — which the
     /// persistent run task holds for the session's life.
     pub model_effort: ModelEffortHandle,
-    /// Derived turn state (`idle` / `running` / `pause_requested` / `paused`).
+    /// Derived turn state (`idle` / `running` / `halt_requested` / `halted`).
+    /// §15 (U3) block-boundary markers: `running` = inside a block;
+    /// `halted` = parked at a halt seam; `idle` = parked at an empty-queue
+    /// seam.
     ///
-    /// Mirrors the TS server's `currentTurnState`. Updated by the WebSocket
-    /// router when transition-carrying events flow through the per-turn
-    /// stream (and explicitly from `handle_pause`, since `pause_requested`
-    /// is logged outside the agent generator). Wrapped in `Arc<Mutex<…>>`
+    /// Updated by the WebSocket router when transition-carrying events flow
+    /// through the per-turn stream (and explicitly from `handle_halt`, since
+    /// `halt_requested` is logged outside the agent generator). Wrapped in
+    /// `Arc<Mutex<…>>`
     /// so the streaming task can update it without re-locking the
     /// `active_session` slot.
     pub turn_state: Arc<Mutex<String>>,

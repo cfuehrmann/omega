@@ -1,8 +1,9 @@
 //! Port of `e2e/leptos-composer.spec.ts` (8 cases).
 //!
 //! Drives the composer at the site root against `mock-omega-server`.
-//! Covers Send / Pause-during-tool / Continue-with-interjection /
-//! Pause-then-Abort / Switch-model-idle / Switch-effort-idle /
+//! Covers the U3 three-controls model: Send (always enqueues) /
+//! Halt-during-tool / Halt-then-steer (resume via queued message) /
+//! Halt-then-Abort / Switch-model-idle / Switch-effort-idle /
 //! @-completion / Stub-composer-removed.
 //!
 //! Determinism note: every flow polls
@@ -25,6 +26,8 @@ use serde_json::json;
 const COMPOSER: &str = "[data-testid=\"leptos-composer\"]";
 const INPUT: &str = "[data-testid=\"leptos-composer-input\"]";
 const PRIMARY: &str = "[data-testid=\"leptos-composer-primary\"]";
+const HALT: &str = "[data-testid=\"leptos-composer-halt\"]";
+const RESUME: &str = "[data-testid=\"leptos-composer-resume\"]";
 const ABORT: &str = "[data-testid=\"leptos-composer-abort\"]";
 const MODEL: &str = "[data-testid=\"leptos-composer-model\"]";
 const EFFORT: &str = "[data-testid=\"leptos-composer-effort\"]";
@@ -51,7 +54,9 @@ fn sleep_tool(id: &str, secs: &str) -> MockResponse {
     }
 }
 
-/// Mirror of `SCRIPTS.twoPauses()` from the original Playwright spec.
+/// Mirror of `SCRIPTS.twoPauses()` from the original Playwright spec
+/// (a string of short sleep tools, so there are several seams at which a
+/// Halt can land).
 fn two_pauses_script() -> Vec<MockResponse> {
     vec![
         sleep_tool("toolu_tp_1", "0.6"),
@@ -146,12 +151,12 @@ async fn composer_send_pong() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Pause-during-tool
+// 2. Halt-during-tool, then Resume (no input)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 #[ignore = "browser"]
-async fn composer_pause_during_tool() {
+async fn composer_halt_during_tool() {
     let h = TestHarness::launch().await.expect("launch");
 
     h.reset_calls().await.expect("reset_calls");
@@ -160,47 +165,55 @@ async fn composer_pause_during_tool() {
         .expect("load_script");
     h.new_session().await.expect("new_session");
 
-    h.fill(INPUT, "go pause").await.expect("fill");
+    h.fill(INPUT, "go halt").await.expect("fill");
     h.click(PRIMARY).await.expect("click send");
 
     wait_for_turn_state(&h, "running", Duration::from_secs(10)).await;
 
-    // Primary flips to "pause".
+    // Primary is ALWAYS "send" now; Halt is a secondary button while running.
     let action = h.attr(PRIMARY, "data-action").await.expect("attr");
-    assert_eq!(action.as_deref(), Some("pause"));
+    assert_eq!(action.as_deref(), Some("send"));
+    h.wait_for_selector(HALT, Duration::from_secs(2))
+        .await
+        .expect("halt button missing while running");
 
-    h.click(PRIMARY).await.expect("click pause");
-    wait_for_turn_state(&h, "pause_requested", Duration::from_secs(5)).await;
-    wait_for_turn_state(&h, "paused", Duration::from_secs(15)).await;
+    h.click(HALT).await.expect("click halt");
+    wait_for_turn_state(&h, "halt_requested", Duration::from_secs(5)).await;
+    // Parks at the next seam (after the in-flight tool result).
+    wait_for_turn_state(&h, "halted", Duration::from_secs(15)).await;
 
-    // In Paused: primary becomes "continue", abort button visible.
+    // In Halted: primary stays "send"; Resume + Abort are the secondary
+    // controls.
     let action = h.attr(PRIMARY, "data-action").await.expect("attr");
-    assert_eq!(action.as_deref(), Some("continue"));
+    assert_eq!(action.as_deref(), Some("send"));
+    h.wait_for_selector(RESUME, Duration::from_secs(2))
+        .await
+        .expect("resume button missing while halted");
     h.wait_for_selector(ABORT, Duration::from_secs(2))
         .await
-        .expect("abort button missing");
+        .expect("abort button missing while halted");
 
-    // Continue → back to idle.
-    h.click(PRIMARY).await.expect("click continue");
+    // Resume (no input) → the loop carries on → back to idle.
+    h.click(RESUME).await.expect("click resume");
     wait_for_turn_state(&h, "idle", Duration::from_secs(30)).await;
 
-    // turn_paused was persisted as a feed event.
+    // turn_halted was persisted as a feed event.
     h.wait_for_count(
-        &format!("{FEED} [data-event-type=\"turn_paused\"]"),
+        &format!("{FEED} [data-event-type=\"turn_halted\"]"),
         1,
         Duration::from_secs(2),
     )
     .await
-    .expect("turn_paused never persisted");
+    .expect("turn_halted never persisted");
 }
 
 // ---------------------------------------------------------------------------
-// 3. Continue with interjection
+// 3. Halt, then steer (resume via a queued message)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 #[ignore = "browser"]
-async fn composer_continue_with_interjection() {
+async fn composer_halt_then_steer() {
     let h = TestHarness::launch().await.expect("launch");
 
     h.reset_calls().await.expect("reset_calls");
@@ -209,38 +222,48 @@ async fn composer_continue_with_interjection() {
         .expect("load_script");
     h.new_session().await.expect("new_session");
 
-    h.fill(INPUT, "trigger interjection").await.expect("fill");
+    h.fill(INPUT, "trigger steer").await.expect("fill");
     h.click(PRIMARY).await.expect("click send");
     wait_for_turn_state(&h, "running", Duration::from_secs(10)).await;
 
-    // Pause mid-flight.
-    h.click(PRIMARY).await.expect("click pause");
-    wait_for_turn_state(&h, "paused", Duration::from_secs(15)).await;
+    // Halt mid-flight; it parks at the next seam.
+    h.click(HALT).await.expect("click halt");
+    wait_for_turn_state(&h, "halted", Duration::from_secs(15)).await;
 
-    // Type interjection while paused, then continue.
+    // Compose a steering message while halted, then Send it. Send ALWAYS
+    // enqueues; the parked halt loop pops it, injects it, and resumes.
     h.fill(INPUT, "actually focus on src/web/server.rs")
         .await
-        .expect("fill interjection");
-    h.click(PRIMARY).await.expect("click continue");
+        .expect("fill steering message");
+    h.click(PRIMARY).await.expect("click send (enqueue steer)");
 
     // Turn resumes.
     wait_for_turn_state(&h, "running", Duration::from_secs(5)).await;
 
-    // Textarea cleared on continue.
+    // Textarea cleared on send.
     let value: String = h
         .eval(&format!("document.querySelector('{INPUT}').value"))
         .await
         .expect("read input");
     assert_eq!(value, "");
 
-    // turn_continued landed in the feed.
+    // turn_resumed landed in the feed.
     h.wait_for_count(
-        &format!("{FEED} [data-event-type=\"turn_continued\"]"),
+        &format!("{FEED} [data-event-type=\"turn_resumed\"]"),
         1,
         Duration::from_secs(5),
     )
     .await
-    .expect("turn_continued never landed");
+    .expect("turn_resumed never landed");
+
+    // The steering message was injected as a user_message event.
+    h.wait_for_count(
+        &format!("{FEED} [data-event-type=\"user_message\"]"),
+        2,
+        Duration::from_secs(5),
+    )
+    .await
+    .expect("steering user_message never landed");
 
     // Wait for completion.
     wait_for_turn_state(&h, "idle", Duration::from_secs(30)).await;
@@ -254,17 +277,17 @@ async fn composer_continue_with_interjection() {
         .expect("count interrupted");
     assert_eq!(
         interrupted, 0,
-        "turn_interrupted should not fire on clean continue"
+        "turn_interrupted should not fire on clean resume"
     );
 }
 
 // ---------------------------------------------------------------------------
-// 4. Pause then Abort
+// 4. Halt then Abort
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 #[ignore = "browser"]
-async fn composer_pause_then_abort() {
+async fn composer_halt_then_abort() {
     let h = TestHarness::launch().await.expect("launch");
 
     h.reset_calls().await.expect("reset_calls");
@@ -277,19 +300,16 @@ async fn composer_pause_then_abort() {
     h.click(PRIMARY).await.expect("click send");
     wait_for_turn_state(&h, "running", Duration::from_secs(10)).await;
 
-    // Pause first — abort is available as secondary during PauseRequested.
-    h.click(PRIMARY).await.expect("click pause");
+    // Halt first. The in-flight tool is `sleep 10`, so the halt cannot reach
+    // a seam yet — the turn sits in halt_requested while the tool runs.
+    h.click(HALT).await.expect("click halt");
+    wait_for_turn_state(&h, "halt_requested", Duration::from_secs(5)).await;
 
-    // While in pause_requested, primary is "continue" (pre-commit); abort is
-    // the secondary button (Abort ⎋).
-    h.wait_for_attr(PRIMARY, "data-action", "continue", Duration::from_secs(5))
-        .await
-        .expect("primary never flipped to continue in pause_requested");
+    // Abort is available during halt_requested and cancels the in-flight
+    // block NOW (it does not wait for a seam).
     h.wait_for_selector(ABORT, Duration::from_secs(2))
         .await
-        .expect("abort secondary button missing during pause_requested");
-
-    // Click the secondary Abort button.
+        .expect("abort secondary button missing during halt_requested");
     h.click(ABORT).await.expect("click abort");
 
     wait_for_turn_state(&h, "idle", Duration::from_secs(15)).await;

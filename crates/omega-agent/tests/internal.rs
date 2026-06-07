@@ -2997,6 +2997,204 @@ async fn run_loop_abort_cancels_block_and_returns_to_park() {
 }
 
 // =============================================================================
+// Halt / Resume (§15 Unified Input Model, U3)
+// =============================================================================
+//
+// Halt = "stop advancing at the next seam and WAIT".  The agent parks at the
+// post-tool_results seam instead of starting the next block.  Resume happens
+// one of two ways:
+//   * a queued steering message wakes the park, is injected, and the loop
+//     continues with it ("I queued a steering message"); OR
+//   * an explicit `request_resume` continues with NO new input ("never mind,
+//     carry on").
+// Abort during a halt still wins (kill switch).
+
+/// Pull `stream` until an item whose tag is `tag` appears (or the stream
+/// ends / stalls). Returns the tags seen up to and including the match.
+async fn pull_until_tag<S>(stream: &mut S, tag: &str, ms: u64) -> Vec<&'static str>
+where
+    S: futures::Stream<Item = AgentItem> + Unpin,
+{
+    let mut seen = Vec::new();
+    loop {
+        match pull(stream, ms).await {
+            Pull::Item(item) => {
+                let these = tags(std::slice::from_ref(&item));
+                seen.extend(these.iter().copied());
+                if these.contains(&tag) {
+                    return seen;
+                }
+            }
+            Pull::Ended => panic!("stream ended before tag {tag:?}; saw {seen:?}"),
+            Pull::Parked => panic!("stream parked before tag {tag:?}; saw {seen:?}"),
+        }
+    }
+}
+
+// Halt parks at the next seam and a QUEUED steering message resumes it: the
+// message is injected (role:user) and the block continues with it visible in
+// the next LLM request.
+#[tokio::test]
+async fn halt_parks_at_seam_then_queued_message_resumes_with_injection() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    let controls = agent.controls();
+
+    // Block 1: a tool_use → creates a post-tool_results seam.
+    provider.push_response(make_tool_use_items(
+        "t1",
+        "run_command",
+        json!({ "command": "echo hi" }),
+    ));
+    // Block 2 (after resume): ends the turn.
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let cancel = CancellationToken::new();
+    let mut stream = agent.run(queue.clone(), cancel.clone());
+    queue.push(InputItem::Human {
+        content: "go".to_owned(),
+    });
+
+    // Drive to the tool result (the last yield before the halt seam). The
+    // loop is now suspended at that yield, so requesting halt here is race-
+    // free: the seam check runs on the very next poll.
+    let _ = pull_until_tag(&mut stream, "ToolResult", 5000).await;
+    controls.request_halt().await;
+
+    // Next poll: the seam observes the halt request and parks.
+    let seen = pull_until_tag(&mut stream, "TurnHalted", 5000).await;
+    assert!(
+        !seen.contains(&"LlmCall"),
+        "halt must park BEFORE starting the next block; saw {seen:?}"
+    );
+    assert!(
+        matches!(pull(&mut stream, 500).await, Pull::Parked),
+        "after TurnHalted the loop must park, not advance"
+    );
+
+    // Queue a steering message → wakes the park, injects it, resumes.
+    queue.push(InputItem::Human {
+        content: "steer left instead".to_owned(),
+    });
+    let seen = pull_until_tag(&mut stream, "TurnResumed", 5000).await;
+    assert!(
+        seen.contains(&"UserMessage"),
+        "the queued steering message must be injected (UserMessage) before \
+         TurnResumed; saw {seen:?}"
+    );
+
+    // The block continues and the steering message reaches the next request.
+    let _ = pull_to_turn_end(&mut stream).await;
+    let reqs = provider.take_requests();
+    assert_eq!(
+        reqs.len(),
+        2,
+        "two LLM calls: pre-halt block + resumed block"
+    );
+    assert!(
+        any_message_contains(&reqs[1], "steer left instead"),
+        "the resumed block's request must carry the steering message"
+    );
+}
+
+// Halt parks at the next seam and an EXPLICIT `request_resume` (no new input)
+// continues the block with nothing injected.
+#[tokio::test]
+async fn halt_parks_then_explicit_resume_continues_with_no_input() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    let controls = agent.controls();
+
+    provider.push_response(make_tool_use_items(
+        "t1",
+        "run_command",
+        json!({ "command": "echo hi" }),
+    ));
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let cancel = CancellationToken::new();
+    let mut stream = agent.run(queue.clone(), cancel.clone());
+    queue.push(InputItem::Human {
+        content: "go".to_owned(),
+    });
+
+    let _ = pull_until_tag(&mut stream, "ToolResult", 5000).await;
+    controls.request_halt().await;
+    let _ = pull_until_tag(&mut stream, "TurnHalted", 5000).await;
+    assert!(
+        matches!(pull(&mut stream, 500).await, Pull::Parked),
+        "halt must park"
+    );
+
+    // "Never mind, carry on" — no queued input.
+    controls.request_resume();
+    let seen = pull_until_tag(&mut stream, "TurnResumed", 5000).await;
+    assert!(
+        !seen.contains(&"UserMessage"),
+        "explicit resume must inject NOTHING; saw {seen:?}"
+    );
+    let _ = pull_to_turn_end(&mut stream).await;
+    let reqs = provider.take_requests();
+    assert_eq!(
+        reqs.len(),
+        2,
+        "resume continues the block: a second LLM call"
+    );
+}
+
+// Abort while halted wins over resume: the parked block is interrupted, the
+// run loop returns to PARK (does NOT terminate), and a later message is served.
+#[tokio::test]
+async fn abort_while_halted_interrupts_block_and_returns_to_park() {
+    let (mut agent, provider, _tmp) = make_test_agent();
+    let controls = agent.controls();
+
+    provider.push_response(make_tool_use_items(
+        "t1",
+        "run_command",
+        json!({ "command": "echo hi" }),
+    ));
+    // Served after the re-park, by the SAME run task.
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    queue.push(InputItem::Human {
+        content: "go".to_owned(),
+    });
+
+    let _ = pull_until_tag(&mut stream, "ToolResult", 5000).await;
+    controls.request_halt().await;
+    let _ = pull_until_tag(&mut stream, "TurnHalted", 5000).await;
+    assert!(
+        matches!(pull(&mut stream, 500).await, Pull::Parked),
+        "halt must park"
+    );
+
+    controls.request_abort();
+    let seen = pull_until_tag(&mut stream, "TurnInterrupted", 5000).await;
+    assert!(
+        !seen.contains(&"TurnResumed"),
+        "an abort during halt must NOT resume the block; saw {seen:?}"
+    );
+    assert!(
+        !run_cancel.is_cancelled(),
+        "control abort must not trip the run-level cancel"
+    );
+    assert!(
+        matches!(pull(&mut stream, 500).await, Pull::Parked),
+        "after an aborted halt the loop must park, not terminate"
+    );
+
+    // A new message is still served by the SAME run task.
+    queue.push(InputItem::Human {
+        content: "after-abort".to_owned(),
+    });
+    let _ = pull_to_turn_end(&mut stream).await;
+}
+
+// =============================================================================
 // A1 structural guard — §15(a) of docs/monitors-design.html
 // =============================================================================
 //
@@ -3099,6 +3297,69 @@ fn user_role_context_appends_are_event_backed() {
          Route each site through a named inject_* helper that emits the \
          backing OmegaEvent before the context append, then add the helper \
          to ALLOWLIST above.",
+        violations.join("\n")
+    );
+}
+
+// =============================================================================
+//
+// U3 source-scan guard: the retired pause-for-INJECTION plumbing must be gone.
+//
+// The unified model (docs/monitors-design.html §15) replaced pause/continue-
+// for-injection with the InputQueue (a user interjects by queuing a message)
+// plus a repurposed Halt/Resume.  This guard fails RED if any of the retired
+// symbols reappear anywhere in omega-agent's source, so the old
+// suspend-and-inject path cannot silently grow back alongside the queue.
+//
+// This is a carve-out (string-scan, not a runtime assertion); mutation testing
+// is not applicable (no numeric/boolean mutation could be missed).
+
+#[test]
+fn pause_for_injection_plumbing_is_removed() {
+    // Symbols that defined the retired pause-for-injection machinery.
+    // Halt/Resume KEEP their own (differently named) symbols, so matching
+    // these exact identifiers does not catch the surviving Halt path.
+    const RETIRED: &[&str] = &[
+        "request_pause",          // → request_halt
+        "request_continue",       // → request_resume (no content arg)
+        "pending_continue",       // injection draft buffer — gone
+        "PendingContinue",        // its type — gone
+        "take_pending_continue",  // gone
+        "pending_continue_ready", // gone
+        "take_pause_request",     // → take_halt_request
+        "ContinueMode",           // Manual/Auto resume discriminator — gone
+        "TurnContinued",          // event → TurnResumed
+        "TurnPaused",             // event → TurnHalted
+        "PauseRequested",         // event → HaltRequested
+    ];
+
+    // Every Rust source file under omega-agent/src.
+    const SOURCES: &[(&str, &str)] = &[
+        ("src/agent.rs", include_str!("../src/agent.rs")),
+        ("src/controls.rs", include_str!("../src/controls.rs")),
+        ("src/lib.rs", include_str!("../src/lib.rs")),
+        (
+            "src/session_resume.rs",
+            include_str!("../src/session_resume.rs"),
+        ),
+    ];
+
+    let mut violations: Vec<String> = Vec::new();
+    for (path, src) in SOURCES {
+        for needle in RETIRED {
+            if src.contains(needle) {
+                violations.push(format!("  {path}: still references `{needle}`"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "RETIRED PLUMBING (U3 — §15 of docs/monitors-design.html):\n\
+         pause-for-injection symbols must not reappear:\n\
+         {}\n\
+         A user interjects by queuing a message (InputQueue); Halt/Resume \
+         replaced pause/continue.",
         violations.join("\n")
     );
 }

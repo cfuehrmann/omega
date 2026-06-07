@@ -604,3 +604,25 @@ mutants-u2-drain-routing:
     cargo mutants -p omega-agent --cap-lints=true --in-place \
         --file "crates/omega-agent/src/agent.rs" \
         --re 'inject_input_item|drain_monitor_stderr'
+
+# §15 U3 — the Halt/Resume control-reconciliation state machine in controls.rs
+# (request_halt / take_halt_request / request_resume / take_resume_request /
+# enter_halt_wait / exit_halt_wait / request_abort).  These are the pure,
+# synchronous control primitives the run loop calls at each seam; the actual
+# park `tokio::select!` lives inside the async_stream! macro and is out of
+# scope (opaque generator).  Covered by the controls.rs unit tests.
+# All mutations must be CAUGHT or UNVIABLE — a survivor means a test gap.
+mutants-u3-controls:
+    cargo mutants -p omega-agent --cap-lints=true --in-place \
+        --file "crates/omega-agent/src/controls.rs"
+
+# §15 U3 — the turn-state marker derivation + Halt/Resume WS handlers in
+# router.rs: `next_turn_state_for` (event → idle/running/halted block-boundary
+# projection), `handle_halt` (gate on running + request_halt), and
+# `handle_resume` (gate on halted + request_resume).  Covered by the
+# ws_router.rs Halt/Resume/dogfood WS tests + router unit tests.
+# All mutations must be CAUGHT or UNVIABLE.
+mutants-u3-turn-state:
+    cargo mutants -p omega-server --cap-lints=true --in-place \
+        --file "crates/omega-server/src/router.rs" \
+        --re 'next_turn_state_for|handle_halt|handle_resume'

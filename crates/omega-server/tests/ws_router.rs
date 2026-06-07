@@ -11,7 +11,7 @@
 //!
 //! **Formerly accepted misses, now fixed:**
 //!
-//! - `router.rs:379 delete match arm OmegaEvent::PauseRequested(_)` — arm
+//! - `router.rs:379 delete match arm OmegaEvent::HaltRequested(_)` — arm
 //!   removed from `next_turn_state_for` (BUG-S2); the mutation no longer
 //!   exists.
 //!
@@ -737,13 +737,14 @@ async fn turn_interrupted_emits_session_info_with_idle_turn_state() {
     );
 }
 
-/// `delete match arm OmegaEvent::TurnPaused(_)` (line 380) — without this
-/// arm the `session_info` frame with `turnState: "paused"` is never sent.
+/// `delete match arm OmegaEvent::TurnHalted(_)` (line 380) — without this
+/// arm the `session_info` frame with `turnState: "halted"` is never sent.
 ///
-/// Drives a pause/continue cycle and asserts `session_info.turnState` is
-/// `"paused"` immediately after `turn_paused`.
+/// §15 (U3): drives a halt/resume cycle and asserts `session_info.turnState`
+/// is `"halted"` immediately after `turn_halted`, then `resume` (no input)
+/// continues the parked turn to `turn_end`.
 #[tokio::test]
-async fn turn_paused_emits_session_info_with_paused_turn_state() {
+async fn turn_halted_emits_session_info_with_halted_turn_state() {
     let tmp = TempDir::new().unwrap();
     let scratch = {
         let p = tmp.path().join("scratch.txt");
@@ -777,47 +778,50 @@ async fn turn_paused_emits_session_info_with_paused_turn_state() {
     // step gate after consuming item 0.  See the abort variant above
     // for why we don't wait for `tool_call` here.
     let _ = recv_until_type(&mut ws, "llm_response_started").await;
-    send_json(&mut ws, serde_json::json!({ "type": "pause" })).await;
-    // `handle_pause` emits `pause_requested` *after* `request_pause()` has
-    // set the agent's pause flag, so observing that frame is a positive
+    send_json(&mut ws, serde_json::json!({ "type": "halt" })).await;
+    // `handle_halt` emits `halt_requested` *after* `request_halt()` has
+    // set the agent's halt flag, so observing that frame is a positive
     // confirmation that the flag is set.
-    let _ = recv_until_type(&mut ws, "pause_requested").await;
+    let _ = recv_until_type(&mut ws, "halt_requested").await;
     step_gate.notify_one();
-    // Drain until turn_paused.
-    let frames = recv_until_type(&mut ws, "turn_paused").await;
+    // Drain until turn_halted: the agent appended the tool_result and
+    // PARKED at the next seam instead of starting the next block.
+    let frames = recv_until_type(&mut ws, "turn_halted").await;
 
-    // The session_info with turnState="paused" must be the frame
-    // immediately after turn_paused.
+    // The session_info with turnState="halted" must be the frame
+    // immediately after turn_halted.
     let info = recv_json(&mut ws).await;
     assert_eq!(info["type"], "session_info");
     assert_eq!(
-        info["turnState"], "paused",
-        "turnState must be paused after turn_paused; got {info}\n(preceding frames: {frames:?})",
+        info["turnState"], "halted",
+        "turnState must be halted after turn_halted; got {info}\n(preceding frames: {frames:?})",
     );
 
-    // Clean up: continue the paused turn so the session winds down cleanly.
-    send_json(&mut ws, serde_json::json!({ "type": "continue" })).await;
+    // Resume with NO new input ("never mind, carry on"): the parked loop
+    // wakes and continues the turn.
+    send_json(&mut ws, serde_json::json!({ "type": "resume" })).await;
+    let _ = recv_until_type(&mut ws, "turn_resumed").await;
     // text_llm_response_event produces 2 items; item 1 (llm_response_event)
-    // is gated by the step gate — release it so the second turn can finish.
+    // is gated by the step gate — release it so the second block can finish.
     step_gate.notify_one();
     let _ = recv_until_type(&mut ws, "turn_end").await;
 }
 
 // ---------------------------------------------------------------------------
-// handle_pause — turn-state guard (line 752)
+// handle_halt — turn-state guard (line 752)
 // ---------------------------------------------------------------------------
 
-/// `replace != with == in handle_pause` (line 752, the `"pause_requested"`
-/// guard) — without this guard, a second `pause` sent while the state is
-/// already `"pause_requested"` would re-send a `session_info` frame with
+/// `replace != with == in handle_halt` (line 752, the `"halt_requested"`
+/// guard) — without this guard, a second `halt` sent while the state is
+/// already `"halt_requested"` would re-send a `session_info` frame with
 /// stale data. More importantly, the mutant flips the condition so the
-/// session_info frame is never sent when a *first* pause arrives in
+/// session_info frame is never sent when a *first* halt arrives in
 /// `"running"` state.
 ///
-/// Assert that after `controls.request_pause()` is called, a `session_info`
-/// frame with `turnState: "pause_requested"` arrives on the socket.
+/// Assert that after `controls.request_halt()` is called, a `session_info`
+/// frame with `turnState: "halt_requested"` arrives on the socket.
 #[tokio::test]
-async fn pause_emits_session_info_with_pause_requested_turn_state() {
+async fn halt_emits_session_info_with_halt_requested_turn_state() {
     let tmp = TempDir::new().unwrap();
     let scratch = {
         let p = tmp.path().join("scratch.txt");
@@ -849,29 +853,164 @@ async fn pause_emits_session_info_with_pause_requested_turn_state() {
     .await;
     // Agent is parked on the step gate once we see `llm_response_started`.
     let _ = recv_until_type(&mut ws, "llm_response_started").await;
-    send_json(&mut ws, serde_json::json!({ "type": "pause" })).await;
+    send_json(&mut ws, serde_json::json!({ "type": "halt" })).await;
 
-    // Collect frames until we see pause_requested event, then check the
+    // Collect frames until we see halt_requested event, then check the
     // immediately following session_info.  Because the agent is parked on
     // the gate, no agent-emitted frames can interleave between
-    // `pause_requested` and the session_info `handle_pause` sends next.
-    let pause_frames = recv_until_type(&mut ws, "pause_requested").await;
-    // session_info with "pause_requested" must follow.
+    // `halt_requested` and the session_info `handle_halt` sends next.
+    let halt_frames = recv_until_type(&mut ws, "halt_requested").await;
+    // session_info with "halt_requested" must follow.
     let info = recv_json(&mut ws).await;
     assert_eq!(
         info["type"], "session_info",
-        "expected session_info after pause_requested; got {info}\n(pause frames: {pause_frames:?})"
+        "expected session_info after halt_requested; got {info}\n(halt frames: {halt_frames:?})"
     );
     assert_eq!(
-        info["turnState"], "pause_requested",
-        "turnState must be pause_requested; got {info}",
+        info["turnState"], "halt_requested",
+        "turnState must be halt_requested; got {info}",
     );
 
-    // Release the gate so the agent can finish (continue → turn_end).
+    // Release the gate so the agent reaches the seam and parks (turn_halted),
+    // then resume to wind the session down cleanly.
     step_gate.notify_one();
-    send_json(&mut ws, serde_json::json!({ "type": "continue" })).await;
+    let _ = recv_until_type(&mut ws, "turn_halted").await;
+    send_json(&mut ws, serde_json::json!({ "type": "resume" })).await;
     // text_llm_response_event has 2 items; item 1 (llm_response_event) needs
-    // a second gate release for the resumed (second) turn.
+    // a second gate release for the resumed (second) block.
+    step_gate.notify_one();
+    let _ = recv_until_type(&mut ws, "turn_end").await;
+}
+
+// ---------------------------------------------------------------------------
+// §15 (U3) DOG-FOODING: ordinary human↔agent coding turns end-to-end.
+// ---------------------------------------------------------------------------
+
+/// **Migration lifeline (non-negotiable acceptance criterion).** An ordinary
+/// human turn must work end-to-end over the WebSocket under the unified input
+/// model: `user_message` enqueues, the persistent run loop drains it, a
+/// multi-cycle turn streams (model → tool_call → tool_result → model), it ends
+/// with `turn_end` (block exit → `turnState: "idle"`, parked), and a SECOND
+/// `user_message` is drained immediately from the parked seam.
+#[tokio::test]
+async fn dogfood_multi_cycle_human_turn_streams_then_parks_and_drains_next() {
+    let tmp = TempDir::new().unwrap();
+    let scratch = {
+        let p = tmp.path().join("scratch.txt");
+        std::fs::write(&p, "hello").unwrap();
+        p
+    };
+    let provider = Arc::new(MockProvider::new());
+    // Turn 1: a 2-cycle turn (tool_use → then end_turn).
+    provider.push(tool_use_items(
+        "tu_dog1",
+        "read_file",
+        serde_json::json!({ "path": scratch.to_string_lossy() }),
+    ));
+    provider.push(text_llm_response_event("end_turn"));
+    // Turn 2: a single-cycle turn drained from the parked seam.
+    provider.push(text_llm_response_event("end_turn"));
+
+    let addr = spawn_server(make_state(
+        Arc::clone(&provider),
+        tmp.path().join("sessions"),
+    ))
+    .await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    reset_and_ready(&mut ws).await;
+
+    // ----- Turn 1: enqueue + stream a multi-cycle turn -----
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "read it" }),
+    )
+    .await;
+    // The turn must actually advance through a tool cycle.
+    let _ = recv_until_type(&mut ws, "tool_call").await;
+    let _ = recv_until_type(&mut ws, "tool_result").await;
+    let _ = recv_until_type(&mut ws, "turn_end").await;
+    // Block exit → parked idle.
+    let info = recv_json(&mut ws).await;
+    assert_eq!(info["type"], "session_info");
+    assert_eq!(
+        info["turnState"], "idle",
+        "turnState must be idle after turn_end (parked); got {info}"
+    );
+
+    // ----- Turn 2: Send while parked → drained immediately -----
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "again" }),
+    )
+    .await;
+    let _ = recv_until_type(&mut ws, "turn_end").await;
+}
+
+// ---------------------------------------------------------------------------
+// §15 (U3) Halt + resume-via-queued-steering-message.
+// ---------------------------------------------------------------------------
+
+/// The flagship U3 use case: agent heading the wrong way → user halts → it
+/// parks at the next seam → user composes a steering message at leisure →
+/// queues it → the parked loop resumes WITH that input injected.
+///
+/// Asserts the queued `user_message` (sent while `halted`) both wakes the
+/// park and is injected as a `user_message` event before `turn_resumed`.
+#[tokio::test]
+async fn halt_then_queued_steering_message_resumes_with_injection() {
+    let tmp = TempDir::new().unwrap();
+    let scratch = {
+        let p = tmp.path().join("scratch.txt");
+        std::fs::write(&p, "x").unwrap();
+        p
+    };
+    let provider = Arc::new(MockProvider::new());
+    let step_gate = provider.enable_step_gate();
+    provider.push(tool_use_items(
+        "tu_steer",
+        "read_file",
+        serde_json::json!({ "path": scratch.to_string_lossy() }),
+    ));
+    provider.push(text_llm_response_event("end_turn"));
+
+    let addr = spawn_server(make_state(
+        Arc::clone(&provider),
+        tmp.path().join("sessions"),
+    ))
+    .await;
+    let mut ws = connect(addr).await;
+    assert_eq!(recv_json(&mut ws).await["type"], "ready");
+    reset_and_ready(&mut ws).await;
+
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "go" }),
+    )
+    .await;
+    let _ = recv_until_type(&mut ws, "llm_response_started").await;
+    send_json(&mut ws, serde_json::json!({ "type": "halt" })).await;
+    let _ = recv_until_type(&mut ws, "halt_requested").await;
+    step_gate.notify_one();
+    let _ = recv_until_type(&mut ws, "turn_halted").await;
+
+    // Compose & queue a steering message while parked.  It must wake the
+    // park, be injected as a `user_message` event, then `turn_resumed`.
+    send_json(
+        &mut ws,
+        serde_json::json!({ "type": "user_message", "content": "steer left" }),
+    )
+    .await;
+    let frames = recv_until_type(&mut ws, "turn_resumed").await;
+    let injected = frames
+        .iter()
+        .find(|v| v["type"] == "user_message")
+        .unwrap_or_else(|| panic!("no user_message injected before turn_resumed; got {frames:?}"));
+    assert_eq!(
+        injected["content"], "steer left",
+        "injected steering message must carry the queued content; got {injected}"
+    );
+    // Continue to the end of the resumed block.
     step_gate.notify_one();
     let _ = recv_until_type(&mut ws, "turn_end").await;
 }

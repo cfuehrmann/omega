@@ -108,11 +108,13 @@ grep -rh 'class="' frontends/leptos/src/*.rs \
 | `.fc-item.fc-hl` | renamed | `.leptos-composer-completion-hl` | Selected via `.leptos-composer-completion-item.leptos-composer-completion-hl`. |
 | `.fc-item.fc-dir` | renamed | `.leptos-composer-completion-dir` | |
 | `.input-btn` | adapt | `.leptos-composer button` (descendant) | Base button look — applied to every button that appears in the composer surface. |
-| `.send-btn` | adapt | `.leptos-composer-primary[data-action="send"]` | Each primary-action variant uses an attribute selector against the existing `data-action` attribute (already emitted by `composer.rs::action_tag`). No DOM change needed. |
-| `.pause-btn` | adapt | `.leptos-composer-primary[data-action="pause"]` | |
-| `.continue-btn` | adapt | `.leptos-composer-primary[data-action="continue"]` | |
+| `.send-btn` | adapt | `.leptos-composer-primary[data-action="send"]` | U3: the primary button is **always Send** (`data-action="send"`) — Send always enqueues to the inbox in every turn state. No more pause/continue primary variants. |
+| `.pause-btn` | dead | — | U3 retired pause-for-injection. The new "stop advancing" control is **Halt** (`.leptos-composer-halt`), a secondary button shown only while Running. |
+| `.continue-btn` | dead | — | U3 retired continue-for-injection. The new resume control is **Resume** (`.leptos-composer-resume`), shown only while Halted. |
 | `.takeitback-btn` | dead | — | The "Take it back" affordance was dropped in 3.4 (recorded decision). |
-| `.abort-btn` | adapt | `.leptos-composer-primary[data-action="abort"]`, `.leptos-composer-abort` | Both the primary (during PauseRequested) and the secondary (during Paused) get the red colour. |
+| `.halt-btn` | adapt | `.leptos-composer-halt` | U3 secondary control shown while Running ("stop advancing at the next seam"). |
+| `.resume-btn` | adapt | `.leptos-composer-resume` | U3 secondary control shown while Halted ("carry on, no new input"). |
+| `.abort-btn` | adapt | `.leptos-composer-abort` | U3: secondary Abort, shown while Running / HaltRequested / Halted (forceful cancel of the in-flight block). |
 | `.sessions-btn` | adapt | `.leptos-composer-sessions` | Phase 3.9 TODO-1: a "Sessions" button was added to `<Composer/>` at position 0 (before model/effort selects). Opens the picker modal via `PickerOpen.open()`. Styled with yellow hover to match SolidJS's sessions-btn palette. |
 | `.effort-select`, `.effort-trigger`, `.effort-dropdown`, `.effort-option`, `.effort-option-selected` | dead | — | Leptos uses native `<select>` elements (`.leptos-composer-effort` / `.leptos-composer-model`); the SolidJS custom dropdown machinery has no analogue. We style the native `<select>` with `.leptos-composer-effort` / `.leptos-composer-model` rules. |
 
@@ -211,9 +213,11 @@ A small set of `.leptos-*` rules with no SolidJS counterpart:
   `section.set_scroll_top(scrollHeight)` rather than `scrollIntoView`.
 - `.leptos-composer-completion`, `-item`, `-hl`, `-dir` — file-path popup
   inside `.leptos-composer-textarea-wrap`. Mirrors `.fc-*` rules.
-- `.leptos-composer-primary`, `.leptos-composer-abort`,
+- `.leptos-composer-primary` (always Send), `.leptos-composer-halt`,
+  `.leptos-composer-resume`, `.leptos-composer-abort`,
   `.leptos-composer-input`, `.leptos-composer-model`,
-  `.leptos-composer-effort` — composer controls.
+  `.leptos-composer-effort` — composer controls (U3 three-controls model:
+  Send / Halt / Resume / Abort).
 - `.leptos-context-modal-*` (full set) — modal overlay + panel + records.
 - `.leptos-context-modal-empty` — placeholder text when no records returned.
 - `.leptos-context-modal-error` — fetch-error notice.

@@ -94,7 +94,7 @@ ToolCall           ToolResult           TurnEnd
 LlmError           AgentError           TurnInterrupted
 LlmRetry           ModelChanged         EffortChanged
 TransportError     ResumingSession      SessionResumed
-PauseRequested     TurnPaused           TurnContinued
+HaltRequested      TurnHalted           TurnResumed
 ```
 
 All 26 are valid `events.jsonl` lines and valid WebSocket frames.  The
@@ -123,9 +123,9 @@ WebSocket-only — never written to `events.jsonl`.
 | `LlmCall` | `url`, `model`, `contextHashes`, `cacheBreakpointIndex`, `requestBytes`, `requestSummary?` | `cacheBreakpointIndex` is always serialized (as `null` when absent). |
 | `TurnEnd` | `time`, `metrics` | Aggregate per-turn token totals.  `metrics` uses camelCase (`inputTokens`, `outputTokens`, `cacheCreationTokens?`, `cacheReadTokens?`). |
 | `TurnInterrupted` | `time`, `reason?` | `reason` is `"aborted"` or `"error"` when present. |
-| `PauseRequested` | `time` | User requested a pause. |
-| `TurnPaused` | `time` | Agent reached a clean seam and paused. |
-| `TurnContinued` | `time`, `mode` | `mode` is `"manual"` or `"auto"`. |
+| `HaltRequested` | `time` | User requested a halt ("stop advancing at the next seam and wait"). |
+| `TurnHalted` | `time` | Agent reached a clean seam and parked, waiting for resume. |
+| `TurnResumed` | `time` | Halted run resumed — either by a queued steering message (injected) or an explicit `Resume` (no input). |
 
 ### LLM response block grammar (SCHEMA-8)
 

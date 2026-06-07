@@ -987,8 +987,12 @@ main > h1 {
   border-color: var(--user);
 }
 
-/* Primary action button — colour + hover keyed off `data-action`. */
+/* Composer control buttons (U3 three-controls model: Send / Halt / Resume
+ * / Abort). The primary button is always Send; Halt / Resume / Abort are
+ * secondary buttons that mount conditionally on turn state. */
 .leptos-composer-primary,
+.leptos-composer-halt,
+.leptos-composer-resume,
 .leptos-composer-abort {
   border: 1px solid var(--ctp-surface2);
   background: none;
@@ -1005,21 +1009,24 @@ main > h1 {
   transition: border-color 0.15s, color 0.15s;
 }
 .leptos-composer-primary:disabled,
+.leptos-composer-halt:disabled,
+.leptos-composer-resume:disabled,
 .leptos-composer-abort:disabled { opacity: 0.4; cursor: default; }
 
+/* Primary is always Send (blue). */
 .leptos-composer-primary[data-action="send"]:hover:not(:disabled)        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-.leptos-composer-primary[data-action="pause"]                               { color: var(--yellow); }
-.leptos-composer-primary[data-action="pause"]:hover:not(:disabled)          { border-color: var(--yellow); }
-.leptos-composer-primary[data-action="continue"]                            { color: var(--green); }
-.leptos-composer-primary[data-action="continue"]:hover:not(:disabled)       { border-color: var(--green); }
-.leptos-composer-primary[data-action="takeitback"]                          { color: var(--ctp-peach); }
-.leptos-composer-primary[data-action="takeitback"]:hover:not(:disabled)     { border-color: var(--ctp-peach); }
-.leptos-composer-primary[data-action="abort"]                               { color: var(--red); }
-.leptos-composer-primary[data-action="abort"]:hover:not(:disabled)          { border-color: var(--red); }
 
-/* Secondary abort button (only mounts during Paused). */
+/* Halt — "stop advancing" (yellow), shown while Running. */
+.leptos-composer-halt          { color: var(--yellow); }
+.leptos-composer-halt:hover:not(:disabled)   { border-color: var(--yellow); }
+
+/* Resume — "carry on" (green), shown while Halted. */
+.leptos-composer-resume        { color: var(--green); }
+.leptos-composer-resume:hover:not(:disabled) { border-color: var(--green); }
+
+/* Abort — forceful cancel (red), shown while Running / HaltRequested / Halted. */
 .leptos-composer-abort         { color: var(--red); }
-.leptos-composer-abort:hover   { border-color: var(--red); }
+.leptos-composer-abort:hover:not(:disabled)  { border-color: var(--red); }
 
 /* "Sessions" button — opens the picker modal (Phase 3.9 TODO-1). */
 .leptos-composer-sessions {

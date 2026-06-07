@@ -58,7 +58,15 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h1>Async Monitors for Omega</h1>
 <p class="meta">
-  <span class="tag tag-status">ALL PHASES (0–4) IMPLEMENTED</span><br/>
+  <span class="tag tag-status">ALL PHASES (0–4) IMPLEMENTED</span>
+  <span class="tag tag-status">UNIFIED INPUT MODEL (§15) COMPLETE</span><br/>
+  <span class="meta">The Unified Input Model migration is fully landed: U1 (persistent
+  <code>run</code> loop + <code>InputQueue</code>), U2 (monitors through the inbox,
+  two-seam drain) and U3 (controls reconciled — pause-for-injection retired,
+  <strong>Halt</strong>/<strong>Abort</strong> kept, accurate turn-state markers).
+  Three orthogonal controls now: <strong>Queue</strong> (Send, always enqueues),
+  <strong>Halt</strong> (stop advancing at the next seam and wait),
+  <strong>Abort</strong> (cancel the in-flight block now).</span><br/>
   <span class="meta">Phase 0 (event schema + context projection) landed in commit <code>0edc8d5</code>; Phase 4 (shutdown/resume/headless teardown + <code>MonitorStopReason</code> rename) completed the feature. The four <code>OmegaEvent</code> variants and the §12 decisions are locked in <small class="path">crates/omega-types/src/events.rs</small> and <small class="path">crates/omega-agent/src/agent.rs</small>. §12 documents the single-source-of-truth interlude refactor (between Phases 3 and 4).</span><br/>
   Design &amp; cold-start resume document. Self-contained: a future session with
   <em>no prior context</em> should be able to read this and either start
@@ -1174,11 +1182,59 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
   <code>monitor:&lt;id&gt;</code> queue frame, the A1 guard
   (<code>user_role_context_appends_are_event_backed</code>), and the dog-food
   multi-cycle coding turn &mdash; all green.
-  <br/><strong>U3 still owns:</strong> retire the interjection plumbing
-  (<code>request_pause</code> / <code>pending_continue</code>; <code>request_continue</code>
-  becomes an inbox push) while keeping <code>request_abort</code> (Halt); the UI
-  turn-state / block-boundary markers (running = in a block, idle = empty-inbox seam)
-  and dropping the per-message <code>current_turn</code> handle.</div>
+  <br/><strong>U3 landed all of this</strong> &mdash; see the U3 box below.</div>
+<div class="box ok"><strong>U3 &mdash; IMPLEMENTED. The migration is COMPLETE.</strong>
+  The old pause/continue-for-<em>injection</em> machinery is gone; the three
+  orthogonal controls (Queue / Halt / Abort) are reconciled.
+  <br/><strong>Removed (pause-for-injection):</strong> <code>request_pause</code>,
+  <code>request_continue(content)</code>, <code>pending_continue</code> and the
+  content-injection suspend path. Interjection is now <em>one</em> thing &mdash; a
+  push to the <code>InputQueue</code> (the <code>UserMessage</code> frame), drained at
+  the next seam. The events <code>PauseRequested</code> / <code>TurnPaused</code> /
+  <code>TurnContinued</code> (and <code>ContinueMode</code>) were <strong>renamed</strong>
+  to <code>HaltRequested</code> / <code>TurnHalted</code> / <code>TurnResumed</code>
+  (Contract Authority: a semantic change forces a syntax change), and
+  <code>ClientFrame::Pause</code> / <code>Continue</code> → <code>Halt</code> /
+  <code>Resume</code>.
+  <br/><strong>Kept: Halt (load-bearing) + Abort.</strong> <code>request_abort</code> is
+  unchanged (forceful: cancel the in-flight block <em>now</em>). <strong>Halt</strong>
+  repurposes the old suspend machinery: <code>request_halt()</code> sets a flag that is
+  honoured at the next <strong>Seam B</strong> (after a <code>tool_result</code>, before
+  the next model call) &mdash; the run loop yields <code>TurnHalted</code> and
+  <strong>parks</strong> instead of starting the next block, satisfying the
+  &ldquo;agent heading the wrong way &rarr; stop advancing &rarr; compose a steering
+  message at leisure&rdquo; use case.
+  <br/><strong>Resume UX &mdash; two ways (both exist):</strong> (1) <em>queue a steering
+  message</em> &mdash; Send pushes to the inbox, which wakes the parked loop; the
+  message is injected at the seam (its own event-backed <code>inject_*</code> append,
+  A1) and the loop continues with it; (2) <em>explicit <code>request_resume()</code></em>
+  (the <strong>Resume</strong> button) &mdash; &ldquo;never mind, carry on&rdquo;,
+  continues with no new input. The park is a single <code>tokio::select!</code> over
+  <code>cancel</code> (abort wins) / the resume notify / <code>inbox.pop()</code>; the
+  Seam-B drain right after picks up anything queued behind the first item.
+  <br/><strong>Turn-state markers (block boundaries):</strong> the frontend distinguishes
+  <code>running</code> (inside a block, processing), <code>halt_requested</code> (Halt
+  clicked, halting at the next seam), <code>halted</code> (parked at a halt seam) and
+  <code>idle</code> (parked at an empty-queue seam). These are <em>event-derived</em>
+  in <code>next_turn_state_for</code>: <code>UserMessage</code> /
+  <code>MonitorDelivery</code> / <code>MonitorStopped</code> / <code>TurnResumed</code>
+  &rarr; running; <code>TurnHalted</code> &rarr; halted; <code>TurnEnd</code> /
+  <code>TurnInterrupted</code> &rarr; idle; <code>handle_halt</code> sets
+  <code>halt_requested</code> directly. This fixes the long-standing
+  &ldquo;parked-looks-idle&rdquo; composer confusion.
+  <br/><strong>Composer (three-controls model):</strong> the Pause/Continue/Take-it-back
+  state machine and the pre-commit auto-drain are gone. <strong>Send</strong> always
+  enqueues (parked → drained immediately; in-block → queued until the next seam,
+  batched). <strong>Halt</strong> shows while <code>running</code>;
+  <strong>Resume</strong> while <code>halted</code>; <strong>Abort</strong> while
+  <code>running</code> / <code>halt_requested</code> / <code>halted</code>.
+  <br/><strong>Verified:</strong> Agent+MockProvider halt-parks / queued-resume /
+  resume-no-input tests; server WS halt / halt-then-queued-resume / dog-food
+  multi-cycle tests; a grep/test guard that the pause-for-injection plumbing is gone;
+  the A1 guard and the always-visible queue/monitor affordances (§9); composer
+  snapshot tests for Send/Halt/Resume/Abort; browser e2e halt / steer / abort; full
+  <code>just gate</code> green. Mutation: Halt/resume controls and the
+  turn-state/control-reconciliation logic &mdash; all caught or unviable.</div>
 <ol>
   <li><strong>U1 &mdash; persistent <code>run</code> loop + inbox for human input;
     monitor <em>delivery</em> goes dark.</strong>
@@ -1209,7 +1265,7 @@ and its <em>lifetime</em> moves from per-message to per-session.</p>
     model call); park awaits the inbox. The headless park/terminate rule landed here
     early (originally slated for U3). <em>Dog-food check:</em> human turns still
     work; monitor delivery back online. &#x2713;</li>
-  <li><strong>U3 &mdash; retire superseded machinery + reconcile.</strong>
+  <li><strong>U3 &mdash; retire superseded machinery + reconcile. <span class="keep">&#x2713; IMPLEMENTED</span></strong> (see the U3 box above).
     Remove <code>request_pause</code> + <code>pending_continue</code> (interjection
     = enqueue-at-seam; <code>request_continue(content)</code> becomes a push to the
     inbox); keep <code>request_abort</code>. Remove the roster-changed wake (a stop

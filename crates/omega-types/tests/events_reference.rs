@@ -28,16 +28,15 @@
 use omega_types::FeatureFlags;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, ContextCompactedEvent, ContinueMode, EffortChangedEvent, HarnessRecoveryEvent,
-    HarnessRecoveryKind, InterruptReason, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
-    LlmResponseEndedEvent, LlmResponseStartedEvent, LlmResponseUsage, LlmRetryEvent,
-    LlmRetryReason, ModelChangedEvent, MonitorDeliveryEvent, MonitorDeliveryItem,
+    AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, HaltRequestedEvent,
+    HarnessRecoveryEvent, HarnessRecoveryKind, InterruptReason, LlmCallEvent, LlmErrorEvent,
+    LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmResponseUsage,
+    LlmRetryEvent, LlmRetryReason, ModelChangedEvent, MonitorDeliveryEvent, MonitorDeliveryItem,
     MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason, MonitorStoppedEvent,
-    PauseRequestedEvent, ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome,
-    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
-    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent,
-    TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent,
-    UsageIteration, UserMessageEvent,
+    ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
+    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent,
+    ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnEndEvent, TurnHaltedEvent,
+    TurnInterruptedEvent, TurnMetrics, TurnResumedEvent, UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use serde_json::json;
@@ -211,15 +210,12 @@ fn all_32_events() -> Vec<OmegaEvent> {
             resumed_from: "20240114_090000".into(),
             summary: "Fixed a bug in the parser module.".into(),
         }),
-        // 18. PauseRequested
-        OmegaEvent::PauseRequested(PauseRequestedEvent { time: T.into() }),
-        // 19. TurnPaused
-        OmegaEvent::TurnPaused(TurnPausedEvent { time: T.into() }),
-        // 20. TurnContinued
-        OmegaEvent::TurnContinued(TurnContinuedEvent {
-            time: T.into(),
-            mode: ContinueMode::Manual,
-        }),
+        // 18. HaltRequested
+        OmegaEvent::HaltRequested(HaltRequestedEvent { time: T.into() }),
+        // 19. TurnHalted
+        OmegaEvent::TurnHalted(TurnHaltedEvent { time: T.into() }),
+        // 20. TurnResumed
+        OmegaEvent::TurnResumed(TurnResumedEvent { time: T.into() }),
         // ----- SCHEMA-8 additive variants ------------------------------------
         // 21. LlmResponseStarted — opener for a fresh provider stream.
         OmegaEvent::LlmResponseStarted(LlmResponseStartedEvent { time: T.into() }),

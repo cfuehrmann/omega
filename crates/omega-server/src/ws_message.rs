@@ -79,7 +79,7 @@ pub enum WsMessage {
         cwd: String,
         /// Optional human-readable session name; omitted when `None`.
         name: Option<String>,
-        /// Current derived turn state (`idle` / `running` / `pause_requested` / `paused`).
+        /// Current derived turn state (`idle` / `running` / `halt_requested` / `halted`).
         /// Projected to the JSON key `turnState` to match the TS contract.
         turn_state: String,
         /// Whether the working tree had uncommitted changes when this session

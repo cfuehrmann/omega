@@ -93,9 +93,9 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::EffortChanged(_)
         | OmegaEvent::ResumingSession(_)
         | OmegaEvent::SessionResumed(_)
-        | OmegaEvent::PauseRequested(_)
-        | OmegaEvent::TurnPaused(_)
-        | OmegaEvent::TurnContinued(_)
+        | OmegaEvent::HaltRequested(_)
+        | OmegaEvent::TurnHalted(_)
+        | OmegaEvent::TurnResumed(_)
         | OmegaEvent::LlmResponseStarted(_)
         | OmegaEvent::LlmResponseEnded(_)
         | OmegaEvent::LlmResponseDiscarded(_)
@@ -164,9 +164,9 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::TransportError(_) => "transport_error",
         OmegaEvent::ResumingSession(_) => "resuming_session",
         OmegaEvent::SessionResumed(_) => "session_resumed",
-        OmegaEvent::PauseRequested(_) => "pause_requested",
-        OmegaEvent::TurnPaused(_) => "turn_paused",
-        OmegaEvent::TurnContinued(_) => "turn_continued",
+        OmegaEvent::HaltRequested(_) => "halt_requested",
+        OmegaEvent::TurnHalted(_) => "turn_halted",
+        OmegaEvent::TurnResumed(_) => "turn_resumed",
         // SCHEMA-8 additive variants — Phase 1b stubs.
         OmegaEvent::LlmResponseStarted(_) => "llm_response_started",
         OmegaEvent::LlmResponseEnded(_) => "llm_response_ended",
@@ -218,9 +218,9 @@ pub const LABEL_MODEL_CHANGED: &str = "Model changed";
 pub const LABEL_EFFORT_CHANGED: &str = "Effort changed";
 pub const LABEL_RESUMING_SESSION: &str = "Resuming session";
 pub const LABEL_SESSION_RESUMED: &str = "Session resumed";
-pub const LABEL_PAUSE_REQUESTED: &str = "Pause requested";
-pub const LABEL_TURN_PAUSED: &str = "Turn paused";
-pub const LABEL_TURN_CONTINUED: &str = "Turn continued";
+pub const LABEL_HALT_REQUESTED: &str = "Halt requested";
+pub const LABEL_TURN_HALTED: &str = "Turn halted";
+pub const LABEL_TURN_RESUMED: &str = "Turn resumed";
 pub const LABEL_LLM_RESPONSE_STARTED: &str = "LLM response start";
 pub const LABEL_LLM_RESPONSE_ENDED: &str = "LLM response end";
 pub const LABEL_ASSISTANT: &str = "Assistant";
@@ -255,9 +255,9 @@ pub fn event_label(event: &OmegaEvent) -> &str {
         OmegaEvent::EffortChanged(_) => LABEL_EFFORT_CHANGED,
         OmegaEvent::ResumingSession(_) => LABEL_RESUMING_SESSION,
         OmegaEvent::SessionResumed(_) => LABEL_SESSION_RESUMED,
-        OmegaEvent::PauseRequested(_) => LABEL_PAUSE_REQUESTED,
-        OmegaEvent::TurnPaused(_) => LABEL_TURN_PAUSED,
-        OmegaEvent::TurnContinued(_) => LABEL_TURN_CONTINUED,
+        OmegaEvent::HaltRequested(_) => LABEL_HALT_REQUESTED,
+        OmegaEvent::TurnHalted(_) => LABEL_TURN_HALTED,
+        OmegaEvent::TurnResumed(_) => LABEL_TURN_RESUMED,
         OmegaEvent::LlmResponseStarted(_) => LABEL_LLM_RESPONSE_STARTED,
         OmegaEvent::LlmResponseEnded(_) => LABEL_LLM_RESPONSE_ENDED,
         OmegaEvent::LlmResponseDiscarded(_) => LABEL_ASSISTANT,
@@ -856,16 +856,16 @@ mod tests {
 
     use omega_types::FeatureFlags;
     use omega_types::events::{
-        AgentErrorEvent, EffortChangedEvent, LlmCallEvent, LlmErrorEvent,
+        AgentErrorEvent, EffortChangedEvent, HaltRequestedEvent, LlmCallEvent, LlmErrorEvent,
         LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent,
-        LlmResponseUsage, LlmRetryEvent, ModelChangedEvent, PauseRequestedEvent,
-        ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
-        SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent,
-        ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnContinuedEvent,
-        TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent, UserMessageEvent,
+        LlmResponseUsage, LlmRetryEvent, ModelChangedEvent, ResumingSessionEvent,
+        ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent,
+        SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
+        ToolUseBlockEvent, TransportErrorEvent, TurnEndEvent, TurnHaltedEvent,
+        TurnInterruptedEvent, TurnMetrics, TurnResumedEvent, UserMessageEvent,
     };
     use omega_types::ids::{Origin, SessionId};
-    use omega_types::{ContinueMode, InterruptReason, OmegaEvent};
+    use omega_types::{InterruptReason, OmegaEvent};
     use serde_json::json;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -1111,23 +1111,20 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn kind_pause_requested_is_status() {
-        let ev = OmegaEvent::PauseRequested(PauseRequestedEvent { time: t() });
+    fn kind_halt_requested_is_status() {
+        let ev = OmegaEvent::HaltRequested(HaltRequestedEvent { time: t() });
         assert_eq!(kind_for(&ev), EventKind::Status);
     }
 
     #[wasm_bindgen_test]
-    fn kind_turn_paused_is_status() {
-        let ev = OmegaEvent::TurnPaused(TurnPausedEvent { time: t() });
+    fn kind_turn_halted_is_status() {
+        let ev = OmegaEvent::TurnHalted(TurnHaltedEvent { time: t() });
         assert_eq!(kind_for(&ev), EventKind::Status);
     }
 
     #[wasm_bindgen_test]
-    fn kind_turn_continued_is_status() {
-        let ev = OmegaEvent::TurnContinued(TurnContinuedEvent {
-            time: t(),
-            mode: ContinueMode::Manual,
-        });
+    fn kind_turn_resumed_is_status() {
+        let ev = OmegaEvent::TurnResumed(TurnResumedEvent { time: t() });
         assert_eq!(kind_for(&ev), EventKind::Status);
     }
 

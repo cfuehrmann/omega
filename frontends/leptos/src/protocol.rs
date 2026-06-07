@@ -48,13 +48,13 @@
 use omega_types::OmegaEvent;
 use omega_types::events::AgentErrorEvent;
 use omega_types::events::{
-    ContextCompactedEvent, EffortChangedEvent, HarnessRecoveryEvent, LlmCallEvent, LlmErrorEvent,
-    LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmRetryEvent,
-    ModelChangedEvent, PauseRequestedEvent, PythonReplBootstrappedEvent, ResumingSessionEvent,
-    ServerStartedEvent, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
-    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
-    TransportErrorEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent,
-    UserMessageEvent,
+    ContextCompactedEvent, EffortChangedEvent, HaltRequestedEvent, HarnessRecoveryEvent,
+    LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
+    LlmResponseStartedEvent, LlmRetryEvent, ModelChangedEvent, PythonReplBootstrappedEvent,
+    ResumingSessionEvent, ServerStartedEvent, ServerStoppedEvent, SessionResumedEvent,
+    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
+    ToolUseBlockEvent, TransportErrorEvent, TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent,
+    TurnResumedEvent, UserMessageEvent,
 };
 use serde::{Deserialize, Serialize};
 
@@ -99,8 +99,8 @@ pub enum TurnState {
     #[default]
     Idle,
     Running,
-    PauseRequested,
-    Paused,
+    HaltRequested,
+    Halted,
 }
 
 // ---------------------------------------------------------------------------
@@ -238,9 +238,9 @@ pub enum WsMessage {
     TransportError(TransportErrorEvent),
     ResumingSession(ResumingSessionEvent),
     SessionResumed(SessionResumedEvent),
-    PauseRequested(PauseRequestedEvent),
-    TurnPaused(TurnPausedEvent),
-    TurnContinued(TurnContinuedEvent),
+    HaltRequested(HaltRequestedEvent),
+    TurnHalted(TurnHaltedEvent),
+    TurnResumed(TurnResumedEvent),
 
     // --- SCHEMA-8 block-grammar event variants (Phase 3 commit 3b) ---------
     // Legacy `LlmResponse` and `Compacted` variants removed in Phase 6.5.
@@ -388,9 +388,9 @@ impl WsMessage {
             Self::TransportError(e) => OmegaEvent::TransportError(e),
             Self::ResumingSession(e) => OmegaEvent::ResumingSession(e),
             Self::SessionResumed(e) => OmegaEvent::SessionResumed(e),
-            Self::PauseRequested(e) => OmegaEvent::PauseRequested(e),
-            Self::TurnPaused(e) => OmegaEvent::TurnPaused(e),
-            Self::TurnContinued(e) => OmegaEvent::TurnContinued(e),
+            Self::HaltRequested(e) => OmegaEvent::HaltRequested(e),
+            Self::TurnHalted(e) => OmegaEvent::TurnHalted(e),
+            Self::TurnResumed(e) => OmegaEvent::TurnResumed(e),
             // SCHEMA-8 block-grammar variants.
             Self::LlmResponseStarted(e) => OmegaEvent::LlmResponseStarted(e),
             Self::LlmResponseEnded(e) => OmegaEvent::LlmResponseEnded(e),
@@ -421,12 +421,14 @@ pub enum ClientFrame {
     UserMessage {
         content: String,
     },
-    Pause,
-    #[serde(rename = "continue")]
-    Continue {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        content: Option<String>,
-    },
+    /// Halt: §15 U3 — stop advancing at the next seam and WAIT (so the
+    /// operator can compose a steering message at leisure).  Distinct from
+    /// `Abort` (which cancels the in-flight block immediately).
+    Halt,
+    /// Resume a halted turn with **no** new input ("never mind, carry on").
+    /// To resume *with* a steering message, send `UserMessage` instead —
+    /// it wakes the halt seam and is injected before the loop continues.
+    Resume,
     Abort,
     Reset {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -807,10 +809,17 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn client_frame_continue_omits_optional_content() {
-        let frame = ClientFrame::Continue { content: None };
+    fn client_frame_halt_serialises_with_snake_case_tag() {
+        let frame = ClientFrame::Halt;
         let json = serde_json::to_string(&frame).unwrap();
-        assert_eq!(json, r#"{"type":"continue"}"#);
+        assert_eq!(json, r#"{"type":"halt"}"#);
+    }
+
+    #[wasm_bindgen_test]
+    fn client_frame_resume_serialises_with_snake_case_tag() {
+        let frame = ClientFrame::Resume;
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(json, r#"{"type":"resume"}"#);
     }
 
     #[wasm_bindgen_test]

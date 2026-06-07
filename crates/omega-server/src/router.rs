@@ -2,7 +2,7 @@
 //!
 //! Phase 1e.0–1e.1 implemented `GET /health`, `GET /api/sessions`, and
 //! `POST /api/sessions`.  Phase 1e.2 added the `/ws` route: WebSocket
-//! upgrade, `user_message` turn dispatch, and pause / continue / abort /
+//! upgrade, `user_message` turn dispatch, and halt / resume / abort /
 //! reset control frames.  Phase 1e.3 adds history replay on reconnect:
 //! every persisted `OmegaEvent` from `events.jsonl` is pushed through the
 //! new socket before `Ready`, filtering out the types in [`REPLAY_EXCLUDE`].
@@ -42,7 +42,7 @@ use tower_http::services::ServeDir;
 use omega_core::AgentItem;
 use omega_tools::{MonitorManager, MonitorStatus};
 use omega_types::OmegaEvent;
-use omega_types::events::PauseRequestedEvent;
+use omega_types::events::HaltRequestedEvent;
 use omega_types::ids::LoggedEvent;
 
 use crate::AppState;
@@ -436,7 +436,7 @@ async fn post_session(
 ///
 /// `#[serde(tag = "type", rename_all = "snake_case")]` — frame discriminator
 /// matches the literals listed in the Phase 1e.2 task spec
-/// (`user_message`, `pause`, `continue`, `abort`, `reset`).
+/// (`user_message`, `halt`, `resume`, `abort`, `reset`).
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientFrame {
@@ -445,14 +445,14 @@ enum ClientFrame {
     /// (alias used by the `SolidJS` client) as the discriminator.
     #[serde(alias = "message")]
     UserMessage { content: String },
-    /// Pause the in-flight turn at the next pause seam.
-    Pause,
-    /// Resume a paused turn, optionally injecting `content` as a user message.
-    #[serde(rename = "continue")]
-    Continue {
-        #[serde(default)]
-        content: Option<String>,
-    },
+    /// Halt the in-flight turn: stop advancing at the next seam and WAIT
+    /// (§15 U3).  The user can then compose a steering message at leisure;
+    /// queuing it (a `user_message`) resumes the parked loop with that
+    /// input injected.
+    Halt,
+    /// Resume a halted turn with NO new input ("never mind, carry on").
+    /// Steering input is delivered via `user_message`, not here.
+    Resume,
     /// Cancel the in-flight turn.
     Abort,
     /// Drop any prior session and create a fresh one on the same WS.
@@ -524,7 +524,7 @@ async fn build_session_info(
 
 /// Project a [`SessionInfoCache`] into a [`WsMessage::SessionInfo`] with
 /// the given turn state.  Used by the per-turn streaming loop and by
-/// `handle_pause` to broadcast updates without locking the agent.
+/// `handle_halt` to broadcast updates without locking the agent.
 fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage {
     WsMessage::SessionInfo {
         dir: cache.dir,
@@ -542,16 +542,42 @@ fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage 
 /// represents a transition. Mirrors `deriveTurnState()` in the (now-deleted)
 /// TS server and the test-server fixture (`e2e/fixtures/test-server.ts`).
 ///
-/// `PauseRequested` is intentionally absent: it is never yielded by
-/// `send_message` or `perform_resumption` streams — `handle_pause`
+/// `HaltRequested` is intentionally absent: it is never yielded by
+/// `send_message` or `perform_resumption` streams — `handle_halt`
 /// creates and sends it directly, then updates `turn_state` manually.
+///
+/// §15 (U3) turn-state markers — block boundaries:
+///
+/// * RUNNING = the agent is inside a block (processing). Entered by a
+///   `UserMessage` or monitor injection that starts/continues a block, or by
+///   `TurnResumed` after a halt.
+/// * HALTED = parked at a halt seam (`TurnHalted`), waiting for resume.
+/// * IDLE = parked at an empty-queue seam (`TurnEnd` / `TurnInterrupted`).
+///
+/// Monitor injections (`MonitorDelivery` / `MonitorStopped`) start a block when
+/// they wake a parked-idle loop, so they flip the state to RUNNING — without
+/// this a monitor-triggered turn would render as idle while the agent is
+/// actually processing.
 fn next_turn_state_for(event: &OmegaEvent) -> Option<&'static str> {
     Some(match event {
-        OmegaEvent::UserMessage(_) | OmegaEvent::TurnContinued(_) => "running",
-        OmegaEvent::TurnPaused(_) => "paused",
+        OmegaEvent::UserMessage(_)
+        | OmegaEvent::TurnResumed(_)
+        | OmegaEvent::MonitorDelivery(_)
+        | OmegaEvent::MonitorStopped(_) => "running",
+        OmegaEvent::TurnHalted(_) => "halted",
         OmegaEvent::TurnEnd(_) | OmegaEvent::TurnInterrupted(_) => "idle",
         _ => return None,
     })
+}
+
+/// Whether a turn-state transition from `current` to `new` actually changes the
+/// state and therefore warrants re-broadcasting `SessionInfo`.
+///
+/// Extracted as a pure helper so the dedup comparison is covered by a fast unit
+/// test: exercised only through an async WS round-trip, a mutated comparison
+/// turns into a hang (timeout) rather than a caught failure.
+fn turn_state_changed(current: &str, new: &str) -> bool {
+    current != new
 }
 
 /// Read `events.jsonl` for `events_file`, drop entries that fail
@@ -617,7 +643,7 @@ async fn send_session_info_and_history(state: &AppState, tx: &UnboundedSender<Ws
     // persistent run loop the run task's `JoinHandle` lives for the whole
     // session (it parks between turns), so it can no longer signal
     // "streaming"; the turn state does.  A turn is live iff `turn_state` is
-    // not "idle" (UserMessage/TurnContinued → "running"; TurnEnd /
+    // not "idle" (UserMessage/TurnResumed → "running"; TurnEnd /
     // TurnInterrupted → "idle").  Read it here, after the `active_session`
     // lock is released, to preserve the lock discipline above.
     let streaming = turn_state_arc.lock().await.as_str() != "idle";
@@ -760,8 +786,8 @@ async fn dispatch_client_frame(
 ) -> Result<(), String> {
     match frame {
         ClientFrame::UserMessage { content } => handle_user_message(content, state, tx).await,
-        ClientFrame::Pause => handle_pause(state, tx).await,
-        ClientFrame::Continue { content } => handle_continue(state, content).await,
+        ClientFrame::Halt => handle_halt(state, tx).await,
+        ClientFrame::Resume => handle_resume(state).await,
         ClientFrame::Abort => handle_abort(state).await,
         ClientFrame::Reset {
             model,
@@ -1036,9 +1062,9 @@ async fn teardown_prior_run(state: &AppState) {
     }
 }
 
-async fn handle_pause(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Result<(), String> {
+async fn handle_halt(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Result<(), String> {
     // Snapshot what we need without holding the active_session lock across
-    // the request_pause call (which itself acquires locks).
+    // the request_halt call (which itself acquires locks).
     let snapshot = {
         let slot = state.active_session.lock().await;
         match slot.as_ref() {
@@ -1063,37 +1089,48 @@ async fn handle_pause(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Resu
         }
     }
 
-    controls.request_pause().await;
+    controls.request_halt().await;
 
-    // The pause_requested event is persisted by request_pause but not
+    // The halt_requested event is persisted by request_halt but not
     // yielded on the agent stream, so broadcast it here so the client sees
     // the new entry immediately rather than waiting for a reconnect.
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let pause_event = OmegaEvent::PauseRequested(PauseRequestedEvent { time: now });
+    let halt_event = OmegaEvent::HaltRequested(HaltRequestedEvent { time: now });
     let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(
-        pause_event,
+        halt_event,
     )))));
 
     {
         let mut ts = turn_state_arc.lock().await;
-        if ts.as_str() != "pause_requested" {
-            "pause_requested".clone_into(&mut ts);
+        if turn_state_changed(ts.as_str(), "halt_requested") {
+            "halt_requested".clone_into(&mut ts);
             let cache = info_cache_arc.lock().await.clone();
-            let _ = tx.send(cache_into_message(cache, "pause_requested".to_owned()));
+            let _ = tx.send(cache_into_message(cache, "halt_requested".to_owned()));
         }
     }
 
     Ok(())
 }
 
-async fn handle_continue(state: &AppState, content: Option<String>) -> Result<(), String> {
-    let controls = {
+/// Resume a halted turn with NO new input.  Gated on the live turn state
+/// being `"halted"` so a stray `resume` while running can't pre-arm the
+/// resume flag and auto-skip a later halt within the same turn.
+async fn handle_resume(state: &AppState) -> Result<(), String> {
+    let snapshot = {
         let slot = state.active_session.lock().await;
-        slot.as_ref().map(|a| a.controls.clone())
+        slot.as_ref()
+            .map(|a| (a.controls.clone(), Arc::clone(&a.turn_state)))
     };
-    if let Some(controls) = controls {
-        controls.request_continue(content);
+    let Some((controls, turn_state_arc)) = snapshot else {
+        return Ok(());
+    };
+    {
+        let ts = turn_state_arc.lock().await;
+        if ts.as_str() != "halted" {
+            return Ok(());
+        }
     }
+    controls.request_resume();
     Ok(())
 }
 
@@ -1513,8 +1550,68 @@ mod tests {
     // a direct WS observable.  All are appropriate carve-outs.
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-    use super::{ClientFrame, absolute_sessions_root, folder_name_to_timestamp};
+    use super::{
+        ClientFrame, absolute_sessions_root, folder_name_to_timestamp, next_turn_state_for,
+        turn_state_changed,
+    };
+    use omega_types::OmegaEvent;
+    use omega_types::events::{
+        AgentErrorEvent, InterruptReason, TurnHaltedEvent, TurnInterruptedEvent, UserMessageEvent,
+    };
     use std::path::{Path, PathBuf};
+    // NB: a second `use omega_types::{OmegaEvent, StreamSignal}` lives in the
+    // is_monitor_event section below; keep them in sync.
+
+    fn t() -> String {
+        "2024-01-01T00:00:00.000Z".to_owned()
+    }
+
+    #[test]
+    fn turn_state_changed_true_when_different_false_when_same() {
+        assert!(
+            turn_state_changed("running", "halt_requested"),
+            "a real transition must re-broadcast"
+        );
+        assert!(
+            !turn_state_changed("halt_requested", "halt_requested"),
+            "a no-op transition must NOT re-broadcast"
+        );
+        assert!(turn_state_changed("halted", "running"));
+        assert!(!turn_state_changed("idle", "idle"));
+    }
+
+    #[test]
+    fn next_turn_state_running_for_user_message() {
+        let ev = OmegaEvent::UserMessage(UserMessageEvent {
+            time: t(),
+            content: "hi".to_owned(),
+        });
+        assert_eq!(next_turn_state_for(&ev), Some("running"));
+    }
+
+    #[test]
+    fn next_turn_state_halted_for_turn_halted() {
+        let ev = OmegaEvent::TurnHalted(TurnHaltedEvent { time: t() });
+        assert_eq!(next_turn_state_for(&ev), Some("halted"));
+    }
+
+    #[test]
+    fn next_turn_state_idle_for_turn_interrupted() {
+        let ev = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
+            time: t(),
+            reason: Some(InterruptReason::Aborted),
+        });
+        assert_eq!(next_turn_state_for(&ev), Some("idle"));
+    }
+
+    #[test]
+    fn next_turn_state_none_for_unrelated_event() {
+        let ev = OmegaEvent::AgentError(AgentErrorEvent {
+            time: t(),
+            error: "boom".to_owned(),
+        });
+        assert_eq!(next_turn_state_for(&ev), None);
+    }
 
     #[test]
     fn absolute_sessions_root_anchors_relative_default_at_cwd() {
@@ -1568,28 +1665,15 @@ mod tests {
     }
 
     #[test]
-    fn client_frame_pause_parses() {
-        let f: ClientFrame = serde_json::from_str(r#"{"type":"pause"}"#).unwrap();
-        assert!(matches!(f, ClientFrame::Pause));
+    fn client_frame_halt_parses() {
+        let f: ClientFrame = serde_json::from_str(r#"{"type":"halt"}"#).unwrap();
+        assert!(matches!(f, ClientFrame::Halt));
     }
 
     #[test]
-    fn client_frame_continue_with_content_parses() {
-        let f: ClientFrame =
-            serde_json::from_str(r#"{"type":"continue","content":"go on"}"#).unwrap();
-        match f {
-            ClientFrame::Continue { content } => assert_eq!(content.as_deref(), Some("go on")),
-            other => panic!("expected Continue, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn client_frame_continue_without_content_parses() {
-        let f: ClientFrame = serde_json::from_str(r#"{"type":"continue"}"#).unwrap();
-        match f {
-            ClientFrame::Continue { content } => assert_eq!(content, None),
-            other => panic!("expected Continue, got {other:?}"),
-        }
+    fn client_frame_resume_parses() {
+        let f: ClientFrame = serde_json::from_str(r#"{"type":"resume"}"#).unwrap();
+        assert!(matches!(f, ClientFrame::Resume));
     }
 
     #[test]
@@ -1794,11 +1878,11 @@ mod tests {
     // -----------------------------------------------------------------
 
     use super::is_monitor_event;
+    use omega_types::StreamSignal;
     use omega_types::events::{
         MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent,
         MonitorStopReason, MonitorStoppedEvent,
     };
-    use omega_types::{OmegaEvent, StreamSignal};
 
     fn started_event() -> AgentItem {
         AgentItem::event(OmegaEvent::MonitorStarted(MonitorStartedEvent {

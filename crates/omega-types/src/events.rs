@@ -44,14 +44,6 @@ pub enum InterruptReason {
     Error,
 }
 
-/// `TurnContinuedEvent.mode` discriminator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContinueMode {
-    Manual,
-    Auto,
-}
-
 /// `LlmRetryEvent.reason` discriminator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LlmRetryReason {
@@ -521,23 +513,35 @@ pub struct SessionResumedEvent {
     pub summary: String,
 }
 
-/// The user has requested a pause.
+/// The user has requested a halt (§15 Unified Input Model, U3).
+///
+/// Halt = "stop advancing at the next seam and WAIT" so the user can
+/// compose a steering message while the agent is parked. This replaces the
+/// retired pause-for-injection `PauseRequested` event; the semantics are
+/// distinct (Halt parks at the seam rather than offering a content-carrying
+/// continue), so the syntax changed too (Contract Authority).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PauseRequestedEvent {
+pub struct HaltRequestedEvent {
     pub time: ISOTimestamp,
 }
 
-/// The agent has reached a clean seam and the turn is now paused.
+/// The agent reached a clean seam after a halt request and parked there,
+/// waiting for the user to resume (with a queued steering message or an
+/// explicit `Resume`). Replaces the retired `TurnPaused` event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TurnPausedEvent {
+pub struct TurnHaltedEvent {
     pub time: ISOTimestamp,
 }
 
-/// The paused turn is resuming.
+/// The halted turn is resuming and the run loop continues the block.
+///
+/// Carries no `mode`: the old `ContinueMode` (Manual/Auto) distinguished a
+/// pre-commit race in the retired pause-for-injection machinery that no
+/// longer exists. Resume is just resume — either a queued steering message
+/// woke the park, or the user clicked Resume with no new input.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TurnContinuedEvent {
+pub struct TurnResumedEvent {
     pub time: ISOTimestamp,
-    pub mode: ContinueMode,
 }
 
 // ---------------------------------------------------------------------------
@@ -736,9 +740,9 @@ pub enum OmegaEvent {
     TransportError(TransportErrorEvent),
     ResumingSession(ResumingSessionEvent),
     SessionResumed(SessionResumedEvent),
-    PauseRequested(PauseRequestedEvent),
-    TurnPaused(TurnPausedEvent),
-    TurnContinued(TurnContinuedEvent),
+    HaltRequested(HaltRequestedEvent),
+    TurnHalted(TurnHaltedEvent),
+    TurnResumed(TurnResumedEvent),
 
     // --- SCHEMA-8 block-grammar variants (Phase 1b) -------------------------
     LlmResponseStarted(LlmResponseStartedEvent),
@@ -817,9 +821,9 @@ impl OmegaEvent {
             Self::TransportError(e) => &e.time,
             Self::ResumingSession(e) => &e.time,
             Self::SessionResumed(e) => &e.time,
-            Self::PauseRequested(e) => &e.time,
-            Self::TurnPaused(e) => &e.time,
-            Self::TurnContinued(e) => &e.time,
+            Self::HaltRequested(e) => &e.time,
+            Self::TurnHalted(e) => &e.time,
+            Self::TurnResumed(e) => &e.time,
             Self::LlmResponseStarted(e) => &e.time,
             Self::LlmResponseEnded(e) => &e.time,
             Self::LlmResponseDiscarded(e) => &e.time,
@@ -1168,13 +1172,30 @@ mod tests {
     }
 
     #[test]
-    fn turn_continued_mode_enum() {
-        let ev = OmegaEvent::TurnContinued(TurnContinuedEvent {
+    fn turn_resumed_serialises() {
+        let ev = OmegaEvent::TurnResumed(TurnResumedEvent {
             time: "2024-01-15T12:00:08.000Z".into(),
-            mode: ContinueMode::Manual,
         });
         let v = serde_json::to_value(&ev).unwrap();
-        assert_eq!(v["mode"], "manual");
+        assert_eq!(v["type"], "turn_resumed");
+    }
+
+    #[test]
+    fn turn_halted_serialises() {
+        let ev = OmegaEvent::TurnHalted(TurnHaltedEvent {
+            time: "2024-01-15T12:00:08.000Z".into(),
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "turn_halted");
+    }
+
+    #[test]
+    fn halt_requested_serialises() {
+        let ev = OmegaEvent::HaltRequested(HaltRequestedEvent {
+            time: "2024-01-15T12:00:08.000Z".into(),
+        });
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v["type"], "halt_requested");
     }
 
     #[test]

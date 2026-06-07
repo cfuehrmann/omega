@@ -188,8 +188,9 @@ fn group_into_turns(events: &[OmegaEvent]) -> Vec<Turn> {
 /// Project a single turn into a markdown string.
 ///
 /// Tool calls are paired with their results by ID. A `user_message`
-/// inside a `turn_paused` / `turn_continued` window renders with
-/// the `User (mid-turn):` prefix to preserve its semantics in the summary.
+/// inside a `turn_halted` / `turn_resumed` window (a steering message
+/// queued while the run was halted) renders with the `User (mid-turn):`
+/// prefix to preserve its semantics in the summary.
 ///
 /// Mirrors `projectTurn` in `src/session-resume.ts`.
 fn project_turn(turn: &Turn, index: usize) -> String {
@@ -197,7 +198,7 @@ fn project_turn(turn: &Turn, index: usize) -> String {
 
     // tool_call id → (name, input)
     let mut tool_calls: HashMap<String, (String, serde_json::Value)> = HashMap::new();
-    let mut in_paused_window = false;
+    let mut in_halt_window = false;
     // Accumulate TextBlock text; flush on LlmResponseEnded (or at end of the
     // loop for interrupted turns that never received LlmResponseEnded).
     let mut pending_text: Vec<String> = Vec::new();
@@ -205,17 +206,17 @@ fn project_turn(turn: &Turn, index: usize) -> String {
     for event in &turn.events {
         match event {
             OmegaEvent::UserMessage(e) => {
-                if in_paused_window {
+                if in_halt_window {
                     lines.push(format!("\nUser (mid-turn): {}", e.content.trim()));
                 } else {
                     lines.push(format!("\nUser: {}", e.content.trim()));
                 }
             }
-            OmegaEvent::TurnPaused(_) => {
-                in_paused_window = true;
+            OmegaEvent::TurnHalted(_) => {
+                in_halt_window = true;
             }
-            OmegaEvent::TurnContinued(_) => {
-                in_paused_window = false;
+            OmegaEvent::TurnResumed(_) => {
+                in_halt_window = false;
             }
             OmegaEvent::TextBlock(e) => {
                 pending_text.push(e.text.clone());
@@ -427,12 +428,11 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use omega_types::{
-        ContinueMode, OmegaEvent,
+        OmegaEvent,
         events::{
             AgentErrorEvent, InterruptReason, LlmResponseEndedEvent, LlmResponseUsage,
-            SessionResumedEvent, TextBlockEvent, ToolCallEvent, ToolResultEvent,
-            TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnMetrics, TurnPausedEvent,
-            UserMessageEvent,
+            SessionResumedEvent, TextBlockEvent, ToolCallEvent, ToolResultEvent, TurnEndEvent,
+            TurnHaltedEvent, TurnInterruptedEvent, TurnMetrics, TurnResumedEvent, UserMessageEvent,
         },
     };
 
@@ -532,15 +532,12 @@ mod tests {
         })
     }
 
-    fn turn_paused() -> OmegaEvent {
-        OmegaEvent::TurnPaused(TurnPausedEvent { time: t() })
+    fn turn_halted() -> OmegaEvent {
+        OmegaEvent::TurnHalted(TurnHaltedEvent { time: t() })
     }
 
-    fn turn_continued() -> OmegaEvent {
-        OmegaEvent::TurnContinued(TurnContinuedEvent {
-            time: t(),
-            mode: ContinueMode::Manual,
-        })
+    fn turn_resumed() -> OmegaEvent {
+        OmegaEvent::TurnResumed(TurnResumedEvent { time: t() })
     }
 
     // -----------------------------------------------------------------------
@@ -943,37 +940,37 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // extract_resumption_basis — pause/continue interjection window
+    // extract_resumption_basis — halt/resume interjection window
     // -----------------------------------------------------------------------
 
     #[test]
-    fn basis_user_message_in_paused_window_has_mid_turn_prefix() {
+    fn basis_user_message_in_halt_window_has_mid_turn_prefix() {
         let evs = vec![
             user_msg("initial"),
-            turn_paused(),
-            user_msg("interjection while paused"),
-            turn_continued(),
+            turn_halted(),
+            user_msg("interjection while halted"),
+            turn_resumed(),
             turn_end(),
         ];
         let result = extract_resumption_basis(&evs);
         assert!(
-            result.contains("User (mid-turn): interjection while paused"),
+            result.contains("User (mid-turn): interjection while halted"),
             "got: {result}"
         );
     }
 
     #[test]
-    fn basis_user_message_after_continued_has_plain_prefix() {
-        // After turn_continued the window closes — next user message is plain.
+    fn basis_user_message_after_resumed_has_plain_prefix() {
+        // After turn_resumed the window closes — next user message is plain.
         let evs = vec![
             user_msg("initial"),
-            turn_paused(),
-            turn_continued(),
-            user_msg("after continue"),
+            turn_halted(),
+            turn_resumed(),
+            user_msg("after resume"),
             turn_end(),
         ];
         let result = extract_resumption_basis(&evs);
-        assert!(result.contains("\nUser: after continue"), "got: {result}");
+        assert!(result.contains("\nUser: after resume"), "got: {result}");
         assert!(
             !result.contains("mid-turn"),
             "should not have mid-turn label: {result}"
@@ -981,15 +978,15 @@ mod tests {
     }
 
     #[test]
-    fn basis_turn_paused_sets_window_and_continued_clears_it() {
-        // Two interjections: one while paused (mid-turn), one before pause (plain).
-        // Also verifies that TurnContinued kills the window.
+    fn basis_turn_halted_sets_window_and_resumed_clears_it() {
+        // Two interjections: one while halted (mid-turn), one before halt (plain).
+        // Also verifies that a resume kills the window.
         let evs = vec![
             user_msg("first"),
-            turn_paused(),
+            turn_halted(),
             user_msg("paused-1"),
             user_msg("paused-2"),
-            turn_continued(),
+            turn_resumed(),
             user_msg("resumed"),
             turn_end(),
         ];

@@ -108,9 +108,9 @@ pub fn App() -> impl IntoView {
     });
 
     // Phase 3.10 TODO-E-1: auto-close the picker as soon as a turn
-    // starts (or is requested to pause). Otherwise the modal overlay
-    // (z-index 900) hides the composer's `Continue` button while the
-    // turn is paused — the operator gets stuck. The picker only
+    // starts (or is requested to halt). Otherwise the modal overlay
+    // (z-index 900) hides the composer's `Resume` button while the
+    // turn is halted — the operator gets stuck. The picker only
     // re-opens via the `Sessions` button, never during a live turn.
     Effect::new(move |_| {
         if turn_is_active(store.turn_state.get()) {
@@ -203,10 +203,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn turn_is_active_true_for_running_paused_pause_requested() {
+    fn turn_is_active_true_for_running_halted_halt_requested() {
         assert!(turn_is_active(TurnState::Running));
-        assert!(turn_is_active(TurnState::Paused));
-        assert!(turn_is_active(TurnState::PauseRequested));
+        assert!(turn_is_active(TurnState::Halted));
+        assert!(turn_is_active(TurnState::HaltRequested));
     }
 
     #[wasm_bindgen_test]

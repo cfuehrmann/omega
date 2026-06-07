@@ -830,7 +830,7 @@ mod composer_states {
     use omega_web::store::SessionStore;
     use omega_web::ws::WsClient;
 
-    fn install_app_context(turn_state: TurnState, pre_committed: bool) {
+    fn install_app_context(turn_state: TurnState) {
         let store = SessionStore::new();
         store.session_info.set(Some(SessionInfoPayload {
             dir: "2025-01-01T00-00-00-000-aaaa".into(),
@@ -842,7 +842,6 @@ mod composer_states {
             name: None,
         }));
         store.turn_state.set(turn_state);
-        store.pre_committed.set(pre_committed);
         provide_context(store);
         let list_store = SessionListStore::new();
         provide_context(list_store);
@@ -857,45 +856,38 @@ mod composer_states {
     #[test]
     fn snap_composer_idle() {
         let html = render(|| {
-            install_app_context(TurnState::Idle, false);
+            install_app_context(TurnState::Idle);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);
     }
 
+    /// Running: primary Send + Halt + Abort controls visible.
     #[test]
     fn snap_composer_running() {
         let html = render(|| {
-            install_app_context(TurnState::Running, false);
+            install_app_context(TurnState::Running);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);
     }
 
+    /// HaltRequested: halt pending (still running until the seam) — Send +
+    /// Abort visible; no Halt, no Resume.
     #[test]
-    fn snap_composer_pause_requested() {
+    fn snap_composer_halt_requested() {
         let html = render(|| {
-            install_app_context(TurnState::PauseRequested, false);
+            install_app_context(TurnState::HaltRequested);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);
     }
 
-    /// PauseRequested + pre_committed=true: primary should be "Take it back"
-    /// with the secondary Abort ⎋ still present.
+    /// Halted: parked at a halt seam — Send + Resume + Abort visible.
     #[test]
-    fn snap_composer_pause_requested_pre_committed() {
+    fn snap_composer_halted() {
         let html = render(|| {
-            install_app_context(TurnState::PauseRequested, true);
-            view! { <Composer /> }
-        });
-        insta::assert_snapshot!(html);
-    }
-
-    #[test]
-    fn snap_composer_paused() {
-        let html = render(|| {
-            install_app_context(TurnState::Paused, false);
+            install_app_context(TurnState::Halted);
             view! { <Composer /> }
         });
         insta::assert_snapshot!(html);

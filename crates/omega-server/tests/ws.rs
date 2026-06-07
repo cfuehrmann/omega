@@ -51,13 +51,13 @@ struct MockProvider {
     responses: Mutex<VecDeque<Vec<Result<AgentItem, LlmError>>>>,
     /// Optional deterministic gate awaited *between* successive items of a
     /// single response (the first item of each response is always yielded
-    /// immediately).  The pause/abort tests install one so they can drive
+    /// immediately).  The halt/abort tests install one so they can drive
     /// the WS round-trip for a control frame to completion *before* the
     /// agent receives the next LLM item and crosses the post-tool-results
     /// cancel seam.  This replaces the previous time-based slack
     /// (`set_item_delay(30 ms)`), which was flaky under heavy parallel-test
     /// CPU load (the slack was the only headroom for the WS read loop to
-    /// dispatch `handle_pause`/`handle_abort` before the agent's stream
+    /// dispatch `handle_halt`/`handle_abort` before the agent's stream
     /// advanced).
     step_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
@@ -321,21 +321,21 @@ async fn first_reset_creates_session_and_sends_ready() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Pause during a slow turn → turn_paused; continue resumes.
+// 3. Halt during a slow turn → turn_halted; resume continues (§15 U3).
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
+async fn halt_during_turn_emits_turn_halted_then_resume_continues() {
     let tmp = TempDir::new().unwrap();
     let scratch = write_scratch(tmp.path());
     let provider = Arc::new(MockProvider::new());
     // Block the LLM stream between successive items of turn 1 so the WS
-    // round-trip for `pause` is guaranteed to land at the server *before*
+    // round-trip for `halt` is guaranteed to land at the server *before*
     // the agent receives the next item and crosses the post-tool-results
-    // cancel seam.  Replaces the old timing-based `set_item_delay(30 ms)`,
+    // seam.  Replaces the old timing-based `set_item_delay(30 ms)`,
     // which was flaky under heavy parallel-test CPU load.
     let step_gate = provider.enable_step_gate();
-    // Turn 1: tool_use; Turn 2 (after continue): final text.
+    // Turn 1: tool_use; Turn 2 (after resume): final text.
     provider.push(tool_use_items(
         "tu_1",
         "read_file",
@@ -370,28 +370,28 @@ async fn pause_during_turn_emits_turn_paused_then_continue_resumes() {
     // the earliest frame that proves the agent is parked on the gate.
     let _ = recv_until_type(&mut ws, "llm_response_started").await;
 
-    // Pause.  `handle_pause` emits a `pause_requested` event back to us
-    // *after* `request_pause().await` has set the agent's pause flag,
+    // Halt.  `handle_halt` emits a `halt_requested` event back to us
+    // *after* `request_halt().await` has set the agent's halt flag,
     // so observing that frame is positive confirmation the flag is set.
     // Releasing the gate now lets the agent finish the stream, emit
     // `tool_call`, run the tool, then hit the post-tool-results seam
-    // with the pause already pending.
-    send_json(&mut ws, serde_json::json!({ "type": "pause" })).await;
-    let _ = recv_until_type(&mut ws, "pause_requested").await;
+    // with the halt already pending — where it PARKS (turn_halted).
+    send_json(&mut ws, serde_json::json!({ "type": "halt" })).await;
+    let _ = recv_until_type(&mut ws, "halt_requested").await;
     step_gate.notify_one();
-    let frames = recv_until_type(&mut ws, "turn_paused").await;
-    assert!(frames.iter().any(|v| v["type"] == "turn_paused"));
+    let frames = recv_until_type(&mut ws, "turn_halted").await;
+    assert!(frames.iter().any(|v| v["type"] == "turn_halted"));
 
-    // Continue — turn must resume and end normally.
-    send_json(&mut ws, serde_json::json!({ "type": "continue" })).await;
+    // Resume (no new input) — turn must continue and end normally.
+    send_json(&mut ws, serde_json::json!({ "type": "resume" })).await;
     // text_llm_response produces 2 items; item 1 (llm_response) needs a
     // gate release just like the first turn's item 1 did.
     step_gate.notify_one();
     let frames = recv_until_type(&mut ws, "turn_end").await;
     let types: Vec<&str> = frames.iter().filter_map(|v| v["type"].as_str()).collect();
     assert!(
-        types.contains(&"turn_continued"),
-        "expected turn_continued: {types:?}"
+        types.contains(&"turn_resumed"),
+        "expected turn_resumed: {types:?}"
     );
     assert_eq!(types.last().copied(), Some("turn_end"));
 }
@@ -407,7 +407,7 @@ async fn abort_during_turn_emits_turn_interrupted() {
     let provider = Arc::new(MockProvider::new());
     // Block the LLM stream between items so the WS round-trip for `abort`
     // lands before the agent crosses the post-tool-results cancel seam.
-    // See the pause test for the rationale; replaces the old timing-based
+    // See the halt test for the rationale; replaces the old timing-based
     // `set_item_delay(30 ms)` slack.
     let step_gate = provider.enable_step_gate();
     // Turn 1: tool_use.  Turn 2: end_turn — *if* the agent gets that far.
@@ -442,7 +442,7 @@ async fn abort_during_turn_emits_turn_interrupted() {
     .await;
     // Wait for `llm_response_started` — the agent has consumed item 0
     // (the buffered `ToolCall`) and is now parked on the step gate.
-    // See the pause test for why we can't wait for `tool_call` here.
+    // See the halt test for why we can't wait for `tool_call` here.
     let _ = recv_until_type(&mut ws, "llm_response_started").await;
     send_json(&mut ws, serde_json::json!({ "type": "abort" })).await;
 

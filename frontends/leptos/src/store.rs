@@ -75,11 +75,6 @@ pub struct SessionState {
     pub streaming_thinking: BTreeMap<usize, String>,
     /// Envelope-level transport errors (not persisted as `OmegaEvent`s).
     pub transport_errors: Vec<String>,
-    /// Client-local pre-commit flag for the Continue-during-PauseRequested
-    /// flow. When `true` and `turn_state` transitions to `Paused`, the
-    /// composer auto-fires a `continue` WS message. Cleared on disconnect
-    /// and on `ResetDone`. Never sent to the server — purely a UI promise.
-    pub pre_committed: bool,
     /// Per-block streaming tool-use buffers; same lifecycle as
     /// [`Self::streaming_text`] but for `tool_use_block_start` /
     /// `tool_input` deltas.  An entry is inserted by
@@ -127,8 +122,6 @@ pub struct SessionStore {
     /// See [`SessionState::streaming_tool_use`].
     pub streaming_tool_use: RwSignal<BTreeMap<usize, StreamingToolUseSlot>>,
     pub transport_errors: RwSignal<Vec<String>>,
-    /// See [`SessionState::pre_committed`].
-    pub pre_committed: RwSignal<bool>,
     /// `Some(intent)` when the server rejected the most recent
     /// `Reset`/`ResumeSession` because the working tree is dirty and
     /// `allow_dirty` was not set.  Drives the dirty-warning modal: when
@@ -184,7 +177,6 @@ impl SessionStore {
             streaming_thinking: RwSignal::new(BTreeMap::new()),
             streaming_tool_use: RwSignal::new(BTreeMap::new()),
             transport_errors: RwSignal::new(Vec::new()),
-            pre_committed: RwSignal::new(false),
             pending_changes_warning: RwSignal::new(None),
             agent_time_zone: RwSignal::new("UTC".to_owned()),
             roster: RwSignal::new(Vec::new()),
@@ -256,8 +248,6 @@ impl SessionStore {
                 self.streaming_tool_use.set(BTreeMap::new());
                 self.turn_state.set(TurnState::Idle);
                 self.transport_errors.set(Vec::new());
-                // pre_committed is a client-local promise; reset invalidates it.
-                self.pre_committed.set(false);
                 // The next session's `SessionStarted` will set this
                 // again; meanwhile fall back to UTC so the brief
                 // window of "no events yet" doesn't carry over stale
@@ -391,7 +381,6 @@ impl SessionStore {
             streaming_thinking: self.streaming_thinking.get_untracked(),
             streaming_tool_use: self.streaming_tool_use.get_untracked(),
             transport_errors: self.transport_errors.get_untracked(),
-            pre_committed: self.pre_committed.get_untracked(),
             pending_changes_warning: self.pending_changes_warning.get_untracked(),
             agent_time_zone: self.agent_time_zone.get_untracked(),
             roster: self.roster.get_untracked(),
@@ -428,9 +417,9 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
             store.streaming_thinking.set(BTreeMap::new());
             store.streaming_tool_use.set(BTreeMap::new());
         }
-        OmegaEvent::TurnContinued(_) => store.turn_state.set(TurnState::Running),
-        OmegaEvent::TurnPaused(_) => store.turn_state.set(TurnState::Paused),
-        OmegaEvent::PauseRequested(_) => store.turn_state.set(TurnState::PauseRequested),
+        OmegaEvent::TurnResumed(_) => store.turn_state.set(TurnState::Running),
+        OmegaEvent::TurnHalted(_) => store.turn_state.set(TurnState::Halted),
+        OmegaEvent::HaltRequested(_) => store.turn_state.set(TurnState::HaltRequested),
         OmegaEvent::TurnEnd(_) | OmegaEvent::TurnInterrupted(_) => {
             store.turn_state.set(TurnState::Idle);
             store.streaming.set(false);
@@ -530,10 +519,10 @@ mod tests {
     use super::*;
     use leptos::reactive::owner::Owner;
     use omega_types::events::{
-        AgentErrorEvent, EffortChangedEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
-        LlmResponseStartedEvent, LlmResponseUsage, ModelChangedEvent, PauseRequestedEvent,
-        TextBlockEvent, ThinkingBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent,
-        TurnMetrics, TurnPausedEvent, UserMessageEvent,
+        AgentErrorEvent, EffortChangedEvent, HaltRequestedEvent, LlmResponseDiscardedEvent,
+        LlmResponseEndedEvent, LlmResponseStartedEvent, LlmResponseUsage, ModelChangedEvent,
+        TextBlockEvent, ThinkingBlockEvent, TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent,
+        TurnMetrics, TurnResumedEvent, UserMessageEvent,
     };
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -648,18 +637,6 @@ mod tests {
             assert!(snap.events.is_empty());
             assert!(!snap.streaming);
             assert_eq!(snap.turn_state, TurnState::Idle);
-        });
-    }
-
-    #[wasm_bindgen_test]
-    fn reset_done_clears_pre_committed() {
-        // pre_committed is a client-local UI promise; ResetDone must wipe it
-        // so a pre-committed Continue cannot leak into a new session.
-        with_owner(|| {
-            let s = SessionStore::new();
-            s.pre_committed.set(true);
-            s.apply(WsMessage::ResetDone);
-            assert!(!s.snapshot().pre_committed);
         });
     }
 
@@ -821,37 +798,36 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn pause_requested_event_drives_pause_requested_state() {
+    fn halt_requested_event_drives_halt_requested_state() {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::PauseRequested(PauseRequestedEvent {
+            s.apply(WsMessage::HaltRequested(HaltRequestedEvent {
                 time: "t".into(),
             }));
-            assert_eq!(s.snapshot().turn_state, TurnState::PauseRequested);
+            assert_eq!(s.snapshot().turn_state, TurnState::HaltRequested);
         });
     }
 
     #[wasm_bindgen_test]
-    fn turn_paused_event_drives_paused_state() {
+    fn turn_halted_event_drives_halted_state() {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::TurnPaused(TurnPausedEvent { time: "t".into() }));
-            assert_eq!(s.snapshot().turn_state, TurnState::Paused);
+            s.apply(WsMessage::TurnHalted(TurnHaltedEvent { time: "t".into() }));
+            assert_eq!(s.snapshot().turn_state, TurnState::Halted);
         });
     }
 
     #[wasm_bindgen_test]
-    fn turn_continued_event_drives_running_state_after_pause() {
+    fn turn_resumed_event_drives_running_state_after_halt() {
         with_owner(|| {
             let s = SessionStore::new();
             s.apply(user_msg("hi"));
-            s.apply(WsMessage::TurnPaused(TurnPausedEvent { time: "t".into() }));
-            assert_eq!(s.snapshot().turn_state, TurnState::Paused);
-            s.apply(WsMessage::TurnContinued(TurnContinuedEvent {
+            s.apply(WsMessage::TurnHalted(TurnHaltedEvent { time: "t".into() }));
+            assert_eq!(s.snapshot().turn_state, TurnState::Halted);
+            s.apply(WsMessage::TurnResumed(TurnResumedEvent {
                 time: "t2".into(),
-                mode: omega_types::ContinueMode::Manual,
             }));
             assert_eq!(s.snapshot().turn_state, TurnState::Running);
         });

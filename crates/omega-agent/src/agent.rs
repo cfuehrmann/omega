@@ -40,11 +40,11 @@ use omega_types::events::{
     MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason,
     MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent,
     SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
-    ToolUseBlockEvent, TurnContinuedEvent, TurnEndEvent, TurnInterruptedEvent, TurnPausedEvent,
+    ToolUseBlockEvent, TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent, TurnResumedEvent,
     UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
-use omega_types::{ContinueMode, InterruptReason, OmegaEvent, TurnMetrics};
+use omega_types::{InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
 use omega_tools::{
@@ -2516,48 +2516,50 @@ impl Agent {
                     }
 
                     // -----------------------------------------------------
-                    // Pause seam.  Mirrors src/agent.ts:1765–1832 — fires
-                    // only after the current tool batch's results are
-                    // appended, so the next LlmCall sees a complete
-                    // tool_use/tool_result pair.
+                    // Halt seam (§15 Unified Input Model, U3).  Fires only
+                    // after the current tool batch's results are appended,
+                    // so the next LlmCall sees a complete tool_use/
+                    // tool_result pair.  Halt = "stop advancing at this seam
+                    // and WAIT": instead of continuing the block, park here
+                    // until the user resumes — either by queuing a steering
+                    // message (woke via inbox.pop, injected, continue) or by
+                    // an explicit request_resume (continue with no input) —
+                    // or aborts (cancel wins).  This replaces the retired
+                    // pause-for-injection machinery; queuing a message is
+                    // now the ONLY interjection path (Seam B drain below).
                     // -----------------------------------------------------
-                    if self.controls.take_pause_request() {
-                        // Decide and mark `suspended` BEFORE yielding
-                        // TurnPaused.  Any consumer that observes the
-                        // TurnPaused event must see `suspended=true` so a
-                        // follow-up `request_continue` resolves to
-                        // mode=Manual rather than racing the agent.
-                        let need_suspend = self.controls.try_enter_suspend();
-                        let paused_ev = OmegaEvent::TurnPaused(TurnPausedEvent {
+                    if self.controls.take_halt_request() {
+                        let halted_ev = OmegaEvent::TurnHalted(TurnHaltedEvent {
                             time: now_iso(),
                         });
-                        let _ = self.event_store.append(&paused_ev).await;
-                        yield AgentItem::event(paused_ev);
+                        let _ = self.event_store.append(&halted_ev).await;
+                        yield AgentItem::event(halted_ev);
 
-                        // Suspend loop: wait for Continue/Abort wake or
-                        // a cancel.  Skipped entirely when continue
-                        // arrived before the seam (need_suspend=false).
-                        if need_suspend {
-                            // Wait for either a Continue/Abort wake or a
-                            // cancel.  Re-check `pending_continue` under
-                            // lock at the top of each iteration so a
-                            // notify that arrived between create-future
-                            // and await is still observed.
-                            loop {
-                                if self.controls.pending_continue_ready()
-                                    || cancel.is_cancelled()
-                                {
-                                    break;
-                                }
+                        // Park.  `enter/exit_halt_wait` flips `suspended` so
+                        // request_resume / request_abort know to fire a wake.
+                        // A resume that beat the park is honoured up-front
+                        // (take_resume_request).  The select parks until a
+                        // queued steering message, an explicit resume
+                        // (notify), or a cancel (abort) arrives.  Dropping
+                        // the losing `inbox.pop()` future is safe: the Seam B
+                        // drain immediately below picks up anything queued.
+                        self.controls.enter_halt_wait();
+                        let resumed_item: Option<InputItem> =
+                            if self.controls.take_resume_request() {
+                                None
+                            } else {
                                 tokio::select! {
-                                    () = self.controls.notify().notified() => {}
-                                    () = cancel.cancelled() => {}
+                                    () = self.controls.notify().notified() => None,
+                                    () = cancel.cancelled() => None,
+                                    item = inbox.pop() => Some(item),
                                 }
-                            }
-                            self.controls.exit_suspend();
-                        }
+                            };
+                        // Clear a resume flag that arrived via notify so it
+                        // cannot leak into a later halt within this turn.
+                        let _ = self.controls.take_resume_request();
+                        self.controls.exit_halt_wait();
 
-                        // Abort wins over Continue if both fired — a click-
+                        // Abort wins over resume if both fired — a click-
                         // race resolves to the kill switch.
                         if cancel.is_cancelled() {
                             let ti = OmegaEvent::TurnInterrupted(
@@ -2571,21 +2573,12 @@ impl Agent {
                             return;
                         }
 
-                        // Take the pending continue (if any) and emit the
-                        // optional interjection + TurnContinued.
-                        let cont = self.controls.take_pending_continue();
-                        let interjection = cont
-                            .as_ref()
-                            .and_then(|c| c.content.as_ref())
-                            .filter(|s| !s.is_empty())
-                            .cloned();
-                        let mode = cont
-                            .map_or(ContinueMode::Auto, |c| c.mode);
-
-                        // Route through inject_user_message so UserMessage
-                        // is emitted BEFORE the context append (A1 — §15(a)).
-                        if let Some(text) = interjection {
-                            match self.inject_user_message(&text).await {
+                        // A queued steering message woke the park → inject it
+                        // (its own eventful inject_* call, A1 — §15(a))
+                        // before continuing.  Any further items queued behind
+                        // it are picked up by the Seam B drain below.
+                        if let Some(item) = resumed_item {
+                            match self.inject_input_item(item).await {
                                 Ok(ev) => yield AgentItem::event(ev),
                                 Err(e) => {
                                     let ev = OmegaEvent::AgentError(
@@ -2603,12 +2596,11 @@ impl Agent {
                             }
                         }
 
-                        let cont_ev = OmegaEvent::TurnContinued(TurnContinuedEvent {
+                        let resumed_ev = OmegaEvent::TurnResumed(TurnResumedEvent {
                             time: now_iso(),
-                            mode,
                         });
-                        let _ = self.event_store.append(&cont_ev).await;
-                        yield AgentItem::event(cont_ev);
+                        let _ = self.event_store.append(&resumed_ev).await;
+                        yield AgentItem::event(resumed_ev);
                     }
 
                     // ---- Seam B (§3/§15 U2): mid-cycle inbox drain. ------
