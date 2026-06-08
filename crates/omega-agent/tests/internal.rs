@@ -3517,7 +3517,13 @@ fn user_role_context_appends_are_event_backed() {
         "perform_resumption",
     ];
 
-    let src = include_str!("../src/agent.rs");
+    let src = concat!(
+        include_str!("../src/agent/mod.rs"),
+        include_str!("../src/agent/lifecycle.rs"),
+        include_str!("../src/agent/inject.rs"),
+        include_str!("../src/agent/run_loop.rs"),
+        include_str!("../src/agent/resume.rs"),
+    );
     let lines: Vec<&str> = src.lines().collect();
 
     let mut violations: Vec<String> = Vec::new();
@@ -3583,7 +3589,32 @@ fn pause_for_injection_plumbing_is_removed() {
 
     // Every Rust source file under omega-agent/src.
     const SOURCES: &[(&str, &str)] = &[
-        ("src/agent.rs", include_str!("../src/agent.rs")),
+        ("src/agent/mod.rs", include_str!("../src/agent/mod.rs")),
+        (
+            "src/agent/lifecycle.rs",
+            include_str!("../src/agent/lifecycle.rs"),
+        ),
+        (
+            "src/agent/inject.rs",
+            include_str!("../src/agent/inject.rs"),
+        ),
+        (
+            "src/agent/run_loop.rs",
+            include_str!("../src/agent/run_loop.rs"),
+        ),
+        (
+            "src/agent/resume.rs",
+            include_str!("../src/agent/resume.rs"),
+        ),
+        (
+            "src/agent/stream_assembly.rs",
+            include_str!("../src/agent/stream_assembly.rs"),
+        ),
+        (
+            "src/agent/context.rs",
+            include_str!("../src/agent/context.rs"),
+        ),
+        ("src/agent/util.rs", include_str!("../src/agent/util.rs")),
         ("src/controls.rs", include_str!("../src/controls.rs")),
         ("src/lib.rs", include_str!("../src/lib.rs")),
         (
