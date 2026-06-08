@@ -1957,10 +1957,9 @@ main > h1 {
 }
 
 /* Metrics table — overrides for the usage table's right-aligned values. */
+/* Usage table — uses shared .panel-table for grid lines (consistent with
+   Monitors and Queue); overrides below keep it compact (auto width). */
 .usage-table {
-  border-collapse: collapse;
-  font-size: 13px;
-  color: var(--dim);
   width: auto;
   padding: 2px 0;
 }
