@@ -85,13 +85,16 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   into <code>OmegaEvent</code>, a drift-guard test keeps it that way, and
   unparseable frames surface visibly. &sect;16 records the diagnosis and the
   fix.</p>
-  <p><strong>The live frontier is now &sect;17 &mdash; the event sink.</strong>
+  <p><strong>&sect;17 &mdash; the event sink &mdash; is shipped (Phase&nbsp;A).</strong>
   User testing surfaced two more defects of one shape: monitor <em>stderr</em>
-  appears late and with stop-time timestamps, and <code>HaltRequested</code> is
-  written to disk and the wire with two <em>different</em> timestamps. Both are
-  symptoms of a structural gap: emitting an event is a side-effect of the turn
-  loop, so anything born outside a turn has no clean home. &sect;17 introduces a
-  first-class event sink and the event-time / commit-time distinction.</p>
+  appeared late and with stop-time timestamps, and <code>HaltRequested</code> was
+  written to disk and the wire with two <em>different</em> timestamps. Both were
+  symptoms of a structural gap: emitting an event was a side-effect of the turn
+  loop, so anything born outside a turn had no clean home. &sect;17 introduces a
+  first-class event sink and the event-time / commit-time distinction; its additive
+  Phase&nbsp;A is now in place (stderr at production time, single-stamped halt,
+  turn-aligned model/effort). Phase&nbsp;B (full unification) remains the
+  documented-but-unscheduled follow-up.</p>
 </div>
 
 <div class="toc">
@@ -113,7 +116,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <li><a href="#codefacts">Codebase facts gathered</a></li>
     <li><a href="#unified">Unified input model (implemented)</a></li>
     <li><a href="#mirror">Eliminate the WS-message mirror (shipped — frontend protocol projection)</a></li>
-    <li><a href="#sink"><strong>The event sink (live frontier — decouple emission from the loop)</strong></a></li>
+    <li><a href="#sink"><strong>The event sink (Phase&nbsp;A shipped — decouple emission from the loop)</strong></a></li>
   </ol></div>
 
 <h2 id="goal">1. Goal &amp; motivation</h2>
@@ -942,7 +945,7 @@ MonitorStopped { id, reason, exit_code, time }
 </ul>
 
 <hr/>
-<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: the monitor core (Phases&nbsp;0&ndash;4), the &sect;12 refactor, and the &sect;15 unified input model are all shipped &mdash; &sect;1&ndash;15 are the architectural record, not open work. &sect;16 (the WS-message mirror) is shipped. The live frontier is <a href="#sink">&sect;17, the event sink</a> &mdash; decoupling event emission from the turn loop so events born outside a turn (monitor stderr, control actions) land in <small class="path">events.jsonl</small> and the UI when they happen. &sect;13 lists remaining soft spots.</p>
+<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: the monitor core (Phases&nbsp;0&ndash;4), the &sect;12 refactor, and the &sect;15 unified input model are all shipped &mdash; &sect;1&ndash;15 are the architectural record, not open work. &sect;16 (the WS-message mirror) is shipped. <a href="#sink">&sect;17, the event sink</a> &mdash; decoupling event emission from the turn loop so events born outside a turn (monitor stderr, control actions) land in <small class="path">events.jsonl</small> and the UI when they happen &mdash; is shipped as additive Phase&nbsp;A; Phase&nbsp;B (full unification) is the documented-but-unscheduled follow-up. &sect;13 lists remaining soft spots.</p>
 
 <h2 id="unified">15. Unified input model (planned refactor — supersedes &sect;4's parking)</h2>
 
@@ -1463,6 +1466,26 @@ seam (&sect;8, &sect;15). One-item-per-line is the intended design; this is corr
 
 <h2 id="sink">17. The event sink (decouple emission from the turn loop)</h2>
 
+<div class="box ok">
+  <p><strong>Status: Phase&nbsp;A shipped.</strong> The additive
+  <code>EventSink::emit</code> path is in place. The three out-of-band emitters now go
+  through it: monitor <code>MonitorStderr</code> is emitted the instant the reader reads
+  a line (production-time stamp, non-projected &mdash; event-log + WS only, never the
+  inbox/LLM context); <code>HaltRequested</code> is emitted once (disk&nbsp;<code>time</code>
+  == wire <code>time</code>, the double-stamp is gone); and <code>ModelChanged</code> /
+  <code>EffortChanged</code> are routed through the sink, with a
+  <code>drive_turn</code>-entry snapshot of model+effort so a mid-turn change is recorded
+  at click-time but only takes effect on the next turn. The WS half resolves the current
+  <code>ws_tx</code> at emit time via a per-session <code>WsEventBroadcaster</code> bound
+  to a shared cell (survives reconnect). The loop&rsquo;s existing append-and-yield path is
+  untouched. All Phase&nbsp;A acceptance criteria below are met, guarded by end-to-end
+  tests and targeted mutation recipes (<code>just mutants-event-sink</code>,
+  <code>mutants-event-sink-wiring</code>, <code>mutants-ws-event-broadcaster</code>,
+  <code>mutants-u2-monitor-sink</code>, <code>mutants-input-queue</code>,
+  <code>mutants-u3-controls</code>, <code>mutants-u2-drain-routing</code>).
+  <strong>Phase&nbsp;B (full unification) remains documented but unscheduled.</strong></p>
+</div>
+
 <p>Two defects from user testing share one root cause. (1) Monitor <strong>stderr</strong>
 is parked on an in-memory queue and only turned into <code>MonitorStderr</code>
 events when the agent loop next reaches a seam <em>for some other reason</em> &mdash;
@@ -1568,7 +1591,7 @@ enforcing time order on the file:</p>
 
 <h3>Plan: Phase&nbsp;A now, Phase&nbsp;B documented</h3>
 
-<p><strong>Phase&nbsp;A (this work) &mdash; additive sink.</strong> Introduce
+<p><strong>Phase&nbsp;A &mdash; additive sink. <span class="keep">[SHIPPED]</span></strong> Introduce
 <code>EventSink::emit</code> as a new path used by out-of-band emitters; leave the
 loop’s existing append-and-yield path untouched. The server’s WS writer drains both
 the <code>run()</code> stream (loop events) and the sink (async events). Migrate:</p>
@@ -1591,7 +1614,8 @@ yielding events for forwarding; server and tests observe via the sink. The domin
 is migrating the test harness (today <code>Agent::send_message</code> + <code>MockProvider</code>
 collect the returned <code>run()</code> stream to assert turn output). A <em>B-variant</em>
 re-exposes the stream as a subscriber/tee of the sink to soften that migration. Phase&nbsp;B
-is documented, not scheduled &mdash; do it only once the additive sink has proven its value.</p>
+is documented, not scheduled &mdash; do it only once the additive sink has proven its value.
+<span class="keep"><strong>[Status: not started &mdash; the documented-but-unscheduled follow-up to the shipped Phase&nbsp;A.]</strong></span></p>
 
 <div class="box callout">
   <strong>Acceptance criteria (Phase&nbsp;A).</strong>

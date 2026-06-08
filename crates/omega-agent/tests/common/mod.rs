@@ -27,13 +27,45 @@ use std::sync::{Arc, Mutex};
 use async_stream::stream;
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use omega_agent::{Agent, AgentConfig, InputItem, InputQueue};
+use omega_agent::{Agent, AgentConfig, EventBroadcaster, InputItem, InputQueue};
 use omega_core::{AgentItem, AgentItemStream, LlmError, LlmRequest, Provider};
 use omega_store::{ContextStore, EventStore};
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
 use omega_types::{LlmResponseUsage, MonitorDeliveryItem, OmegaEvent, StreamSignal};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
+
+// ---------------------------------------------------------------------------
+// RecordingBroadcaster
+// ---------------------------------------------------------------------------
+
+/// Captures every [`OmegaEvent`] the agent's `EventSink` broadcasts to the
+/// "WebSocket" (§17, Phase A).  Tests install it via
+/// [`Agent::set_event_broadcaster`] to assert wire-side content and
+/// timestamps without standing up a real server.
+#[derive(Default)]
+pub struct RecordingBroadcaster {
+    pub events: Mutex<Vec<OmegaEvent>>,
+}
+
+impl RecordingBroadcaster {
+    /// Snapshot of all events broadcast so far.
+    pub fn snapshot(&self) -> Vec<OmegaEvent> {
+        self.events
+            .lock()
+            .expect("broadcaster mutex poisoned")
+            .clone()
+    }
+}
+
+impl EventBroadcaster for RecordingBroadcaster {
+    fn broadcast(&self, event: &OmegaEvent) {
+        self.events
+            .lock()
+            .expect("broadcaster mutex poisoned")
+            .push(event.clone());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // MockProvider

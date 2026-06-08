@@ -79,10 +79,10 @@
 mod common;
 
 use common::{
-    collect_stream, drive, make_llm_response, make_monitor_item, make_terminal_response,
-    make_test_agent, make_tool_use_items, tags,
+    RecordingBroadcaster, collect_stream, drive, make_llm_response, make_monitor_item,
+    make_terminal_response, make_test_agent, make_tool_use_items, tags,
 };
-use omega_agent::{Agent, AgentConfig, InputItem, InputQueue};
+use omega_agent::{Agent, AgentConfig, EventBroadcaster, InputItem, InputQueue};
 use omega_core::{AgentItem, ContentBlock, LlmError, LlmRequest, Message, Role};
 use omega_store::{ContextStore, EventStore, content_hash};
 use omega_types::events::MonitorStopReason;
@@ -836,6 +836,142 @@ async fn active_effort_reflects_set_effort() {
     assert_eq!(agent.active_effort(), "medium");
 }
 
+/// (§17, Phase A) The `ModelEffortHandle::effort` getter must round-trip the
+/// shared effort value, not a literal.  The server's `handle_set_model` reads
+/// it to decide whether to reset effort when crossing model families, so a
+/// `replace -> String::new()`/`"xyzzy"` mutation would silently break the
+/// reset gate.  Kept agent-level (the server-side reset tests can't be seen by
+/// an omega-agent mutation sweep).
+#[tokio::test]
+async fn model_effort_handle_effort_getter_round_trips() {
+    let (agent, _p, _t) = make_test_agent();
+    let handle = agent.model_effort_handle();
+    // Reflects the agent's resolved default ("medium").
+    assert_eq!(handle.effort(), agent.active_effort());
+    // Reflects a change made through the handle.
+    handle.set_effort("high".to_owned()).await;
+    assert_eq!(handle.effort(), "high");
+}
+
+/// (§17, Phase A) test (c): a model change that occurs MID-TURN must not
+/// affect the in-flight turn — every `LlmRequest` in that turn uses the model
+/// snapshotted at `drive_turn` entry — but it IS recorded at click time (out
+/// of band, through the `EventSink`) and takes effect on the NEXT turn.
+#[tokio::test]
+async fn mid_turn_model_change_snapshots_and_applies_next_turn() {
+    let (mut agent, provider, tmp) = make_test_agent();
+    let events_path = tmp.path().join("events.jsonl");
+    let broadcaster = Arc::new(RecordingBroadcaster::default());
+    agent.set_event_broadcaster(Arc::clone(&broadcaster) as Arc<dyn EventBroadcaster>);
+    // Obtain the lock-free handle BEFORE `run` borrows the agent mutably.
+    let handle = agent.model_effort_handle();
+
+    // Turn 1: a tool call (the sleep opens a mid-turn window), then end_turn
+    // — TWO LlmRequests in one turn.
+    provider.push_response(make_tool_use_items(
+        "tu1",
+        "run_command",
+        json!({ "command": "sleep 0.5" }),
+    ));
+    provider.push_response(make_terminal_response("end_turn", 1, 1));
+    // Turn 2: a single end_turn request.
+    provider.push_response(make_terminal_response("end_turn", 1, 1));
+
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let q2 = queue.clone();
+    let click = chrono::Utc::now();
+    let mut stream = agent.run(queue, run_cancel.clone());
+    q2.push(InputItem::Human {
+        content: "first".to_owned(),
+    });
+
+    // Concurrently: once turn 1's FIRST request is in flight, "click" change
+    // model.  The 0.5 s tool sleep guarantees this lands BEFORE request 2,
+    // yet AFTER the entry snapshot was taken.
+    {
+        let provider = Arc::clone(&provider);
+        tokio::spawn(async move {
+            for _ in 0..600 {
+                if !provider
+                    .captured_requests
+                    .lock()
+                    .expect("requests mutex")
+                    .is_empty()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            handle.set_model("claude-opus-4-8".to_owned()).await;
+        });
+    }
+
+    let _ = pull_to_turn_end(&mut stream).await;
+
+    // Both of turn 1's requests used the SNAPSHOT model, despite the change.
+    let turn1 = provider.take_requests();
+    assert_eq!(turn1.len(), 2, "turn 1 issues two LlmRequests");
+    for (i, r) in turn1.iter().enumerate() {
+        assert_eq!(
+            r.model, "claude-sonnet-4-6",
+            "turn-1 request #{i} must use the entry snapshot, not the mid-turn change"
+        );
+    }
+
+    // The change WAS recorded at click time (out of band): broadcaster + disk.
+    poll_until(
+        || {
+            broadcaster
+                .snapshot()
+                .iter()
+                .any(|e| matches!(e, OmegaEvent::ModelChanged(m) if m.model == "claude-opus-4-8"))
+        },
+        "ModelChanged must be broadcast at click time",
+    )
+    .await;
+    let changed = broadcaster
+        .snapshot()
+        .into_iter()
+        .find_map(|e| match e {
+            OmegaEvent::ModelChanged(m) if m.model == "claude-opus-4-8" => Some(m),
+            _ => None,
+        })
+        .expect("ModelChanged present");
+    let stamp = chrono::DateTime::parse_from_rfc3339(&changed.time)
+        .expect("time is rfc3339")
+        .with_timezone(&chrono::Utc);
+    assert!(
+        stamp >= click - chrono::Duration::seconds(2),
+        "ModelChanged time {stamp} must be a click-time stamp at/after {click}"
+    );
+
+    // Turn 2 picks up the NEW model (snapshot refreshed at the next entry).
+    q2.push(InputItem::Human {
+        content: "second".to_owned(),
+    });
+    let _ = pull_to_turn_end(&mut stream).await;
+    let turn2 = provider.take_requests();
+    assert_eq!(turn2.len(), 1, "turn 2 issues one LlmRequest");
+    assert_eq!(
+        turn2[0].model, "claude-opus-4-8",
+        "the next turn must use the changed model"
+    );
+
+    run_cancel.cancel();
+    drop(stream);
+
+    // Durable on disk as a model_changed event.
+    let disk = read_events_jsonl(&events_path);
+    assert!(
+        disk.iter().any(
+            |v| v.get("type").and_then(|t| t.as_str()) == Some("model_changed")
+                && v.get("model").and_then(|m| m.as_str()) == Some("claude-opus-4-8")
+        ),
+        "model_changed must be persisted to events.jsonl"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Cache-token propagation into TurnEnd metrics
 // ---------------------------------------------------------------------------
@@ -1361,49 +1497,97 @@ async fn tool_selection_drives_request_tools_and_system_prompt() {
 // All tests drive the public Agent API and observe effects via
 // history() / MockProvider.take_requests().
 
-/// (a) MonitorStderr: written to event log only, NEVER into context.
+/// (a) MonitorStderr (§17, Phase A): a live monitor's STDERR becomes a
+/// `MonitorStderr` event committed to the event-log + WS through the
+/// `EventSink`, and is NEVER projected into the LLM context.
 ///
-/// After append_monitor_stderr, history must be unchanged and the
-/// LlmRequest seen by the provider must contain no stderr text.
+/// End-to-end through the run loop with a REAL monitor: the stderr text must
+/// reach the recording broadcaster (the "WS") and `events.jsonl` (disk), but
+/// must NOT enter `history`, the inbox, or the next turn's LlmRequest (zero
+/// token cost).
 #[tokio::test]
-async fn monitor_stderr_not_projected_into_context() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    agent.init().await.expect("init");
+async fn monitor_stderr_emitted_to_sink_not_projected() {
+    let (mut agent, provider, tmp) = make_test_agent();
+    let events_path = tmp.path().join("events.jsonl");
+    let broadcaster = Arc::new(RecordingBroadcaster::default());
+    agent.set_event_broadcaster(Arc::clone(&broadcaster) as Arc<dyn EventBroadcaster>);
 
-    // History must be empty after init (no user turn yet).
-    assert_eq!(agent.history().len(), 0);
+    // call1: spawn a monitor that writes a UNIQUE marker to STDERR and lingers.
+    // The marker is ASSEMBLED at runtime (`printf 'OUTERR_%s' "$m"`) so the
+    // emitted line `OUTERR_ZZZ9` never appears verbatim in the command itself
+    // — a literal match in an LlmRequest then proves the stderr was projected.
+    provider.push_response(make_tool_use_items(
+        "tu_mon",
+        "monitor",
+        json!({ "description": "errmon", "command": "m=ZZZ9; printf 'OUTERR_%s\\n' \"$m\" 1>&2; sleep 5" }),
+    ));
+    // call2: a short tool turn so the loop keeps spinning while stderr lands.
+    provider.push_response(make_tool_use_items(
+        "tu_wait",
+        "run_command",
+        json!({ "command": "sleep 0.3" }),
+    ));
+    // call3: end the turn.
+    provider.push_response(make_terminal_response("end_turn", 5, 5));
 
-    // Inject stderr — must not touch history.
-    agent
-        .append_monitor_stderr("mon-1".into(), "fatal: out of memory".into())
-        .await
-        .expect("append_monitor_stderr");
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let q2 = queue.clone();
+    let mut stream = agent.run(queue, run_cancel.clone());
+    q2.push(InputItem::Human {
+        content: "watch".to_owned(),
+    });
+    let seen = pull_to_turn_end(&mut stream).await;
 
-    assert_eq!(
-        agent.history().len(),
-        0,
-        "append_monitor_stderr must NOT add to in-memory history"
-    );
-
-    // Drive a normal turn — the LlmRequest must contain exactly ONE
-    // message (the user text), with no stderr noise.
-    provider.push_response(make_terminal_response("end_turn", 1, 1));
-    let _ = collect_stream(drive(&mut agent, "hello".into(), CancellationToken::new())).await;
-
-    let reqs = provider.take_requests();
-    assert_eq!(reqs.len(), 1);
-    let msgs = &reqs[0].messages;
-    assert_eq!(
-        msgs.len(),
-        1,
-        "only the user 'hello' message must reach the API"
-    );
-
-    let body = serde_json::to_string(&msgs[0].content).unwrap();
+    // The stderr marker must reach the WS (broadcaster) as a MonitorStderr
+    // event — committed out of band, NOT on the run() stream.
+    poll_until(
+        || {
+            broadcaster.snapshot().iter().any(
+                |e| matches!(e, OmegaEvent::MonitorStderr(s) if s.chunk.contains("OUTERR_ZZZ9")),
+            )
+        },
+        "MonitorStderr must reach the WS broadcaster",
+    )
+    .await;
     assert!(
-        !body.contains("fatal"),
-        "stderr text must NOT appear in API context, got: {body}"
+        !seen.contains(&"MonitorStderr"),
+        "stderr is non-projected: it must NOT be yielded on the run() stream; seen={seen:?}"
     );
+
+    // It must NOT be projected: empty-ish history (only the human turn), no
+    // monitor source in the inbox, and the LlmRequests carry no stderr text.
+    assert!(
+        !q2.snapshot()
+            .iter()
+            .any(|v| v.source.starts_with("monitor:")),
+        "stderr must NEVER enter the InputQueue"
+    );
+    let reqs = provider.take_requests();
+    for req in &reqs {
+        let body = serde_json::to_string(&req.messages).unwrap();
+        assert!(
+            !body.contains("OUTERR_ZZZ9"),
+            "stderr text must NOT appear in any LlmRequest, got: {body}"
+        );
+    }
+
+    run_cancel.cancel();
+    drop(stream);
+
+    // And it is durable on disk as a monitor_stderr event.
+    poll_until(
+        || {
+            read_events_jsonl(&events_path).iter().any(|v| {
+                v.get("type").and_then(|t| t.as_str()) == Some("monitor_stderr")
+                    && v.get("chunk")
+                        .and_then(|c| c.as_str())
+                        .is_some_and(|c| c.contains("OUTERR_ZZZ9"))
+            })
+        },
+        "monitor_stderr event must be persisted to events.jsonl",
+    )
+    .await;
 }
 
 /// (b) MonitorDelivery: projects to role:user in the LLM context.
@@ -1825,32 +2009,96 @@ async fn append_monitor_started_writes_event_to_log() {
     );
 }
 
-/// `append_monitor_stderr` must write a `monitor_stderr` event to
-/// `events.jsonl` (and ONLY there — not into the context).
+/// (§17, Phase A) test (a): STDERR produced while the agent is PARKED (no
+/// turn running) becomes a `MonitorStderr` event PROMPTLY — committed through
+/// the `EventSink` the instant the line is read, NOT deferred until the
+/// monitor stops or the next seam.  Its `time` is a production-time stamp.
 ///
-/// Guard: `replace Agent::append_monitor_stderr -> omega_store::Result<()>
-/// with Ok(())`.
+/// The monitor writes its stderr ~0.4 s after spawn, by which point the
+/// one-shot turn that spawned it has ended and the run loop is parked on the
+/// empty inbox.  The event must reach the broadcaster (WS) while the monitor
+/// is STILL ALIVE (proving it is not a stop-time drain), and carry a `time`
+/// between the moment we started and the moment it arrived.
 #[tokio::test]
-async fn append_monitor_stderr_writes_event_to_log() {
-    let (mut agent, _, tmp) = make_test_agent();
-    agent.init().await.expect("init");
+async fn monitor_stderr_emitted_promptly_while_agent_parked() {
+    let (mut agent, provider, tmp) = make_test_agent();
+    let events_path = tmp.path().join("events.jsonl");
+    let broadcaster = Arc::new(RecordingBroadcaster::default());
+    agent.set_event_broadcaster(Arc::clone(&broadcaster) as Arc<dyn EventBroadcaster>);
 
-    agent
-        .append_monitor_stderr("mon-99".into(), "error: file not found\n".into())
-        .await
-        .expect("append_monitor_stderr");
+    // call1: spawn a monitor that stays SILENT for 0.4 s, then writes one
+    // stderr line, then lingers (so it is still alive when we assert).
+    provider.push_response(make_tool_use_items(
+        "tu_mon",
+        "monitor",
+        json!({
+            "description": "delayed-err",
+            "command": "sleep 0.4; printf 'PARKED_STDERR\\n' 1>&2; sleep 10"
+        }),
+    ));
+    // call2: end the turn immediately, so the agent parks BEFORE the stderr.
+    provider.push_response(make_terminal_response("end_turn", 1, 1));
 
-    let events = read_events_jsonl(&tmp.path().join("events.jsonl"));
-    let stderr = events
-        .iter()
-        .find(|v| v["type"] == "monitor_stderr")
-        .expect("monitor_stderr event must appear in events.jsonl");
-
-    assert_eq!(stderr["id"], "mon-99", "id must match");
-    assert_eq!(
-        stderr["chunk"], "error: file not found\n",
-        "chunk must match"
+    let t0 = chrono::Utc::now();
+    let queue = InputQueue::new();
+    let run_cancel = CancellationToken::new();
+    let q2 = queue.clone();
+    let mut stream = agent.run(queue, run_cancel.clone());
+    q2.push(InputItem::Human {
+        content: "watch".to_owned(),
+    });
+    // Drain to turn end — the agent is now parked on the empty inbox while
+    // the monitor is still sleeping before its stderr write.
+    let seen = pull_to_turn_end(&mut stream).await;
+    assert!(
+        !seen.contains(&"MonitorStderr"),
+        "stderr must NOT ride the run() stream; seen={seen:?}"
     );
+
+    // While PARKED (no turn running) and the monitor STILL ALIVE, the stderr
+    // line must arrive at the broadcaster promptly.
+    poll_until(
+        || {
+            broadcaster.snapshot().iter().any(
+                |e| matches!(e, OmegaEvent::MonitorStderr(s) if s.chunk.contains("PARKED_STDERR")),
+            )
+        },
+        "MonitorStderr must arrive while the agent is parked and monitor alive",
+    )
+    .await;
+    let t1 = chrono::Utc::now();
+
+    // The event's `time` is a plausible PRODUCTION-time stamp: between when
+    // we started and when it arrived (well before the monitor is stopped).
+    let ev = broadcaster
+        .snapshot()
+        .into_iter()
+        .find_map(|e| match e {
+            OmegaEvent::MonitorStderr(s) if s.chunk.contains("PARKED_STDERR") => Some(s),
+            _ => None,
+        })
+        .expect("MonitorStderr present");
+    let stamp = chrono::DateTime::parse_from_rfc3339(&ev.time)
+        .expect("time is rfc3339")
+        .with_timezone(&chrono::Utc);
+    assert!(
+        stamp >= t0 - chrono::Duration::seconds(2) && stamp <= t1 + chrono::Duration::seconds(2),
+        "stderr time {stamp} must be a production-time stamp within [{t0}, {t1}]"
+    );
+
+    // It is durable on disk too.
+    poll_until(
+        || {
+            read_events_jsonl(&events_path)
+                .iter()
+                .any(|v| v.get("type").and_then(|t| t.as_str()) == Some("monitor_stderr"))
+        },
+        "monitor_stderr must be persisted to events.jsonl",
+    )
+    .await;
+
+    run_cancel.cancel();
+    drop(stream);
 }
 
 // ===========================================================================
@@ -3741,86 +3989,10 @@ async fn u2_multiple_monitor_lines_merge_into_one_api_message() {
     run_cancel.cancel();
 }
 
-// --- MonitorStderr is NON-PROJECTED diagnostic: it becomes a MonitorStderr
-// event, NEVER a role:user record, and NEVER an InputItem in the queue. ----
-#[tokio::test]
-async fn u2_monitor_stderr_event_not_queued_not_projected() {
-    let (mut agent, _provider, _tmp) = make_test_agent();
-    agent.init().await.expect("init");
-
-    let queue = InputQueue::new();
-    let ev = agent
-        .append_monitor_stderr("mon-e".to_owned(), "boom".to_owned())
-        .await
-        .expect("append stderr");
-
-    assert!(
-        matches!(ev, OmegaEvent::MonitorStderr(_)),
-        "stderr must emit a MonitorStderr event"
-    );
-    assert_eq!(
-        agent.history().len(),
-        0,
-        "stderr must NOT project into the LLM context"
-    );
-    assert_eq!(
-        queue.snapshot().len(),
-        0,
-        "stderr must NEVER enter the InputQueue"
-    );
-}
-
-/// U2 (§15): a monitor's STDERR is non-projected diagnostic — it stays on the
-/// manager's pending queue (never the inbox) and is drained at Seam B into a
-/// `MonitorStderr` event by the run loop (`drain_monitor_stderr`), WITHOUT
-/// becoming role:user content.  Covers the agent-loop stderr drain path
-/// end-to-end with a real short-lived monitor.
-#[tokio::test]
-async fn u2_real_monitor_stderr_drained_at_seam_b_not_projected() {
-    let (mut agent, provider, _tmp) = make_test_agent();
-    // call1: spawn a monitor that writes to STDERR and stays briefly alive.
-    provider.push_response(make_tool_use_items(
-        "tu_mon",
-        "monitor",
-        json!({ "description": "errmon", "command": "printf 'errline\\n' 1>&2; sleep 3" }),
-    ));
-    // call2: a second tool turn whose completion gives the stderr time to land,
-    // and creates a Seam B at which drain_monitor_stderr runs.
-    provider.push_response(make_tool_use_items(
-        "tu_wait",
-        "run_command",
-        json!({ "command": "sleep 0.3" }),
-    ));
-    // call3: end the turn.
-    provider.push_response(make_terminal_response("end_turn", 5, 5));
-
-    let queue = InputQueue::new();
-    let run_cancel = CancellationToken::new();
-    let q2 = queue.clone();
-    let mut stream = agent.run(queue, run_cancel.clone());
-    q2.push(InputItem::Human {
-        content: "watch".to_owned(),
-    });
-
-    let seen = pull_to_turn_end(&mut stream).await;
-    assert!(
-        seen.contains(&"MonitorStderr"),
-        "monitor stderr must be drained at Seam B into a MonitorStderr event; seen={seen:?}"
-    );
-    // It is NON-projected: it never becomes role:user content, so it must NOT
-    // be a MonitorDelivery and must NOT appear in the inbox snapshot.
-    assert!(
-        !q2.snapshot()
-            .iter()
-            .any(|v| v.source.starts_with("monitor:")),
-        "stderr must NEVER enter the InputQueue"
-    );
-    run_cancel.cancel();
-    drop(stream);
-    // No MonitorDelivery (stderr is not projected); the only role:user records
-    // are the human turn + any tool plumbing — never an stderr delivery.
-    assert!(
-        !seen.contains(&"MonitorDelivery"),
-        "stderr must NOT be projected as a MonitorDelivery; seen={seen:?}"
-    );
-}
+// NOTE (§17, Phase A): the former `u2_monitor_stderr_event_not_queued_not_projected`
+// and `u2_real_monitor_stderr_drained_at_seam_b_not_projected` tests asserted the
+// OLD pending-queue / Seam-B drain behaviour (stderr riding the run() stream).
+// Stderr now flows out of band through the `EventSink` (WS + disk), never the
+// run() stream and never the inbox.  That contract is covered end-to-end by
+// `monitor_stderr_emitted_to_sink_not_projected` and
+// `monitor_stderr_emitted_promptly_while_agent_parked` above.

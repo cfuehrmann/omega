@@ -24,10 +24,12 @@ use std::sync::{Arc, Mutex};
 
 use chrono::SecondsFormat;
 use omega_tools::MonitorSink;
-use omega_types::events::MonitorStopReason;
+use omega_types::OmegaEvent;
+use omega_types::events::{MonitorStderrEvent, MonitorStopReason};
 use tokio::sync::Notify;
 
 use crate::agent::InputItem;
+use crate::event_sink::EventSink;
 
 /// Callback fired on every [`InputQueue::push`], receiving the atomic
 /// post-push snapshot.  The server registers one to forward a
@@ -251,16 +253,24 @@ fn make_view(item: &InputItem) -> QueuedItemView {
 /// to the [`MonitorManager`] so monitor output flows through the *same*
 /// inbox as human input.  Pushing fires the queue's `on_change` callback,
 /// so monitor enqueues reach the WS layer for free.
+///
+/// Monitor **stderr** does NOT flow through the inbox: it is non-projected
+/// diagnostic output (§17).  [`Self::deliver_stderr`] emits a
+/// [`MonitorStderr`](OmegaEvent::MonitorStderr) event the instant the reader
+/// reads a line — stamped at production time — through the out-of-band
+/// [`EventSink`] (event-log + WS only), never the inbox / LLM context.
 #[derive(Debug, Clone)]
 pub struct InboxSink {
     inbox: InputQueue,
+    event_sink: Arc<EventSink>,
 }
 
 impl InboxSink {
-    /// Wrap `inbox` as a monitor delivery sink.
+    /// Wrap `inbox` (for stdout/stop delivery) and `event_sink` (for the
+    /// non-projected stderr path) as a monitor delivery sink.
     #[must_use]
-    pub fn new(inbox: InputQueue) -> Self {
-        Self { inbox }
+    pub fn new(inbox: InputQueue, event_sink: Arc<EventSink>) -> Self {
+        Self { inbox, event_sink }
     }
 }
 
@@ -278,6 +288,20 @@ impl MonitorSink for InboxSink {
             reason,
             exit_code,
         });
+    }
+
+    fn deliver_stderr(&self, monitor_id: &str, chunk: String) {
+        // §17 (Phase A): stamp at production time (the instant the reader read
+        // the line) and emit out-of-band through the sink — event-log + WS
+        // only.  NON-PROJECTED: never the inbox, never role:user context,
+        // never a token.  `emit_detached` broadcasts synchronously (so wire
+        // order matches read order) and spawns the disk append.
+        let ev = OmegaEvent::MonitorStderr(MonitorStderrEvent {
+            id: monitor_id.to_owned(),
+            chunk,
+            time: chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        });
+        self.event_sink.emit_detached(ev);
     }
 }
 
@@ -308,7 +332,17 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use omega_store::EventStore;
     use tokio_util::sync::CancellationToken;
+
+    // An `EventSink` whose store path is never written: the stdout/stop
+    // delivery paths under test never emit, so no IO occurs.  (`deliver_stderr`
+    // — the only emitting path — is exercised end-to-end in tests/internal.rs.)
+    fn dummy_event_sink() -> Arc<EventSink> {
+        Arc::new(EventSink::new(Arc::new(EventStore::new(
+            std::path::PathBuf::from("/nonexistent/stderr-unit-test/events.jsonl"),
+        ))))
+    }
 
     fn human(s: &str) -> InputItem {
         InputItem::Human {
@@ -436,7 +470,7 @@ mod tests {
     #[test]
     fn inbox_sink_deliver_stdout_enqueues_monitor_stdout_item() {
         let q = InputQueue::new();
-        let sink = InboxSink::new(q.clone());
+        let sink = InboxSink::new(q.clone(), dummy_event_sink());
         sink.deliver_stdout("mon-a", "hello line".to_owned());
         let snap = q.snapshot();
         assert_eq!(snap.len(), 1);
@@ -455,7 +489,7 @@ mod tests {
     #[test]
     fn inbox_sink_deliver_stopped_enqueues_monitor_stopped_item() {
         let q = InputQueue::new();
-        let sink = InboxSink::new(q.clone());
+        let sink = InboxSink::new(q.clone(), dummy_event_sink());
         sink.deliver_stopped("mon-b", MonitorStopReason::ProcessExited, Some(3));
         let drained = q.drain_pending();
         assert_eq!(drained.len(), 1);

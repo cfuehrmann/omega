@@ -78,14 +78,21 @@ pub(crate) fn now_iso() -> String {
 /// decoupling seam.
 ///
 /// `stderr` is deliberately **absent**: it is non-projected diagnostic
-/// output that never becomes `role:user` content, so it stays on the
-/// manager's pending queue ([`PendingItem::Stderr`]) and is drained directly
-/// into a `MonitorStderr` event by the agent loop.
+/// output that never becomes `role:user` content.  §17 (Phase A): when a
+/// sink is attached the reader routes each stderr line straight to
+/// [`deliver_stderr`](MonitorSink::deliver_stderr) the instant it is read, so
+/// the implementation can stamp it at production time and emit a
+/// `MonitorStderr` event out of band (event-log + WS only).  Without a sink
+/// (unit tests) it falls back to the pending queue ([`PendingItem::Stderr`]).
 pub trait MonitorSink: Send + Sync + std::fmt::Debug {
     /// One stdout line from monitor `monitor_id`.
     fn deliver_stdout(&self, monitor_id: &str, line: String);
     /// Monitor `monitor_id` self-terminated (waiter-observed natural exit).
     fn deliver_stopped(&self, monitor_id: &str, reason: MonitorStopReason, exit_code: Option<i32>);
+    /// One stderr chunk from monitor `monitor_id`, delivered at production
+    /// time.  NON-PROJECTED: the implementation must route it to the
+    /// event-log + WS only — never the inbox / `role:user` context (§17).
+    fn deliver_stderr(&self, monitor_id: &str, chunk: String);
 }
 
 /// Lifecycle status of a monitor in the roster.
@@ -437,25 +444,38 @@ impl MonitorManager {
     }
 
     fn push_stderr(&self, id: &str, chunk: String) {
-        let mut inner = self.lock();
-        if let Some(entry) = inner.monitors.get_mut(id) {
-            entry.stderr_tail.push_back(chunk.clone());
-            // We push exactly one line at a time, so the tail can exceed the
-            // cap by at most one — a single `pop_front` restores it. (An `if`
-            // rather than a `while` deliberately: a `while` here lets a
-            // boundary mutation degrade into an infinite drain on an empty
-            // deque, which mutation testing scores as a timeout rather than a
-            // clean catch.)
-            if entry.stderr_tail.len() > STDERR_TAIL_MAX {
-                entry.stderr_tail.pop_front();
+        let sink = {
+            let mut inner = self.lock();
+            if let Some(entry) = inner.monitors.get_mut(id) {
+                entry.stderr_tail.push_back(chunk.clone());
+                // We push exactly one line at a time, so the tail can exceed the
+                // cap by at most one — a single `pop_front` restores it. (An `if`
+                // rather than a `while` deliberately: a `while` here lets a
+                // boundary mutation degrade into an infinite drain on an empty
+                // deque, which mutation testing scores as a timeout rather than a
+                // clean catch.)
+                if entry.stderr_tail.len() > STDERR_TAIL_MAX {
+                    entry.stderr_tail.pop_front();
+                }
             }
+            inner.sink.clone()
+        };
+        // §17 (Phase A): with a sink attached, emit a `MonitorStderr` event the
+        // instant the line is read — stamped at production time and committed
+        // to the event-log + WS out of band (NON-PROJECTED).  Without a sink
+        // (unit tests) fall back to the pending queue + item_notify.
+        if let Some(sink) = sink {
+            sink.deliver_stderr(id, chunk);
+        } else {
+            {
+                let mut inner = self.lock();
+                inner.pending.push_back(PendingItem::Stderr {
+                    monitor_id: id.to_owned(),
+                    chunk,
+                });
+            }
+            self.item_notify.notify_one();
         }
-        inner.pending.push_back(PendingItem::Stderr {
-            monitor_id: id.to_owned(),
-            chunk,
-        });
-        drop(inner);
-        self.item_notify.notify_one();
     }
 
     /// Mark a monitor Stopped **iff** it was still `Running`, reporting the
@@ -796,8 +816,15 @@ mod tests {
     struct RecordingSink {
         stdout: std::sync::Mutex<Vec<(String, String)>>,
         stopped: std::sync::Mutex<Vec<(String, MonitorStopReason, Option<i32>)>>,
+        stderr: std::sync::Mutex<Vec<(String, String)>>,
     }
     impl MonitorSink for RecordingSink {
+        fn deliver_stderr(&self, monitor_id: &str, chunk: String) {
+            self.stderr
+                .lock()
+                .unwrap()
+                .push((monitor_id.to_owned(), chunk));
+        }
         fn deliver_stdout(&self, monitor_id: &str, line: String) {
             self.stdout
                 .lock()
@@ -893,6 +920,59 @@ mod tests {
                 .iter()
                 .all(|i| !matches!(i, PendingItem::Stdout { .. } | PendingItem::Stopped { .. })),
             "stdout/stop must NOT land in the pending queue when a sink is attached"
+        );
+        mgr.shutdown();
+    }
+
+    /// §17 (Phase A): with a sink attached, stderr routes to the SINK
+    /// (`deliver_stderr`, at production time), NOT the manager's pending
+    /// queue — exercising the `if let Some(sink)` branch of `push_stderr`.
+    #[tokio::test]
+    async fn attached_sink_receives_stderr_bypassing_pending_queue() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let sink = Arc::new(RecordingSink::default());
+        mgr.attach_sink(Arc::clone(&sink) as Arc<dyn MonitorSink>);
+
+        let r = execute_tool(
+            "monitor",
+            json!({ "description": "d", "command": "printf 'e1\\ne2\\n' 1>&2" }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        let id = started_event(&r).id.clone();
+
+        // Both stderr lines reach the SINK, in order.
+        assert!(
+            poll_until(DL, || sink.stderr.lock().unwrap().len() >= 2).await,
+            "sink must receive both stderr lines, got {:?}",
+            sink.stderr.lock().unwrap()
+        );
+        let lines: Vec<String> = sink
+            .stderr
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(mid, _)| *mid == id)
+            .map(|(_, l)| l.clone())
+            .collect();
+        assert_eq!(lines, vec!["e1", "e2"], "sink stderr in order");
+
+        // roster stderr_tail is still maintained on the sink path.
+        assert!(
+            poll_until(DL, || mgr.roster().iter().any(
+                |m| m.id == id && m.stderr_tail == vec!["e1".to_string(), "e2".to_string()]
+            ))
+            .await,
+            "roster stderr_tail must be maintained even via the sink path, roster {:?}",
+            mgr.roster()
+        );
+        // Nothing leaked into the pending queue (sink supersedes it).
+        assert!(
+            mgr.drain_pending()
+                .iter()
+                .all(|i| !matches!(i, PendingItem::Stderr { .. })),
+            "stderr must NOT land in the pending queue when a sink is attached"
         );
         mgr.shutdown();
     }

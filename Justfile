@@ -576,10 +576,8 @@ install-hooks:
 # §15 U1 — mutation-test the InputQueue logic (push/pop/snapshot).
 # All mutations must be CAUGHT or UNVIABLE; a survivor means a test gap.
 mutants-input-queue:
-    mkdir -p {{mutants-tmp}}
-    cargo mutants -p omega-agent --cap-lints=true \
-        --file "crates/omega-agent/src/input_queue.rs" \
-        -- --tmp-dir {{mutants-tmp}}
+    cargo mutants -p omega-agent --cap-lints=true --in-place \
+        --file "crates/omega-agent/src/input_queue.rs"
 
 # §15 U1 — mutation-test the server push decision points in router.rs.
 # Target: `is_user_message_event`, `queue_snapshot_msg`, enqueue/drain push hooks.
@@ -594,30 +592,36 @@ mutants-input-queue-router:
 # to the pending queue only when no sink is attached; `attach_sink` installs
 # it.  Both branches are covered by omega-tools tests:
 # `attached_sink_receives_stdout_and_stop_bypassing_pending_queue` (sink) and
-# the existing no-sink stdout/stop tests (fallback).
+# the existing no-sink stdout/stop tests (fallback).  §17 Phase A added
+# `push_stderr` sink-routing (deliver_stderr the instant a line is read,
+# else pending-queue fallback) — covered by
+# `attached_sink_receives_stderr_bypassing_pending_queue` (sink) and the
+# `stderr_lines_reach_queue_and_roster_tail` no-sink test (fallback).
 # All mutations must be CAUGHT or UNVIABLE.
 mutants-u2-monitor-sink:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
         --file "crates/omega-tools/src/monitors.rs" \
-        --re 'push_stdout|enqueue_stopped|attach_sink|MonitorManager::sink'
+        --re 'push_stdout|push_stderr|enqueue_stopped|attach_sink|MonitorManager::sink'
 
 # §15 U2 — the InputQueue additions (drain_pending, on_change firing in push,
 # make_view monitor-source arms, InboxSink).  Covered by the input_queue unit
 # tests.  Reuses the U1 file scope; all mutations must be CAUGHT or UNVIABLE.
 mutants-u2-input-queue: mutants-input-queue
 
-# §15 U2 — the two plain-async drain/routing helpers on Agent:
+# §15 U2 — the plain-async drain/routing helper on Agent:
 # `inject_input_item` (routes each drained InputItem through its inject_*
-# helper) and `drain_monitor_stderr` (emits non-projected MonitorStderr +
-# defensive stdout/stop fallback).  The seam drains themselves live inside the
-# async_stream! macro body and come back UNVIABLE (opaque generators);
-# the helpers are CAUGHT by the Seam-A/Seam-B/batching tests in
-# tests/internal.rs.  Uses --in-place to avoid copying the 6 GB target dir.
+# helper).  The seam drains themselves live inside the async_stream! macro
+# body and come back UNVIABLE (opaque generators); the helper is CAUGHT by
+# the Seam-A/Seam-B/batching tests in tests/internal.rs.
+# (§17 Phase A removed the `drain_monitor_stderr` stderr drain entirely —
+# monitor stderr now emits straight through the EventSink at production time;
+# see `mutants-event-sink` and `mutants-u2-monitor-sink`.)
+# Uses --in-place to avoid copying the 6 GB target dir.
 mutants-u2-drain-routing:
     cargo mutants -p omega-agent --cap-lints=true --in-place \
         --file "crates/omega-agent/src/agent.rs" \
-        --re 'inject_input_item|drain_monitor_stderr'
+        --re 'inject_input_item'
 
 # §15 U3 — the Halt/Resume control-reconciliation state machine in controls.rs
 # (request_halt / take_halt_request / request_resume / take_resume_request /
@@ -640,3 +644,45 @@ mutants-u3-turn-state:
     cargo mutants -p omega-server --cap-lints=true --in-place \
         --file "crates/omega-server/src/router.rs" \
         --re 'next_turn_state_for|handle_halt|handle_resume'
+
+# §17 Phase A — the EventSink: out-of-band append+broadcast from any caller.
+# `event_sink.rs` is small and self-contained: EventSink::emit (append THEN
+# broadcast), emit_detached (broadcast in-order THEN spawn append),
+# set_broadcaster, store, and the EventBroadcaster trait.  CAUGHT by the
+# controls.rs `request_halt_emits_once_disk_time_equals_wire_time` test
+# (disk==wire timestamp, exactly-once) and the tests/internal.rs monitor-stderr
+# and mid-turn-model-change tests (broadcast + disk content).  --in-place to
+# avoid copying the 6 GB target dir.
+mutants-event-sink:
+    cargo mutants -p omega-agent --cap-lints=true --in-place \
+        --file "crates/omega-agent/src/event_sink.rs"
+
+# §17 Phase A — the EventSink wiring on Agent: `ModelEffortHandle::set_model`
+# and `::set_effort` (build the change event, emit it through the sink at
+# click time, return it), `Agent::set_event_broadcaster` (installs the WS
+# broadcaster into the sink), and `Agent::model_effort_handle` (hands out a
+# handle over the SAME shared model/effort Arcs + sink).  The `drive_turn`
+# entry snapshot lives inside the async_stream! macro body and comes back
+# UNVIABLE (opaque generator).  CAUGHT by the tests/internal.rs
+# `mid_turn_model_change_snapshots_and_applies_next_turn`,
+# `active_model_reflects_set_model` and `active_effort_reflects_set_effort`
+# tests.  --in-place to avoid copying the 6 GB target dir.
+mutants-event-sink-wiring:
+    cargo mutants -p omega-agent --cap-lints=true --in-place \
+        --file "crates/omega-agent/src/agent.rs" \
+        --re 'ModelEffortHandle|set_event_broadcaster|model_effort_handle'
+
+# §17 Phase A — the server's WS half of the EventSink: `WsEventBroadcaster`
+# (resolves the CURRENT ws_tx cell at emit time and forwards the event as a
+# WsMessage::Item), plus the `handle_set_model` / `handle_set_effort` router
+# handlers that now route their change events through the sink (no direct
+# tx.send).  CAUGHT end-to-end by the ws_router.rs `set_model_*` and Halt WS
+# tests, which assert the client receives the frame — now delivered via the
+# broadcaster.  --in-place to avoid copying the 6 GB target dir.  --timeout 45
+# so a frame-suppressing mutant trips the WS tests' own 30 s recv timeout
+# (→ CAUGHT) instead of cargo-mutants' 20 s auto-timeout (→ TIMEOUT).
+mutants-ws-event-broadcaster:
+    cargo mutants -p omega-server --cap-lints=true --in-place --timeout 45 \
+        --file "crates/omega-server/src/session.rs" \
+        --file "crates/omega-server/src/router.rs" \
+        --re 'WsEventBroadcaster|handle_set_model|handle_set_effort|set_ws_tx|send_via_ws_tx'

@@ -761,7 +761,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         controls,
         model_effort,
         paths,
-        ws_tx: None,
+        ws_tx: Arc::new(std::sync::Mutex::new(None)),
         current_turn: None,
         input_queue: InputQueue::new(),
         run_cancel: tokio_util::sync::CancellationToken::new(),

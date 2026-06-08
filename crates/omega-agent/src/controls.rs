@@ -56,7 +56,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use omega_store::EventStore;
+use crate::event_sink::EventSink;
 use omega_types::OmegaEvent;
 use omega_types::events::HaltRequestedEvent;
 use tokio::sync::Notify;
@@ -96,18 +96,22 @@ pub struct ControlHandle {
     /// Held behind a `Mutex` so the agent can swap in a fresh token at
     /// turn entry while `request_abort` reads the current one.
     cancel: Arc<Mutex<CancellationToken>>,
-    event_store: Arc<EventStore>,
+    /// Out-of-band event sink (§17, Phase A).  `request_halt` emits the
+    /// single click-time `HaltRequested` through it, committing to disk AND
+    /// broadcasting to the current WS from ONE creation — so disk time ==
+    /// wire time and no caller re-creates the event.
+    event_sink: Arc<EventSink>,
 }
 
 impl ControlHandle {
     /// Construct a fresh handle. Used by [`Agent::new`](crate::Agent::new).
     #[must_use]
-    pub(crate) fn new(event_store: Arc<EventStore>) -> Self {
+    pub(crate) fn new(event_sink: Arc<EventSink>) -> Self {
         Self {
             state: Arc::new(Mutex::new(ControlState::default())),
             notify: Arc::new(Notify::new()),
             cancel: Arc::new(Mutex::new(CancellationToken::new())),
-            event_store,
+            event_sink,
         }
     }
 
@@ -118,6 +122,10 @@ impl ControlHandle {
     ///
     /// Logs a `HaltRequested` event regardless of whether a turn is
     /// running, so post-mortem inspection captures every click.
+    ///
+    /// §17 (Phase A): the event is created exactly ONCE here and routed
+    /// through the [`EventSink`] — the same `time` lands on disk and on the
+    /// wire.  The server's halt handler no longer re-creates / re-stamps it.
     pub async fn request_halt(&self) {
         {
             let mut g = self.lock_state();
@@ -127,7 +135,7 @@ impl ControlHandle {
             g.halt_requested = true;
         }
         let ev = OmegaEvent::HaltRequested(HaltRequestedEvent { time: now_iso() });
-        let _ = self.event_store.append(&ev).await;
+        self.event_sink.emit(ev).await;
     }
 
     /// Resume a halted turn with **no new input** ("carry on"). If the loop
@@ -319,14 +327,28 @@ mod tests {
     //! behaviour is covered in `tests/internal.rs`.
 
     use super::*;
+    use crate::event_sink::EventBroadcaster;
     use omega_store::EventStore;
+    use omega_types::events::OmegaEvent;
     use tempfile::TempDir;
 
     fn make_handle() -> (ControlHandle, TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("events.jsonl");
         let store = Arc::new(EventStore::new(path));
-        (ControlHandle::new(store), tmp)
+        let sink = Arc::new(EventSink::new(store));
+        (ControlHandle::new(sink), tmp)
+    }
+
+    /// Records every event the sink broadcasts to the "wire".
+    #[derive(Default)]
+    struct RecBroadcaster {
+        events: std::sync::Mutex<Vec<OmegaEvent>>,
+    }
+    impl EventBroadcaster for RecBroadcaster {
+        fn broadcast(&self, event: &OmegaEvent) {
+            self.events.lock().unwrap().push(event.clone());
+        }
     }
 
     #[test]
@@ -428,10 +450,52 @@ mod tests {
     async fn request_halt_appends_event() {
         let (h, _t) = make_handle();
         h.request_halt().await;
-        let store = &h.event_store;
+        let store = h.event_sink.store();
         let events = store.read_all().await.unwrap();
         assert_eq!(events.len(), 1, "request_halt must append one event");
         assert_eq!(events[0]["type"], "halt_requested");
+    }
+
+    /// (§17, Phase A) test (b): a single halt produces ONE `HaltRequested`
+    /// event, routed to BOTH disk and wire from a single creation — so the
+    /// disk timestamp and the wire timestamp are identical (no double stamp).
+    #[tokio::test]
+    async fn request_halt_emits_once_disk_time_equals_wire_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("events.jsonl");
+        let store = Arc::new(EventStore::new(path));
+        let sink = Arc::new(EventSink::new(Arc::clone(&store)));
+        let rec = Arc::new(RecBroadcaster::default());
+        sink.set_broadcaster(Arc::clone(&rec) as Arc<dyn EventBroadcaster>);
+        let h = ControlHandle::new(sink);
+
+        h.request_halt().await;
+
+        // Exactly one HaltRequested on disk.
+        let disk = store.read_all().await.unwrap();
+        let disk_halts: Vec<_> = disk
+            .iter()
+            .filter(|e| e["type"] == "halt_requested")
+            .collect();
+        assert_eq!(disk_halts.len(), 1, "exactly one HaltRequested on disk");
+
+        // Exactly one HaltRequested on the wire.
+        let wire = rec.events.lock().unwrap();
+        let wire_times: Vec<&str> = wire
+            .iter()
+            .filter_map(|e| match e {
+                OmegaEvent::HaltRequested(ev) => Some(ev.time.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(wire_times.len(), 1, "exactly one HaltRequested on the wire");
+
+        // Single creation ⇒ the disk and wire timestamps are identical.
+        let disk_time = disk_halts[0]["time"].as_str().unwrap();
+        assert_eq!(
+            disk_time, wire_times[0],
+            "disk and wire timestamps must come from one stamp"
+        );
     }
 
     #[test]

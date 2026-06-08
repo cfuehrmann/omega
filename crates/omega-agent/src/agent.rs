@@ -37,25 +37,24 @@ use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, HarnessRecoveryEvent,
     HarnessRecoveryKind, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent,
     LlmResponseEndedEvent, LlmResponseStartedEvent, ModelChangedEvent, MonitorDeliveryEvent,
-    MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason,
-    MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent,
-    SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent,
-    ToolUseBlockEvent, TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent, TurnResumedEvent,
-    UsageIteration, UserMessageEvent,
+    MonitorDeliveryItem, MonitorStartedEvent, MonitorStopReason, MonitorStoppedEvent,
+    ResumingSessionEvent, ServerStartedEvent, SessionResumedEvent, SessionStartedEvent,
+    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent, TurnResumedEvent, UsageIteration,
+    UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use omega_types::{InterruptReason, OmegaEvent, TurnMetrics};
 
 use omega_store::{ContextHash, ContextStore, EventStore};
-use omega_tools::{
-    MonitorManager, PendingItem, PythonRepl, ToolCtx, execute_tool, tool_definitions,
-};
+use omega_tools::{MonitorManager, PythonRepl, ToolCtx, execute_tool, tool_definitions};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{cap_effort_for_model, max_output_tokens_for_model};
 use crate::controls::{ControlHandle, TurnGuard};
 use crate::error_classify::{is_context_too_long, is_invalid_tool_json};
+use crate::event_sink::{EventBroadcaster, EventSink};
 use crate::input_queue::{InboxSink, InputQueue};
 use crate::session_resume::{
     RESUMPTION_EFFORT, RESUMPTION_MAX_TOKENS, RESUMPTION_MODEL, RESUMPTION_SUMMARY_INSTRUCTIONS,
@@ -499,6 +498,13 @@ pub struct Agent {
     provider: Arc<dyn Provider>,
     context_store: ContextStore,
     event_store: Arc<EventStore>,
+    /// Out-of-band event sink (§17, Phase A): append-to-log + broadcast-to-WS
+    /// for events born **outside** a turn (monitor stderr, halt, model/effort
+    /// changes).  Shares the same [`Arc<EventStore>`] as the loop's
+    /// append-and-yield path; each event source uses exactly one path so
+    /// nothing is emitted twice.  The WS half is installed later by the
+    /// server via [`Agent::set_event_broadcaster`].
+    event_sink: Arc<EventSink>,
     /// Pause / continue / abort handle.  Cloned out via
     /// [`Agent::controls`] **before** the caller starts a turn so the
     /// clone can be used to fire control events while `send_message`
@@ -695,19 +701,10 @@ pub enum InputItem {
 pub struct ModelEffortHandle {
     model: Arc<std::sync::Mutex<String>>,
     effort: Arc<std::sync::Mutex<String>>,
-    event_store: Arc<EventStore>,
+    event_sink: Arc<EventSink>,
 }
 
 impl ModelEffortHandle {
-    /// Currently selected model id.
-    #[must_use]
-    pub fn model(&self) -> String {
-        self.model
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
     /// Currently selected thinking-effort level.
     #[must_use]
     pub fn effort(&self) -> String {
@@ -724,12 +721,16 @@ impl ModelEffortHandle {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone_from(&model);
+        // §17: route through the sink so the single click-time creation is
+        // committed to disk AND broadcast to the current WS — the caller no
+        // longer re-stamps or hand-fans-out.  The event is recorded at
+        // click-time even mid-turn; the in-flight turn is unaffected because
+        // `drive_turn` snapshots model+effort at entry.
         let ev = OmegaEvent::ModelChanged(ModelChangedEvent {
             time: now_iso(),
             model,
         });
-        let _ = self.event_store.append(&ev).await;
-        ev
+        self.event_sink.emit(ev).await
     }
 
     /// Switch the active thinking-effort level.  Persists an
@@ -739,12 +740,12 @@ impl ModelEffortHandle {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone_from(&effort);
+        // §17: route through the sink (see `set_model`).
         let ev = OmegaEvent::EffortChanged(EffortChangedEvent {
             time: now_iso(),
             effort,
         });
-        let _ = self.event_store.append(&ev).await;
-        ev
+        self.event_sink.emit(ev).await
     }
 }
 
@@ -786,11 +787,13 @@ impl Agent {
                 .collect()
         });
         let event_store = Arc::new(event_store);
-        let controls = ControlHandle::new(Arc::clone(&event_store));
+        let event_sink = Arc::new(EventSink::new(Arc::clone(&event_store)));
+        let controls = ControlHandle::new(Arc::clone(&event_sink));
         Self {
             provider,
             context_store,
             event_store,
+            event_sink,
             controls,
             config,
             active_model: Arc::new(std::sync::Mutex::new(active_model)),
@@ -974,8 +977,17 @@ impl Agent {
         ModelEffortHandle {
             model: Arc::clone(&self.active_model),
             effort: Arc::clone(&self.active_effort),
-            event_store: Arc::clone(&self.event_store),
+            event_sink: Arc::clone(&self.event_sink),
         }
+    }
+
+    /// Install the WebSocket broadcaster on the out-of-band [`EventSink`]
+    /// (§17, Phase A).  Called once per session by the server after the
+    /// agent is built; the broadcaster resolves the *current* `ws_tx` at
+    /// emit time (it is replaced on reconnect).  Headless / CLI callers
+    /// never call this — the sink then only appends to disk.
+    pub fn set_event_broadcaster(&self, broadcaster: Arc<dyn EventBroadcaster>) {
+        self.event_sink.set_broadcaster(broadcaster);
     }
 
     /// Switch the active thinking-effort level.  Persists an
@@ -1162,28 +1174,6 @@ impl Agent {
             time: now_iso(),
         });
         self.event_store.append(&ev).await
-    }
-
-    /// Append a `MonitorStderr` event to `events.jsonl`.
-    ///
-    /// **DIAGNOSTIC only** — written to the event log but NEVER appended to
-    /// `context.jsonl` or the in-memory history.  Zero LLM token cost;
-    /// does not wake the agent.
-    ///
-    /// # Errors
-    /// Returns an error if the event store write fails.
-    pub async fn append_monitor_stderr(
-        &mut self,
-        id: String,
-        chunk: String,
-    ) -> omega_store::Result<OmegaEvent> {
-        let ev = OmegaEvent::MonitorStderr(MonitorStderrEvent {
-            id,
-            chunk,
-            time: now_iso(),
-        });
-        self.event_store.append(&ev).await?;
-        Ok(ev)
     }
 
     /// Inject a `MonitorDelivery` into the event log and context.
@@ -1508,47 +1498,6 @@ impl Agent {
         }
     }
 
-    /// Drain the manager's pending queue of **non-projected diagnostic**
-    /// monitor output and persist each as a `MonitorStderr` event (§15 U2).
-    ///
-    /// Monitor stdout/stop now flow through the inbox (the [`MonitorSink`]),
-    /// so with a sink attached the manager's pending queue holds only
-    /// [`PendingItem::Stderr`].  This is the single-writer projection of
-    /// that diagnostic stream into events: it never produces role:user
-    /// content (so it bypasses the inbox entirely and never wakes the loop).
-    /// Stdout/Stopped items appearing here (only without a sink, e.g. unit
-    /// tests) are routed through their inject_* helpers defensively.
-    async fn drain_monitor_stderr(&mut self) -> Vec<OmegaEvent> {
-        let items = self.monitors.drain_pending();
-        let mut events = Vec::new();
-        for item in items {
-            let ev = match item {
-                PendingItem::Stderr { monitor_id, chunk } => {
-                    self.append_monitor_stderr(monitor_id, chunk).await
-                }
-                PendingItem::Stdout { monitor_id, line } => {
-                    self.inject_monitor_delivery(vec![MonitorDeliveryItem {
-                        monitor_id,
-                        lines: vec![line],
-                    }])
-                    .await
-                }
-                PendingItem::Stopped {
-                    monitor_id,
-                    reason,
-                    exit_code,
-                } => {
-                    self.inject_monitor_stopped(monitor_id, reason, exit_code)
-                        .await
-                }
-            };
-            if let Ok(ev) = ev {
-                events.push(ev);
-            }
-        }
-        events
-    }
-
     /// Run the persistent per-session agent loop (§15 Unified Input Model, U2).
     ///
     /// Borrows `&mut self` **once** for the whole session.  Both human input
@@ -1575,11 +1524,17 @@ impl Agent {
     ) -> Pin<Box<dyn Stream<Item = AgentItem> + Send + 'a>> {
         // §15 U2: attach the monitor-delivery sink so live monitors push
         // their stdout/stop straight onto THIS inbox — the same queue as
-        // human input.  From here monitor output flows through the unified
-        // Gather/seam-drain path; the manager's own pending queue is left
-        // only for non-projected stderr.
-        self.monitors
-            .attach_sink(Arc::new(InboxSink::new(inbox.clone())));
+        // human input.  From here monitor stdout/stop flows through the
+        // unified Gather/seam-drain path.
+        //
+        // §17 (Phase A): the same sink also carries STDERR — but stderr is
+        // NON-PROJECTED, so the sink routes it straight to the agent's
+        // `EventSink` (event-log + WS, never the inbox), stamped at the
+        // instant the line is read.
+        self.monitors.attach_sink(Arc::new(InboxSink::new(
+            inbox.clone(),
+            Arc::clone(&self.event_sink),
+        )));
         Box::pin(stream! {
             loop {
                 // ---- Gather (park on empty inbox) -----------------------
@@ -1674,6 +1629,13 @@ impl Agent {
             // Shadow the parameter so every downstream `cancel.is_cancelled()`
             // check and `cancel.clone()` for tool dispatch uses the merged token.
             let cancel = turn_cancel;
+            // §17 (Phase A): snapshot model+effort at turn entry.  Every
+            // `LlmRequest` issued by THIS turn uses the snapshot, so a
+            // mid-turn model/effort change (recorded out-of-band via the
+            // sink at click-time) does NOT leak into the in-flight turn — it
+            // takes effect on the NEXT `drive_turn`.
+            let turn_model = self.active_model();
+            let turn_effort = self.active_effort();
             // One shared monitor manager for this turn: cloned into every
             // ToolCtx, drained at the two seams, and selected on while parked.
             let monitors = Arc::clone(&self.monitors);
@@ -1779,8 +1741,8 @@ impl Agent {
                     return;
                 }
 
-                let active_model = self.active_model();
-                let active_effort = self.active_effort();
+                let active_model = turn_model.clone();
+                let active_effort = turn_effort.clone();
                 let max_tokens = max_output_tokens_for_model(&active_model);
                 let system_blocks: Vec<String> = self
                     .system_blocks
@@ -2632,13 +2594,10 @@ impl Agent {
                     if seam_b_failed {
                         return;
                     }
-                    // Non-projected monitor stderr lives on the manager's
-                    // pending queue (never the inbox).  Drain it here into
-                    // diagnostic MonitorStderr events — single-writer (this
-                    // loop) and WS fan-out preserved.
-                    for ev in self.drain_monitor_stderr().await {
-                        yield AgentItem::event(ev);
-                    }
+                    // Monitor stderr is now emitted out-of-band the instant
+                    // the reader reads a line (§17, Phase A): it flows through
+                    // the [`EventSink`] (event-log + WS), NOT the run-loop
+                    // stream — so there is no stderr drain at this seam.
                     empty_response_count = 0; // non-empty response received
                     continue;
                 }

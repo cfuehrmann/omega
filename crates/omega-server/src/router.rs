@@ -42,11 +42,12 @@ use tower_http::services::ServeDir;
 use omega_core::AgentItem;
 use omega_tools::{MonitorManager, MonitorStatus};
 use omega_types::OmegaEvent;
-use omega_types::events::HaltRequestedEvent;
 use omega_types::ids::LoggedEvent;
 
 use crate::AppState;
-use crate::session::{ActiveSession, SessionInfoCache};
+use crate::session::{
+    ActiveSession, SessionInfoCache, WsEventBroadcaster, WsTxCell, send_via_ws_tx, set_ws_tx,
+};
 use crate::ws_message::{InputQueueItem, MonitorRosterItem, PendingChangesIntent, WsMessage};
 
 // ---------------------------------------------------------------------------
@@ -356,6 +357,13 @@ async fn create_active_session(
         .await
         .map_err(|e| format!("agent.init() failed: {e}"))?;
 
+    // §17 (Phase A): out-of-band events (monitor stderr, halt, model/effort
+    // changes) reach the WS through the agent's `EventSink`.  Bind a
+    // broadcaster to THIS session's `ws_tx` cell so every emit resolves the
+    // CURRENT socket (the cell is updated, not the broadcaster, on reconnect).
+    let ws_tx: WsTxCell = Arc::new(std::sync::Mutex::new(None));
+    agent.set_event_broadcaster(Arc::new(WsEventBroadcaster::new(Arc::clone(&ws_tx))));
+
     let controls = agent.controls();
     let model_effort = agent.model_effort_handle();
     let active_model = agent.active_model();
@@ -380,7 +388,7 @@ async fn create_active_session(
         agent: Arc::new(tokio::sync::Mutex::new(agent)),
         controls,
         paths,
-        ws_tx: None,
+        ws_tx,
         current_turn: None,
         input_queue,
         run_cancel: CancellationToken::new(),
@@ -739,17 +747,17 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
 /// Set `slot.ws_tx = Some(tx)` if a session exists.  No-op otherwise.
 async fn install_ws_tx(state: &AppState, tx: UnboundedSender<WsMessage>) {
-    let mut slot = state.active_session.lock().await;
-    if let Some(active) = slot.as_mut() {
-        active.ws_tx = Some(tx);
+    let slot = state.active_session.lock().await;
+    if let Some(active) = slot.as_ref() {
+        set_ws_tx(&active.ws_tx, Some(tx));
     }
 }
 
 /// Clear the slot's `ws_tx` on disconnect.
 async fn clear_ws_tx(state: &AppState) {
-    let mut slot = state.active_session.lock().await;
-    if let Some(active) = slot.as_mut() {
-        active.ws_tx = None;
+    let slot = state.active_session.lock().await;
+    if let Some(active) = slot.as_ref() {
+        set_ws_tx(&active.ws_tx, None);
     }
 }
 
@@ -760,10 +768,8 @@ async fn clear_ws_tx(state: &AppState) {
 /// after a browser reload still reach the new connection.
 async fn send_to_active(slot: &Arc<tokio::sync::Mutex<Option<ActiveSession>>>, msg: WsMessage) {
     let guard = slot.lock().await;
-    if let Some(active) = guard.as_ref()
-        && let Some(tx) = &active.ws_tx
-    {
-        let _ = tx.send(msg);
+    if let Some(active) = guard.as_ref() {
+        send_via_ws_tx(&active.ws_tx, msg);
     }
 }
 
@@ -817,7 +823,7 @@ const XHIGH_EFFORT_MODELS: &[&str] = &["claude-opus-4-7", "claude-opus-4-8"];
 
 async fn handle_set_model(
     state: &AppState,
-    tx: &UnboundedSender<WsMessage>,
+    _tx: &UnboundedSender<WsMessage>,
     model: String,
 ) -> Result<(), String> {
     // §15 (Unified Input Model): mutate model/effort through the lock-free
@@ -830,37 +836,33 @@ async fn handle_set_model(
         };
         (active.model_effort.clone(), Arc::clone(&active.info_cache))
     };
-    let (model_event, effort_reset) = {
-        let model_event = model_effort.set_model(model.clone()).await;
+    // §17 (Phase A): `set_model`/`set_effort` emit through the agent's
+    // `EventSink`, which both appends to the log AND broadcasts to the
+    // current WS.  The router therefore no longer hand-fans-out the event
+    // (doing so would double-emit it to the client).
+    let did_reset = {
+        model_effort.set_model(model.clone()).await;
         let current_effort = model_effort.effort();
         let needs_reset = (current_effort == "max" && !MAX_EFFORT_MODELS.contains(&model.as_str()))
             || (current_effort == "xhigh" && !XHIGH_EFFORT_MODELS.contains(&model.as_str()));
-        let effort_event = if needs_reset {
-            Some(model_effort.set_effort("medium".to_owned()).await)
-        } else {
-            None
-        };
-        (model_event, effort_event)
+        if needs_reset {
+            model_effort.set_effort("medium".to_owned()).await;
+        }
+        needs_reset
     };
     {
         let mut cache = info_cache_arc.lock().await;
         cache.model = model;
-        if effort_reset.is_some() {
+        if did_reset {
             "medium".clone_into(&mut cache.effort);
         }
-    }
-    let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(
-        model_event,
-    )))));
-    if let Some(ev) = effort_reset {
-        let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(ev)))));
     }
     Ok(())
 }
 
 async fn handle_set_effort(
     state: &AppState,
-    tx: &UnboundedSender<WsMessage>,
+    _tx: &UnboundedSender<WsMessage>,
     effort: String,
 ) -> Result<(), String> {
     let (model_effort, info_cache_arc) = {
@@ -872,9 +874,10 @@ async fn handle_set_effort(
     };
     let new_effort = effort.clone();
     // §15: lock-free model/effort change (see handle_set_model).
-    let event = model_effort.set_effort(effort).await;
+    // §17 (Phase A): `set_effort` emits through the `EventSink` (append + WS
+    // broadcast), so the router no longer sends the event itself.
+    model_effort.set_effort(effort).await;
     info_cache_arc.lock().await.effort = new_effort;
-    let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(event)))));
     Ok(())
 }
 
@@ -1089,16 +1092,12 @@ async fn handle_halt(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Resul
         }
     }
 
+    // §17 (Phase A): `request_halt` emits the `HaltRequested` event through
+    // the agent's `EventSink` — a SINGLE creation/`time`, appended to disk and
+    // broadcast to the current WS from one value.  The router no longer
+    // re-creates the event with a fresh `now` (that double-stamp diverged
+    // disk and wire timestamps).
     controls.request_halt().await;
-
-    // The halt_requested event is persisted by request_halt but not
-    // yielded on the agent stream, so broadcast it here so the client sees
-    // the new entry immediately rather than waiting for a reconnect.
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let halt_event = OmegaEvent::HaltRequested(HaltRequestedEvent { time: now });
-    let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(
-        halt_event,
-    )))));
 
     {
         let mut ts = turn_state_arc.lock().await;
@@ -1179,9 +1178,8 @@ async fn handle_reset(
     // replace the slot.  §15 (Unified Input Model).
     teardown_prior_run(state).await;
 
-    let (mut session, _dir_name) =
-        create_active_session(state, model, effort, tool_selection).await?;
-    session.ws_tx = Some(tx.clone());
+    let (session, _dir_name) = create_active_session(state, model, effort, tool_selection).await?;
+    set_ws_tx(&session.ws_tx, Some(tx.clone()));
 
     // Capture what we need before installing the session into the slot so we
     // can build the session_info frame without re-locking active_session.
@@ -1266,9 +1264,9 @@ async fn handle_resume_session(
     let prev_meta = omega_store::read_session_metadata(&prev_dir).await;
 
     // Build the new session and install ws_tx.
-    let (mut session, _new_dir_name) =
+    let (session, _new_dir_name) =
         create_active_session(state, None, None, resumed_tool_selection).await?;
-    session.ws_tx = Some(tx.clone());
+    set_ws_tx(&session.ws_tx, Some(tx.clone()));
     let agent = Arc::clone(&session.agent);
     let turn_state_arc = Arc::clone(&session.turn_state);
     let info_cache_arc = Arc::clone(&session.info_cache);
@@ -2010,7 +2008,7 @@ mod tests {
         let slot = state.active_session.lock().await;
         let active = slot.as_ref().expect("session must still be present");
         assert!(
-            active.ws_tx.is_some(),
+            active.ws_tx.lock().unwrap().is_some(),
             "install_ws_tx must populate ws_tx when a session exists",
         );
     }
@@ -2035,11 +2033,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let state = test_state(&tmp);
 
-        let (mut session, _) = create_active_session(&state, None, None, None)
+        let (session, _) = create_active_session(&state, None, None, None)
             .await
             .unwrap();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
-        session.ws_tx = Some(tx);
+        *session.ws_tx.lock().unwrap() = Some(tx);
         *state.active_session.lock().await = Some(session);
 
         clear_ws_tx(&state).await;
@@ -2047,7 +2045,7 @@ mod tests {
         let slot = state.active_session.lock().await;
         let active = slot.as_ref().expect("session must still be present");
         assert!(
-            active.ws_tx.is_none(),
+            active.ws_tx.lock().unwrap().is_none(),
             "clear_ws_tx must reset ws_tx to None",
         );
     }
