@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Async Monitors — Design &amp; Resume Doc</title>
+<title>Async Monitors — Invariants, Decisions &amp; Future Work</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -44,6 +44,7 @@ th{background:var(--accent-bg)}
 .meta{color:var(--muted);font-size:.9rem}
 .keep{color:var(--ok-border);font-weight:700}
 .drop{color:var(--drop-border);font-weight:700}
+.norevert{color:var(--drop-border);font-weight:700}
 hr{border:none;border-top:1px solid var(--border);margin:2rem 0}
 .toc{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem 1.2rem;margin:1.5rem 0}
 .toc h4{margin-bottom:.5rem}
@@ -51,1590 +52,222 @@ hr{border:none;border-top:1px solid var(--border);margin:2rem 0}
 .toc a{color:var(--accent);text-decoration:none}
 .toc a:hover{text-decoration:underline}
 small.path{font-family:ui-monospace,monospace;color:var(--muted)}
+.rank{font-weight:700;color:var(--accent)}
 </style>
 </head>
 <body>
 <main>
 
-<h1>Async Monitors for Omega</h1>
+<h1>Async Monitors — Invariants, Decisions &amp; Future Work</h1>
 <p class="meta">
   <span class="tag tag-status">CORE SHIPPED</span>
-  <span class="tag tag-status">§16 WS MIRROR ELIMINATED</span><br/>
-  Design &amp; cold-start resume document. Self-contained: a future session with
-  <em>no prior context</em> should be able to read this and either start
-  implementing or continue the discussion.
+  This doc keeps only what's needed to move forward: <strong>architectural
+  invariants</strong> (must-holds), <strong>locked-in decisions</strong> (must-not-revert),
+  the <strong>future menu</strong>, and a <strong>resume map</strong>. The history of how
+  each piece was built lives in the code and its tests.
 </p>
 
 <div class="box ok">
-  <h4>Where we are now (read this first)</h4>
-  <p><strong>The monitor feature is built and the agent loop is sound.</strong>
-  Phases&nbsp;0&ndash;4 (event schema, tool surface, context projection,
-  shutdown/resume/headless), the §12 single-source-of-truth refactor, and the
-  §15 Unified Input Model (U1 persistent <code>run</code> loop +
-  <code>InputQueue</code>, U2 monitors-through-the-inbox two-seam drain, U3
-  control reconciliation) are all landed. Three orthogonal controls exist:
-  <strong>Queue</strong> (Send, always enqueues), <strong>Halt</strong> (stop at
-  the next seam and wait), <strong>Abort</strong> (cancel the in-flight block).
-  Sections&nbsp;1&ndash;16 are kept as the <em>architectural record</em> of how
-  and why &mdash; not as a to-do list.</p>
-  <p><strong>&sect;16 is now shipped too.</strong> User testing surfaced one
-  concrete defect (monitor deliveries invisible in the live UI) whose root cause
-  was structural: the frontend re-declared a hand-maintained <code>WsMessage</code>
-  enum that mirrored the canonical <code>OmegaEvent</code> with no compiler link
-  between them. The mirror is gone &mdash; event frames now deserialize straight
-  into <code>OmegaEvent</code>, a drift-guard test keeps it that way, and
-  unparseable frames surface visibly. &sect;16 records the diagnosis and the
-  fix.</p>
-  <p><strong>&sect;17 &mdash; the event sink &mdash; is shipped (Phase&nbsp;A).</strong>
-  User testing surfaced two more defects of one shape: monitor <em>stderr</em>
-  appeared late and with stop-time timestamps, and <code>HaltRequested</code> was
-  written to disk and the wire with two <em>different</em> timestamps. Both were
-  symptoms of a structural gap: emitting an event was a side-effect of the turn
-  loop, so anything born outside a turn had no clean home. &sect;17 introduces a
-  first-class event sink and the event-time / commit-time distinction; its additive
-  Phase&nbsp;A is now in place (stderr at production time, single-stamped halt,
-  turn-aligned model/effort). Phase&nbsp;B (full unification) remains the
-  documented-but-unscheduled follow-up.</p>
+  <h4>What exists</h4>
+  <p>An agent can <code>monitor(description, command)</code> to run a background shell command
+  whose stdout lines are injected as <code>role:user</code> at the next seam (no preemption),
+  watch/steer it from the Web UI, and <code>stop_monitor(id)</code>. Input (human + monitor)
+  flows through one queue; controls are <strong>Queue</strong> / <strong>Halt</strong> /
+  <strong>Abort</strong>. A first-class event sink lets out-of-band events (stderr, control
+  actions) reach <small class="path">events.jsonl</small> + UI when they happen.</p>
 </div>
 
 <div class="toc">
   <h4>Contents</h4>
   <ol>
-    <li><a href="#goal">Goal &amp; motivation</a></li>
-    <li><a href="#research">Research: how others do it</a></li>
-    <li><a href="#seams">The seam rules (Anthropic API)</a></li>
-    <li><a href="#mechanic">Core mechanic: pull-at-boundary <em>(superseded — see 15)</em></a></li>
-    <li><a href="#philosophy">Guardrail philosophy</a></li>
-    <li><a href="#decisions">Signed-off decisions</a></li>
-    <li><a href="#layers">Layer mapping (Contract Authority)</a></li>
-    <li><a href="#schema">Event schema (implemented)</a></li>
-    <li><a href="#ui">UI design</a></li>
-    <li><a href="#lifecycle">Lifecycle, shutdown, resume, headless</a></li>
-    <li><a href="#steps">Implementation steps (phased) — Phases 0&ndash;4 done</a></li>
-    <li><a href="#sst">Single-source-of-truth refactor (implemented)</a></li>
-    <li><a href="#open">Open items (deferred, non-blocking)</a></li>
-    <li><a href="#codefacts">Codebase facts gathered</a></li>
-    <li><a href="#unified">Unified input model (implemented)</a></li>
-    <li><a href="#mirror">Eliminate the WS-message mirror (shipped — frontend protocol projection)</a></li>
-    <li><a href="#sink"><strong>The event sink (Phase&nbsp;A shipped — decouple emission from the loop)</strong></a></li>
-  </ol></div>
-
-<h2 id="goal">1. Goal &amp; motivation</h2>
-<p>
-  Omega today has <code>wait_for_output</code>, which is <strong>synchronous</strong>:
-  it occupies the single tool-call slot and blocks the agent loop for the whole
-  wait. We want an <strong>asynchronous monitor</strong> primitive instead — the
-  agent registers a condition and keeps working (or parks), and when the condition
-  fires, a message is injected as a <em>user message at the next valid seam</em>
-  (boundary). This is the Claude Code "Monitor" model. <strong>No
-  preemption</strong> — monitors never interrupt an in-flight message; they wait for
-  the next boundary.
-</p>
-<p>Target use cases (all expressible as one shell-command primitive):</p>
-<ul>
-  <li><strong>Wait a duration</strong> — <code>sleep N; echo done</code>.</li>
-  <li><strong>Wait for a process to finish</strong> — <code>wait $pid; echo done</code>.</li>
-  <li><strong>Arbitrary boolean condition</strong> — a poll-and-if loop that prints only when the condition flips.</li>
-</ul>
-
-<h2 id="research">2. Research: how others do it</h2>
-<table>
-  <tr><th>System</th><th>Async monitor?</th><th>Notes</th></tr>
-  <tr>
-    <td><strong>Claude Code</strong></td>
-    <td><span class="keep">Yes</span> — "Monitor" tool (<strong>confirmed real &amp; official</strong>: Claude&nbsp;Code v2.1.98, announced 9&nbsp;Apr&nbsp;2026)</td>
-    <td>Launches a shell command whose <strong>stdout becomes an event stream</strong>;
-      each line wakes the session, silence costs nothing; lines within ~200&nbsp;ms
-      batch into one notification. Params: <code>description</code>,
-      <code>command</code>, <code>timeout_ms</code> (default 5&nbsp;min, max 1&nbsp;hr),
-      <code>persistent</code>. Two shapes: <em>stream filters</em>
-      (<code>tail -f | grep --line-buffered</code>) and <em>poll-and-if loops</em>
-      (<code>while true; …; sleep N</code>). stderr → file (inert). Auto-stops chatty
-      monitors. Contrasted with <code>run_in_background</code> (fire-and-forget,
-      one notification) and <code>/loop</code> polling (a full API call per check).</td>
-  </tr>
-  <tr>
-    <td><strong>opencode</strong></td>
-    <td>Partial — background subagents</td>
-    <td><code>BackgroundJob</code> service + <code>task</code> tool with
-      <code>background=true</code> (gated behind
-      <code>OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS</code>). On completion,
-      <code>injectBackgroundResult</code> appends a <code>synthetic:true</code>,
-      <code>role:user</code> message to the parent session. Subagents only, not
-      arbitrary shell. <strong>Same API primitive</strong> as Claude.</td>
-  </tr>
-  <tr><td><strong>forgecode</strong></td><td class="drop">No</td><td>Synchronous shell only. <code>followup</code> is a human-question tool.</td></tr>
-  <tr><td><strong>pi-mono</strong></td><td class="drop">No</td><td>Synchronous bash + streaming <code>onUpdate</code> + timeout + <code>killProcessTree</code>/detached-PID tracking (cleanup only). No monitor concept.</td></tr>
-</table>
-
-
-<div class="box callout">
-  <h3>Post-implementation note (folded in after Phases&nbsp;0&ndash;4 + real-session testing)</h3>
-
-  <p><strong>Premise confirmed.</strong> Claude&nbsp;Code's <em>Monitor</em> tool is real and
-  official, not speculative. It is push-based exactly as this doc models it: a background
-  command whose stdout lines are fed back to the agent mid-conversation. Sources, tiered by
-  provenance:</p>
-  <ul>
-    <li><strong>Anthropic first-party (authoritative):</strong>
-      official tools reference (<code>code.claude.com/docs/en/tools-reference</code> &mdash;
-      <em>"feeds each output line back to Claude&hellip; Claude interjects when an event lands"</em>);
-      CHANGELOG v2.1.98 (<em>"Added Monitor tool for streaming events from background scripts"</em>);
-      What's-New week&nbsp;15 (Apr&nbsp;6&ndash;10 2026); and the announcement by Noah&nbsp;Zweben,
-      Claude&nbsp;Code PM (<code>x.com/noahzweben/status/2042332268450963774</code>, 9&nbsp;Apr&nbsp;2026):
-      <em>"&hellip;move away from polling in the agent loop."</em></li>
-    <li><strong>Anthropic-written but third-party-published (caveat):</strong>
-      the detailed Monitor <em>tool description</em> text is only available via a third-party
-      extraction (<code>Piebald-AI/claude-code-system-prompts</code>). The exact wording is
-      <strong>single-sourced</strong> &mdash; not officially published by Anthropic and not yet
-      independently corroborated. Treat the <em>principle</em> as solid; treat any exact string
-      as unverified.</li>
-  </ul>
-
-  <p><strong>Observed Omega failure modes (real sessions, Sonnet).</strong> The machinery works
-  (start returns immediately; lines deliver at seams; parking wakes on a line &mdash; all tested),
-  but the model <em>used</em> it wrongly in two ways:</p>
-  <ol>
-    <li><strong>Mis-attribution:</strong> the model treated a monitor's injected
-      <code>role:user</code> message as something <em>the human said</em>. Root cause: nothing in
-      the message text the model reads signals "not the user" &mdash; the <code>synthetic</code>
-      flag is only a harness/UI marker (&sect;6), invisible to the model.</li>
-    <li><strong>Fabrication:</strong> the model <em>role-played</em> the monitor's output (wrote
-      "[m1] Done sleeping" itself, ~3&nbsp;s in) and then stopped the monitor &mdash; killing the
-      process before it could ever produce the line.</li>
+    <li><a href="#invariants">Invariants &amp; locked-in decisions</a> <span class="meta">(do not revert)</span></li>
+    <li><a href="#future"><strong>Future work (sorted by attractivity)</strong></a></li>
+    <li><a href="#codefacts">Resume map (where things live)</a></li>
   </ol>
-
-  <p><strong>How Claude nudges (the lesson).</strong> Per the verified prior art, the fix is in the
-  <em>framing</em>, not the architecture (which already matches Claude). Claude's Monitor surface
-  reportedly makes the agent reliable via, in essence: (a) telling the model in the tool
-  description that <em>events arrive on their own schedule and are not replies from the user</em>;
-  (b) a coverage principle (<em>"silence is not success"</em> &mdash; the watch must signal every
-  terminal state, not just the happy path); (c) concrete script guidance (line-buffering / flush so
-  output actually streams); and (d) auto-stopping runaway monitors. Note (c) and (d) are exactly the
-  rails this doc's &sect;5 "explorative minimalism" chose to <em>drop</em> &mdash; the verified prior
-  art keeps them, so those decisions are now flagged for reconsideration (&sect;13). We will adopt
-  the <em>principles</em> in Omega's own wording rather than copy Anthropic's (single-sourced,
-  possibly ToS-restricted) text.</p>
-
-  <p class="meta">Net: the design's push-at-seam architecture is on solid ground &mdash; it mirrors a
-  real, official Claude feature. The gap that broke the demo is purely <em>nudging</em>: the
-  tool description and teaching copy must (1) state monitor output is not the human, (2) forbid
-  fabricating/guessing output, (3) tell the model to end its turn and wait, and (4) carry coverage +
-  minimal script guidance. See &sect;13 for the open item.</p>
-
-  <p><strong>Two further findings</strong> (first-party: npm
-  <code>@anthropic-ai/claude-code</code> v2.1.165 type defs
-  <code>sdk-tools.d.ts</code>, obtained via <code>npm pack</code> &mdash; download
-  only, no install/run):</p>
-  <ul>
-    <li><strong>The tool <em>result</em> (what <code>monitor()</code> returns)
-      should be minimal.</strong> Claude's <code>MonitorOutput</code> is bare
-      structured data (<code>{ taskId, timeoutMs, persistent }</code>) &mdash; no
-      prose. Omega's result is a sentence ending &ldquo;Stop it with stop_monitor
-      when no longer needed,&rdquo; which is the exact cue that tips Sonnet into
-      stopping a monitor immediately (Opus reasons past it). <strong>Fix: strip
-      Omega's monitor tool-result to neutral data; keep all behavioural guidance
-      in the tool description.</strong></li>
-    <li><strong>Claude has no system-prompt section for monitors.</strong> All
-      guidance lives in the tool description; there is no
-      <code>monitor_addendum</code> analogue in Claude's system prompt. Omega
-      duplicates (rich tool description <em>and</em> a tool-gated system-prompt
-      addendum). Candidate for consolidation &mdash; observe whether the addendum
-      earns its keep once the tool description carries the load.</li>
-  </ul>
+  <p class="meta" style="margin:.6rem 0 0">A <span class="norevert">⛔</span> marks a decision whose
+  reversal would re-introduce a bug we already fixed.</p>
 </div>
 
-<h2 id="seams">3. The seam rules (Anthropic Messages API — correctness, not opinion)</h2>
-<div class="box callout">
-  <h4>Terminology (read this first — &ldquo;turn&rdquo; is banned for being overloaded)</h4>
-  <ul>
-    <li><strong>message</strong> — one API object: a single <code>{ role, content }</code>
-      where <code>role</code> is <code>user</code> or <code>assistant</code>. The atomic
-      unit. We say <strong>user message</strong> / <strong>assistant message</strong>,
-      never &ldquo;user turn.&rdquo; Anthropic combines consecutive same-role messages
-      into one server-side.</li>
-    <li><strong>cycle</strong> — one agent loop iteration: a single human (or monitor)
-      prompt that drives <em>possibly many</em> assistant + tool-result messages until
-      the assistant emits <code>end_turn</code>. In Omega code this is what
-      <code>send_message</code> runs, finishing at <code>TurnEnd</code>. A cycle is
-      made of many messages.</li>
-    <li><strong><code>end_turn</code></strong> — Anthropic&rsquo;s <code>stop_reason</code>
-      on an <em>assistant</em> message meaning &ldquo;done, yielding control.&rdquo; A
-      property of one message, not a unit of conversation.</li>
-    <li><strong>boundary</strong> (a.k.a. <strong>seam</strong>) — a point where a
-      <code>user</code> message may legally be inserted: after <code>end_turn</code>
-      (Seam&nbsp;A) or immediately after a completed <code>tool_result</code>
-      (Seam&nbsp;B). Defined precisely below.</li>
-  </ul>
-  <p class="meta">
-    Monitors deliver at a <strong>boundary</strong>, as a <strong>user message</strong>,
-    never preempting an in-flight <strong>message</strong> or splitting a
-    <code>tool_use</code>/<code>tool_result</code> pair.
-  </p>
-</div>
+<h2 id="invariants">1. Invariants &amp; locked-in decisions</h2>
+
+<h3>Seam &amp; loop correctness (forced by the Anthropic Messages API)</h3>
 <ul>
-  <li><strong>Two roles only:</strong> <code>user</code> / <code>assistant</code>.
-    Anything not generated by the model — tool results, hook output, monitor
-    notifications, human input — <strong>must</strong> enter as <code>role:user</code>.
-    "Impersonating the user" is <em>forced by the protocol</em>, not a design choice;
-    both Claude and opencode do it. The <code>synthetic</code> flag is only a
-    harness/UI marker to distinguish it from a human-typed message.</li>
-  <li><strong>tool_use → tool_result is rigid:</strong> every <code>tool_use</code>
-    block must be immediately followed, in the very next message, by matching
-    <code>tool_result</code> blocks. You cannot insert a separate message between them.</li>
-  <li><strong>Exactly two legal injection points</strong> for a user message:
-    <ul>
-      <li><strong>Seam A</strong> — after the assistant ends with <code>end_turn</code>
-        and is idle → start a fresh user message.</li>
-      <li><strong>Seam B</strong> — piggybacked <em>after</em> the
-        <code>tool_result</code> blocks in the user message that answers a
-        <code>tool_use</code>.</li>
-    </ul></li>
-  <li><strong>A "boundary" = <code>end_turn</code> OR a completed
-    <code>tool_result</code>.</strong> "Generating" and "ToolRunning" are merely
-    <em>between boundaries</em>. A generation always resolves into one of the two
-    boundary kinds; if it resolves to a <code>tool_use</code>, you reach Seam B once
-    the tool returns.</li>
-  <li><strong>No preemption at the context level.</strong> The only way to act before
-    the next natural boundary is to <strong>abort the in-flight request</strong>
-    (transport level) — that "manufactures a seam now." We keep abort as a separate,
-    explicit <em>interrupt</em> path; it is not how monitors deliver.</li>
-  <li><strong>A long/blocking tool call holds Seam B shut</strong> for its whole
-    duration → starvation. This is precisely the <code>wait_for_output</code> problem,
-    and the reason monitors must be an out-of-band channel rather than a blocking tool.</li>
+  <li><strong>Two roles only.</strong> Anything not generated by the model (tool results, monitor
+    output, human input) enters as <code>role:user</code>. The <code>synthetic</code> flag is a
+    harness/UI marker only.</li>
+  <li><strong><code>tool_use</code> → <code>tool_result</code> is rigid</strong> — the result is the
+    very next message; nothing inserts between them.</li>
+  <li><strong>Two legal injection seams.</strong> Seam A: after <code>end_turn</code> (idle). Seam B:
+    after the <code>tool_result</code> blocks answering a <code>tool_use</code>. The loop drains the
+    input queue only at these two points — so &ldquo;never inject mid-pair&rdquo; is structural, not a
+    decision that can be gotten wrong.</li>
+  <li><strong>No context-level preemption.</strong> Monitors never interrupt an in-flight message.
+    The only pre-boundary action is <strong>Abort</strong> (transport-level), kept as a separate
+    explicit interrupt.</li>
+  <li><span class="norevert">⛔</span> <strong>Monitors are out-of-band, never a blocking tool.</strong>
+    A long/blocking tool holds Seam B shut → starvation (the <code>wait_for_output</code> problem this
+    feature exists to fix).</li>
+  <li><strong>Single writer for context-bound events</strong> — the loop appends; monitors enqueue.
+    (Generalised by the event sink for non-context events — see below.)</li>
+  <li><strong>Park/terminate is defined.</strong> Park iff a live monitor or queued item exists, else
+    terminate; never hang when nothing can fire. Parked, the loop selects over {queue item,
+    roster-changed}; roster-changed fires when the live set shrinks without a drainable item (e.g. a
+    UI kill while parked).</li>
+  <li><strong>Process-tree reaping</strong> on <code>stop()</code> and session end (process-group
+    kill); no orphans.</li>
 </ul>
 
-<h2 id="mechanic">4. Core mechanic: pull-at-boundary (single writer)</h2>
-<div class="box warn">
-  <strong>Superseded.</strong> The parking mechanic described in this section is
-  the <em>current implementation</em>. It conflates &ldquo;a monitor is live&rdquo;
-  with &ldquo;the agent is busy,&rdquo; which caused a real deadlock and a
-  human-vs-synthetic asymmetry. It is replaced by the <a href="#unified">unified
-  input model (&sect;15)</a>; read that for the target design. The text below is
-  retained as the record of what the shipped code does today.
-</div>
+<h3>Contract Authority &amp; schema</h3>
 <ul>
-  <li>Monitors run as <strong>background OS processes</strong>. Each stdout line is
-    enqueued to an <strong>in-memory queue</strong>. Monitors <em>never</em> write
-    <code>events.jsonl</code>.</li>
-  <li>The <strong>main loop is the single writer</strong>. It drains the queue
-    <em>only</em> at the two boundaries:
-    <ol>
-      <li>right after it appends a <code>tool_result</code>, before calling the model again; and</li>
-      <li>when it is about to <strong>park</strong> at <code>end_turn</code>.</li>
-    </ol></li>
-  <li>When parked, the loop blocks on a <code>select</code> over three wake
-    sources: <strong>human input</strong> and <strong>monitor output</strong> (both
-    arrive in the queue), plus <strong>roster-changed</strong> — a signal that the
-    set of live monitors mutated <em>without</em> producing any queue output (a
-    monitor was killed or exited on its own). Any of the three wakes the loop; it
-    then drains the queue and re-evaluates park-vs-terminate.</li>
-  <li><strong>No-preemption is free</strong>: the loop simply never inspects the queue
-    between boundaries.</li>
-  <li>The monitor subsystem is <strong>dumb</strong> — it knows nothing about the fold
-    or the tool_use/tool_result invariant. That ignorance is the safety; only the loop,
-    which is always at a legal boundary when it drains, ever appends.</li>
+  <li><strong>The Rust <code>OmegaEvent</code> is the canonical schema</strong>
+    (<small class="path">crates/omega-types/src/events.rs</small>). Persistence, WS, and UI are derived
+    projections. A <em>semantic</em> change requires a <em>syntactic</em> one (new variant), never a
+    silent alias; update the UI to the types, never the reverse. Old logs failing to deserialize a
+    renamed variant is intended signal, not a bug to paper over.</li>
+  <li><span class="norevert">⛔</span> <strong>Derived projections must be <em>derived</em>, not
+    hand-mirrored.</strong> Frontend event frames deserialize straight into <code>OmegaEvent</code>; a
+    drift-guard test round-trips every variant; an unparseable frame surfaces visibly. (Re-introducing
+    a parallel hand-kept <code>WsMessage</code> enum is exactly the drift that made monitor deliveries
+    silently invisible.) Genuinely transport-only envelope frames are the only hand-written part; a
+    new one must not collide tags with an event.</li>
+  <li><strong>Persistence shape.</strong> <code>events.jsonl</code> = all events;
+    <code>context.jsonl</code> = derived per-record projection (keyed by <code>ContextHash</code>) that
+    <em>excludes</em> <code>MonitorStderr</code>. Merging consecutive <code>user</code>-role records
+    into one API message is request-assembly (<code>project_messages()</code>), leaving the per-record
+    log un-merged so <code>ContextHash</code> foreign keys stay stable.</li>
+  <li><strong>Projection rules.</strong> The fold skips <code>MonitorStderr</code>;
+    <code>MonitorDelivery</code> projects <code>role:user</code>; an <em>unexpected</em>
+    <code>MonitorStopped</code> (<code>StoppedByUser</code> / <code>ProcessExited</code> /
+    <code>ProcessCrashed</code>) projects so the agent learns, while <code>StoppedByAgent</code> and
+    <code>StoppedBySessionEnd</code> do not.</li>
+  <li><strong>Roster is ephemeral</strong> — runtime-only, never persisted or reconstructed.
+    <code>WsMessage::MonitorRoster</code> is transport-only (not an <code>OmegaEvent</code>), pushed
+    seam-aligned on connect/reset/resume and after each monitor event.</li>
 </ul>
-<div class="box callout">
-  <h4>What &ldquo;roster&rdquo; means</h4>
-  <p>
-    The <strong>roster</strong> is the running process&rsquo;s <strong>in-memory list
-    of currently-live monitors</strong> &mdash; pure ephemeral runtime state, never
-    persisted and never reconstructed. <code>events.jsonl</code> records
-    <code>MonitorStarted</code>/<code>MonitorStopped</code> for forensics, but the live
-    set itself is held only in RAM; after a restart it is empty (see &sect;10,
-    Lifecycle). Each entry carries id, description, command, status, start time,
-    event-fired count, and a stderr tail &mdash; exactly what the UI badge/modal renders
-    (&sect;9) and what the WS layer pushes ephemerally (&sect;7).
-  </p>
-  <p>
-    <strong>Why <code>roster-changed</code> is a wake reason.</strong> The
-    park/terminate rule is &ldquo;park iff a live monitor or queued event exists;
-    otherwise terminate.&rdquo; When the agent is parked on its <em>last</em> live
-    monitor and that monitor is killed (UI <code>KillMonitor</code>) or exits by
-    itself, <em>no queue line is produced</em>, so neither of the other two wake
-    sources fires. Without a roster-changed wake the loop would sit parked forever
-    even though the terminate condition is now satisfied. The signal forces a
-    re-evaluation so the loop exits cleanly instead of hanging &mdash; it is the
-    mechanism behind &ldquo;never hang when nothing can ever fire.&rdquo;
-  </p>
-</div>
-<pre><code>runtime (ephemeral)            main loop (single writer)        persistence / UI
-─────────────────────          ─────────────────────────        ────────────────
-monitor procs --stdout line--> [ pending queue ] --drain at----> events.jsonl
-              --stderr-------------------------------(chunk)----> events.jsonl (non-projected)
-              --status/tail----> [ live roster ] --WS ephemeral-> UI modal + badge
-human input ----------------->  [ pending queue ]                UI queue viz
-UI "KillMonitor" -----------------------------------------------> loop (logs MonitorStopped)</code></pre>
 
-<div class="box callout">
-  <h4>Phase 1 build note &mdash; queue/roster ownership &amp; clean cutover</h4>
-  <p>
-    <strong>Where the queue and roster live.</strong> Both sit together in a single
-    <code>MonitorManager</code> (<small class="path">crates/omega-tools/src/monitors.rs</small>)
-    held behind an <code>Arc</code> and stored on
-    <code>ToolCtx.monitors: Option&lt;Arc&lt;MonitorManager&gt;&gt;</code> &mdash; mirroring how
-    the <code>python_repl</code> state is threaded onto <code>ToolCtx</code>. This is the
-    <em>smallest</em> ownership model that bridges Phase 1 &rarr; Phase 2: the
-    <code>monitor</code>/<code>stop_monitor</code> tools reach it <em>now</em> through the
-    <code>ctx</code> handle, and Phase 2&rsquo;s main loop will hold the <em>same</em>
-    <code>Arc</code>, clone it into every <code>ToolCtx</code> it builds, and call
-    <code>drain_pending()</code> at each boundary plus <code>shutdown()</code> on session end
-    &mdash; no re-architecting. It is deliberately <strong>not</strong> a module-level
-    <code>static</code> (unlike the <code>run_background</code> registry): a global would leak
-    the roster across sessions and across tests, violating the ephemeral-roster rule
-    (&sect;10) and making tests non-deterministic.
-  </p>
-  <p>
-    <strong>Clean cutover &mdash; no half-wired sessions.</strong> A session must be either
-    <em>unaware</em> of monitors or <em>all-in</em>, never in between. Phase 1 ships the
-    runtime and the two tools but does <em>not</em> wire the loop drain, so exposing the
-    tools to the model now would let it call <code>monitor()</code> and spawn a process
-    whose output nothing ever drains &mdash; a half-wired state. Therefore Phase 1 keeps
-    the tools <strong>invisible</strong>: <code>monitor</code>/<code>stop_monitor</code> are
-    <em>not</em> in <code>ALL_TOOL_NAMES</code> / <code>DEFAULT_TOOL_NAMES</code> / any preset,
-    and <code>tool_definitions</code> never emits their schemas, so the model can never
-    select or call them (the agent also rejects any tool name outside
-    <code>ALL_TOOL_NAMES</code>). The <code>execute_tool</code> dispatch arms exist purely so the
-    end-to-end tests can drive the tools directly. The cutover is a single, atomic,
-    reviewable change in a later phase: add the two names to the registry and emit their
-    schemas, <em>together with</em> the loop drain. Until then, real sessions are
-    byte-for-byte unaffected.
-  </p>
-</div>
+<h3>Unified input model</h3>
+<ul>
+  <li><span class="norevert">⛔</span> <strong>One persistent <code>run</code> loop + one
+    <code>InputQueue</code></strong> for human <em>and</em> monitor input, tagged by source.
+    <em>(Do not revert to parking inside <code>send_message</code>: it held the agent lock for the
+    whole turn and deadlocked a fresh <code>UserMessage</code>.)</em></li>
+  <li><strong><code>role:user</code> is a projection, not a storage decision.</strong> Human messages
+    stay <code>UserMessage</code>, monitor deliveries stay <code>MonitorDelivery</code>; merged late by
+    <code>project_messages()</code>. Human/monitor symmetry falls out for free.</li>
+  <li><strong>Three orthogonal controls:</strong> <strong>Queue</strong> (always enqueue, deliver at
+    next seam), <strong>Halt</strong> (stop at next seam and wait), <strong>Abort</strong> (cancel the
+    in-flight block). The retired pause/continue-for-injection machinery is guarded by a source-scan
+    test so it can't grow back.</li>
+</ul>
 
-<div class="box callout">
-  <h4>Phase 1 &mdash; as built (API surface the Phase 2 loop wires against)</h4>
-  <p>
-    Everything below lives in <small class="path">crates/omega-tools/src/monitors.rs</small>
-    (runtime) plus <small class="path">tools/monitor.rs</small> /
-    <small class="path">tools/stop_monitor.rs</small> (the two tools). Commit
-    <code>e101dfb</code>. Internally the manager is one
-    <code>Mutex&lt;ManagerInner&gt;</code> holding the roster
-    (<code>HashMap&lt;id, entry&gt;</code>), the <code>pending</code> queue
-    (<code>VecDeque&lt;PendingItem&gt;</code>), and an id counter.
-  </p>
-<pre><code>// Shared handle: agent owns one Arc, clones it into every ToolCtx.
-MonitorManager::new() -&gt; Arc&lt;Self&gt;
+<h3>Event sink — event-time vs commit-time</h3>
+<ul>
+  <li><span class="norevert">⛔</span> <strong>Event-time and commit-time are independent; keep both.</strong>
+    Event-time = embedded <code>time</code> / UUIDv7 <code>event_id</code> (when it happened).
+    Commit-time = file/arrival order in <code>events.jsonl</code> (when recorded). Never sort the log
+    by time; the UI shows arrival order with each row's own <code>time</code>. Their divergence is
+    signal (skew/latency/races), not noise.</li>
+  <li><strong>One occurrence = one creation = one <code>time</code> = one <code>event_id</code></strong>,
+    routed to both disk and wire from that single value. Stamp <code>time</code> at the moment of
+    occurrence; append whenever. (Re-deriving a fresh <code>now</code> at broadcast is the
+    double-stamp bug.)</li>
+  <li><strong>Sink contract:</strong> <code>emit(event)</code> appends + broadcasts in arrival order,
+    from any caller at any time, with no coordination — <code>EventStore</code> is stateless and its
+    <code>append</code> is <code>O_APPEND</code>/per-line atomic; <code>ws_tx</code> is a multi-producer
+    sender resolved live (replaced on reconnect).</li>
+  <li><strong>User action vs effect.</strong> A model/effort change is recorded at action-time
+    (out-of-band, even mid-turn); its <em>effect</em> is turn-aligned — <code>drive_turn</code>
+    snapshots model+effort at entry, so a mid-turn change applies next turn, never to the in-flight one.</li>
+  <li class="meta">Phase A (additive sink alongside the loop's path) is shipped; Phase B (sink as the
+    sole emission path) is future work.</li>
+</ul>
 
-// Spawn `bash -c command` in its own process group (pgid = child pid via
-// process_group(0)), piped stdout/stderr, null stdin, kill_on_drop. Starts
-// 3 tokio tasks (stdout reader, stderr reader, waiter) and RETURNS IMMEDIATELY.
-spawn(self: &amp;Arc&lt;Self&gt;, description, command) -&gt; Result&lt;SpawnedMonitor{id, started_at}, String&gt;
+<h3>Guardrail stance &amp; teaching copy</h3>
+<ul>
+  <li><strong>Explorative minimalism.</strong> Add only correctness rails; skip the public-serving
+    rails Anthropic adds for a broad audience; iterate by observing the single agent. UI observability
+    is what earns skipping automated kill.</li>
+  <li><strong>Currently dropped</strong> (re-add only on evidence): default/max <code>timeout_ms</code>,
+    auto-stop of chatty monitors, line-buffering nagging. Verified prior art (Claude Code) keeps
+    auto-stop + line-buffering — flagged in Future work.</li>
+  <li><strong>No auto-stop</strong> — runaway monitors are caught by visibility (logs + UI fired-count),
+    not automation.</li>
+  <li><strong>Teaching copy is load-bearing for usability.</strong> Tool descriptions + system-prompt
+    addendum must say: monitor output is <em>not</em> the human; do not fabricate/guess output; after
+    starting, end your turn and wait; stop when no longer needed. The tool <em>result</em> stays
+    neutral bare data (a &ldquo;stop it when done&rdquo; sentence tipped Sonnet into killing monitors
+    instantly).</li>
+  <li><strong>Lifecycle decisions.</strong> Clean shutdown kills all trees + best-effort
+    <code>MonitorStopped</code>; a hard crash leaves a dangling <code>MonitorStarted</code> (intended
+    forensic signal). Resume forks a new session — no live-monitor inheritance, nothing to reconcile.
+    Headless is benchmark-only, bounded externally + session-end cleanup.</li>
+</ul>
 
-stop(&amp;self, id) -&gt; bool        // kills whole tree (kill_group); true iff it was live (caller logs
-                               //   MonitorStopped); false = no-op for unknown / already-stopped
-shutdown(&amp;self) -&gt; Vec&lt;String&gt; // session-end reaping: kill all live trees, return their ids
-drain_pending(&amp;self) -&gt; Vec&lt;PendingItem&gt;   // Phase 2 calls this AT THE TWO BOUNDARIES
-roster(&amp;self) -&gt; Vec&lt;MonitorInfo&gt;         // ephemeral snapshot (UI/WS, Phase 3)
-status(&amp;self, id) -&gt; Option&lt;MonitorStatus&gt;
-
-enum PendingItem { Stdout{monitor_id, line}, Stderr{monitor_id, chunk} }
-enum MonitorStatus { Running, Stopped }
-struct MonitorInfo { id, description, command, status, started_at, fired_count, stderr_tail }
-const STDERR_TAIL_MAX = 20;   // roster tail is bounded; full stderr still flows through the queue</code></pre>
-  <p>
-    <strong>Event emission = single writer, via <code>extra_events</code>.</strong> The
-    tools do not append events. <code>monitor()</code> returns
-    <code>MonitorStarted</code> and <code>stop_monitor()</code> returns
-    <code>MonitorStopped{reason: StoppedByAgent}</code> on the
-    <code>ToolResult.extra_events</code> vec; the agent&rsquo;s dispatch loop persists those
-    (same mechanism as <code>python_repl</code>&rsquo;s <code>PythonReplBootstrapped</code>).
-    Phase 0&rsquo;s <code>Agent::append_monitor_started</code> /
-    <code>inject_monitor_delivery</code> / <code>inject_monitor_stopped</code> remain unused for
-    now &mdash; they are the hooks for the <em>loop-driven</em> paths Phase 2 adds (delivery
-    on drain; <code>ProcessExited</code>/<code>ProcessCrashed</code> stops).
-  </p>
-  <div class="box ok">
-    <strong>Phase 2 wiring checklist (no re-architecting needed):</strong>
-    <ol>
-      <li>Create one <code>Arc&lt;MonitorManager&gt;</code> per session in the agent; clone it
-        into each <code>ToolCtx</code> (replace the Phase 1 <code>monitors: None</code> in
-        <small class="path">agent.rs</small>).</li>
-      <li>At the two boundaries call <code>drain_pending()</code> and map items:
-        <code>Stdout</code> &rarr; <code>MonitorDelivery</code> (batch per monitor; projected
-        <code>role: user</code>), <code>Stderr</code> &rarr; <code>MonitorStderr</code>
-        (non-projected). Reuse <code>inject_monitor_delivery</code>.</li>
-      <li>Parking <code>select</code> over <code>{human, queue, roster-changed}</code>; fire
-        <em>roster-changed</em> when a live monitor exits/killed without queue output.</li>
-      <li>Call <code>shutdown()</code> on session end (reaps trees &mdash; no orphans).</li>
-      <li><strong>Cutover (atomic):</strong> add <code>monitor</code>/<code>stop_monitor</code> to
-        <code>ALL_TOOL_NAMES</code> (+ default/preset), add their schema fns so
-        <code>tool_definitions</code> emits them, and add the deferred teaching copy (&sect;5).</li>
-    </ol>
-  </div>
-  <div class="box ok">
-    <strong>Phase 2 decisions (as built) &mdash; <span class="keep">✔</span>:</strong>
-    <ul>
-      <li><strong>Natural-exit <code>kill_group</code>: YES.</strong> When the waiter sees a
-        monitor self-exit (Running&rarr;Stopped), it calls <code>kill_group(pgid)</code>
-        before enqueuing the stop item. A self-exited <code>bash</code> leader can leave
-        background grandchildren reparented to init; because they inherit the leader&rsquo;s
-        process group, one group kill reaps them. Cost: an already-dead leader makes the
-        kill a harmless no-op. The alternative (reap only the leader) was rejected — it
-        silently leaks the exact orphans the process-group design exists to prevent. The
-        SIGKILL the waiter observes for an <em>agent</em>-killed monitor is suppressed (the
-        entry is already <code>Stopped</code>), so this never double-classifies as
-        <code>ProcessCrashed</code>.</li>
-      <li><strong>DEFAULT / preset: opt-in, not default.</strong> <code>monitor</code> and
-        <code>stop_monitor</code> join <code>ALL_TOOL_NAMES</code> and the <code>all</code>
-        preset only — <em>not</em> <code>DEFAULT_TOOL_NAMES</code>/<code>standard</code>
-        (same posture as <code>python_repl</code>). Rationale: monitors are an advanced
-        async capability whose correct use depends on the teaching copy being present
-        (&sect;5 teaching-copy prerequisite); making them opt-in keeps the default session
-        lean and ensures a monitor-aware session is deliberately selected. Explorative
-        minimalism (&sect;5): no dedicated new preset — <code>all</code> already means
-        &ldquo;everything&rdquo;.</li>
-    </ul>
-  </div>
-  <p>
-    <strong>Deliberate Phase 1/2 boundary (not an oversight).</strong> In Phase 1 the
-    waiter task only reaped the child and flipped the roster entry to <code>Stopped</code>
-    &mdash; it did <em>not</em> capture the exit code, distinguish
-    <code>ProcessExited</code> vs <code>ProcessCrashed</code>, or enqueue a stop item, so
-    <em>projected</em> stop delivery for self-terminating monitors was unwired. <strong>Phase 2
-    wired this</strong> (see the Phase 2 entry in &sect;11): the waiter now classifies the
-    <code>ExitStatus</code> and enqueues <code>PendingItem::Stopped</code>, and on the
-    natural transition also <code>kill_group</code>s for orphan reaping. (Also: stderr&rsquo;s roster cap uses a single
-    <code>if</code>, not a <code>while</code> &mdash; safe because pushes are one-at-a-time, and
-    it keeps the boundary mutation catchable rather than an infinite-loop timeout.)
-  </p>
-</div>
-
-<h2 id="philosophy">5. Guardrail philosophy</h2>
-<div class="box callout">
-  <strong>Explorative minimalism.</strong> Add <em>only</em> guardrails that are
-  obviously load-bearing for <strong>correctness</strong>. Deliberately
-  <strong>skip</strong> the rails Anthropic added to protect a broad public.
-  Iterate on agent features by <strong>observing the single agent's behavior</strong>,
-  not by pre-empting every footgun. Omega's Web UI makes this safe: human-in-the-loop
-  observability substitutes for automated kill.
-</div>
-
-<h3><span class="keep">KEEP</span> — obviously load-bearing (correctness)</h3>
+<h2 id="future">2. Future work (sorted by attractivity)</h2>
+<p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.</p>
 <ol>
-  <li><strong>Never inject between <code>tool_use</code> and its <code>tool_result</code></strong> — enforced structurally by pull-at-boundary (no decision to get wrong).</li>
-  <li><strong>Single writer</strong> — only the main loop appends events; monitors enqueue.</li>
-  <li><strong>Distinct event variant</strong> for monitor injections (not a reused human user message) — per the AGENTS.md <em>loud-schema-change</em> rule. Projects to <code>role:user</code>.</li>
-  <li><strong>Identity + lifecycle + stop</strong> — each monitor has an id; start/fired/stopped attributable; agent can stop by id; stopping a dead monitor is a no-op.</li>
-  <li><strong>Process-tree reaping</strong> on stop and on session end (no orphans).</li>
-  <li><strong>Defined park/terminate condition</strong> — park iff a live monitor or queued events exist; otherwise terminate. Never hang when nothing can ever fire.</li>
+  <li><span class="rank">Kill button / <code>KillMonitor</code> control frame.</span> Completes the UI
+    control triad (today you can start + observe but not stop from the UI). Low-risk, well specified: a
+    <code>MonitorManager</code> method that CASes Running→Stopped, kills the tree, enqueues
+    <code>PendingItem::Stopped{reason: StoppedByUser}</code> (single-writer preserved), fires
+    roster-changed; a <code>ClientFrame::KillMonitor{id}</code> dispatch mirroring
+    <code>handle_abort</code>. <code>StoppedByUser</code> already exists, unused.</li>
+  <li><span class="rank">Event sink — Phase B (full unification).</span> Make the sink the sole
+    emission path: the loop emits via <code>sink.emit()</code> too; WS/tests observe the sink, not the
+    run-stream. Cures the &ldquo;emission coupled to the loop&rdquo; smell. Main cost = migrating how
+    the test harness observes events (<code>Agent::send_message</code> collects the returned stream).
+    Deliberately gated on whether Phase A earns its keep.</li>
+  <li><span class="rank">Action-vs-effect completeness (schema-wide policy).</span> The log is
+    inconsistent about recording the <em>action</em> vs the <em>effect</em>. Sharpest case: monitor
+    stdout — queue time (action) is computed as <code>InputQueueItem.enqueued_at</code> for the
+    live queue-viz but discarded at delivery; only <code>MonitorDeliveryEvent.time</code> (effect) is
+    persisted. Inspection step: enumerate every <code>OmegaEvent</code> variant, classify action /
+    effect / both, decide a documented rule. Low cost, high conceptual payoff.</li>
+  <li><span class="rank">Retire / reposition <code>wait_for_output</code>.</span> Once monitors are
+    proven the better path: remove it, drop it from the default selection, or keep + note monitors are
+    preferred. Evidence-driven.</li>
+  <li><span class="rank">Reconsider auto-stop of chatty monitors.</span> Dropped by explorative
+    minimalism; kept by Claude Code. Re-add on evidence of the agent leaking/flooding, or keep
+    observing.</li>
+  <li><span class="rank">Per-tool toggle for non-UI sessions.</span> A <code>--tool</code> /
+    <code>--no-tool</code> CLI flag (or config) so headless/scripted sessions toggle individual tools
+    without a custom preset; today only coarse <code>--preset</code> exists server-side.</li>
+  <li><span class="rank">One-shot vs streaming tool split (design discussion).</span> Claude routes
+    &ldquo;notify me once&rdquo; to a background job and reserves Monitor for streaming; Omega collapses
+    both into one <code>monitor</code>. Revisit splitting them + a default <code>timeout_ms</code> /
+    <code>persistent</code> opt-out. Observe first.</li>
+  <li><span class="rank">Live queue/badge polish.</span> Sub-seam real-time queue streaming + per-line
+    badge updates. Seam-aligned already suffices — low-value polish.</li>
+  <li><span class="rank">Monitors controllable inside the Python REPL.</span> Expose the monitor queue
+    as a Python API so REPL code reacts to events in-session. Speculative; the tool-call boundary is
+    the right abstraction for now.</li>
 </ol>
 
-<h3><span class="drop">DROP</span> — public-serving rails (skip now, re-add on evidence)</h3>
-<table>
-  <tr><th>Rail</th><th>Why we skip it</th></tr>
-  <tr><td>Default + hard-max <code>timeout_ms</code></td><td>Protects strangers from forgotten monitors. We have explicit stop + session-end reaping. No timeout default; observe whether the agent leaks monitors first.</td></tr>
-  <tr><td>Auto-stop chatty monitors (firehose)</td><td>Public-protective. We are one human watching one agent. <strong>UI count + activity is the backstop.</strong> Observe whether the agent self-corrects. <strong>(Reconsider:</strong> verified prior art &mdash; Claude&nbsp;Code &mdash; <em>keeps</em> auto-stop; see &sect;2 post-implementation note.)</td></tr>
-  <tr><td>"Always use <code>grep --line-buffered</code>" / poll-interval nagging</td><td>Prompt nannying. Ship the raw primitive; add guidance only if observation shows laggy/buggy monitors. <strong>(Reconsider:</strong> Claude&nbsp;Code's real Monitor description <em>does</em> include line-buffering/flush guidance; see &sect;2 note.)</td></tr>
-</table>
-
-<h3>Tool surface</h3>
-<p>
-  Ship the <strong>raw, general primitive first</strong>:
-  <code>monitor(description, command)</code> — stdout lines are events; returns
-  immediately with a monitor id. Plus <code>stop_monitor(id)</code>. <strong>No</strong>
-  sugar (<code>monitor_until</code>/<code>_for</code>/<code>_process</code>),
-  <strong>no</strong> timeout, <strong>no</strong> auto-stop, <strong>no</strong>
-  baked-in filter advice. Add a typed helper only if observation shows the agent
-  repeatedly fumbles the shell boilerplate.
-</p>
-<div class="box callout">
-  <h4>Prerequisite: the prompt and tool descriptions must teach monitors</h4>
-  <p>
-    Explorative minimalism (&sect;5) drops <em>prompt nannying</em> &mdash; micro-advice
-    like &ldquo;always use <code>grep --line-buffered</code>.&rdquo; It does
-    <strong>not</strong> drop the baseline conceptual explanation the feature needs to
-    be usable at all. Before monitors ship, the <strong>system prompt</strong> and the
-    <strong><code>monitor</code>/<code>stop_monitor</code> tool descriptions</strong>
-    must clearly convey:
-  </p>
-  <ul>
-    <li><strong>What a monitor is</strong> &mdash; an async, out-of-band channel;
-      <code>monitor()</code> returns immediately and stdout lines arrive later as
-      injected user messages.</li>
-    <li><strong>The seam guarantee</strong> &mdash; no preemption; a monitor never
-      interrupts an in-flight message, so the agent can rely on atomic cycles.</li>
-    <li><strong>When to use which</strong> &mdash; monitors vs the synchronous
-      <code>wait_for_output</code> (see the open decision in &sect;12); the agent should
-      not reach for the blocking tool when an async wait will do.</li>
-    <li><strong>Stop discipline</strong> &mdash; monitors must be stopped with
-      <code>stop_monitor(id)</code> when no longer needed (session-end reaping is a
-      backstop, not licence to leak).</li>
-  </ul>
-  <p class="meta">
-    This is load-bearing for <em>usability</em>, distinct from the public-serving rails
-    we drop. Treat it as a deliverable alongside the tools (Phase&nbsp;1) and verify
-    with a <code>MockProvider</code> end-to-end test that the agent reaches for monitors
-    where appropriate.
-  </p>
-</div>
-
-<h2 id="decisions">6. Signed-off decisions</h2>
-<table>
-  <tr><th>#</th><th>Decision</th></tr>
-  <tr><td>1</td><td><strong>No auto-stop.</strong> Runaway monitors are caught by visibility, not automation. Visible in both logs <em>and</em> UI. The UI is what <em>earns</em> the right to skip auto-stop.</td></tr>
-  <tr><td>2</td><td><strong>Batch at seam.</strong> Everything pending is delivered together at the next boundary. Canonical events stay distinct (per source); the <em>context projection</em> merges consecutive <code>user</code>-role content into one API message.</td></tr>
-  <tr><td>3</td><td><strong>stderr → <code>events.jsonl</code> (forensics paramount), but excluded from the context projection.</strong> New event class: <em>diagnostic / non-projected</em> — in the canonical log + UI, never in the model context (no token cost, never wakes the agent). Accept a chatty log; <strong>coalesce later</strong>; no stable event format needed yet.</td></tr>
-  <tr><td>4</td><td><strong>Unify the pending queue.</strong> Monitor lines <em>and</em> human input flow through one queue. Guiding principle: <em>"when I (the human) queue a message, I am a human monitor."</em> Items tagged by source (human / monitor-id). Default = enqueue (delivered at next seam, no preempt). <strong>Explicit interrupt (abort)</strong> stays a separate path (Enter = enqueue; explicit interrupt = abort/preempt the in-flight cycle).</td></tr>
-  <tr><td>5</td><td><strong>Visualize the pending queue</strong> in the UI, including human messages.</td></tr>
-  <tr><td>6</td><td><strong>Unexpected/killed terminations surface into context</strong> (agent must learn so it does not wait forever). Clean agent-initiated stops need not.</td></tr>
-  <tr><td>7</td><td><strong>Collapsed-badge first enhancement = events-fired/activity</strong> (the runaway detector), ahead of timing stats.</td></tr>
-  <tr><td>8</td><td><strong>Monitor liveness is runtime-only</strong>, never reconstructed from the log. But <strong>forensics is fully in the log.</strong></td></tr>
-  <tr><td>9</td><td><strong>Clean shutdown</strong> kills all monitors + best-effort writes <code>MonitorStopped</code>. <strong>Hard crash</strong> leaves a dangling <code>MonitorStarted</code> — that is intended forensic signal, not a bug.</td></tr>
-  <tr><td>10</td><td><strong>Resume forks a new session</strong> (see code facts); no live-monitor inheritance; nothing to reconcile.</td></tr>
-  <tr><td>11</td><td><strong>Headless</strong> = benchmark-only, bounded by an external time limit + session-end cleanup. Residual token-burn risk from a runaway monitor = <em>observe, don't guard</em>.</td></tr>
-</table>
-
-<h2 id="layers">7. Layer mapping (Contract Authority — types are the schema)</h2>
-<div class="box warn">
-  <strong>Contract rule (from AGENTS.md):</strong> the Rust <code>OmegaEvent</code> in
-  <small class="path">crates/omega-types/src/events.rs</small> is the canonical schema.
-  Persistence, WS protocol, and UI are derived projections. A <em>semantic</em> change
-  must get a <em>syntactic</em> change (new variant), not a silent alias. Update the UI
-  to match the types — never the reverse.
-</div>
-<table>
-  <tr><th>Layer</th><th>What lives here</th></tr>
-  <tr><td><strong>Canonical <code>OmegaEvent</code></strong></td>
-    <td><code>MonitorStarted</code>, <code>MonitorDelivery</code> (the batched synthetic message, projects <code>role:user</code>), <code>MonitorStderr</code> (diagnostic, non-projected), <code>MonitorStopped</code>. See §8.</td></tr>
-  <tr><td><strong>Persistence</strong></td>
-    <td><code>events.jsonl</code> = <em>all</em> events. <code>context.jsonl</code> = <em>derived projection</em>: a <strong>per-record</strong> log (each record keyed by its own <code>ContextHash</code>) that <strong>excludes</strong> <code>MonitorStderr</code>. (<code>events.jsonl</code> ⊋ <code>context.jsonl</code>.) The <strong>merge of consecutive <code>user</code>-role records into one API message is a separate request-assembly step</strong> — <code>project_messages()</code> in <small class="path">crates/omega-agent/src/agent.rs</small>, applied when the <code>LlmRequest</code> is built, not when <code>context.jsonl</code> is written. (Anthropic combines consecutive same-role messages server-side anyway; doing it client-side just makes the local view match.) The per-record log is left un-merged so the <code>ContextHash</code> foreign keys stay stable.</td></tr>
-  <tr><td><strong><code>WsMessage</code></strong> (ephemeral; may carry extra fields)</td>
-    <td><p><strong>Phase&nbsp;3 (done):</strong> <code>WsMessage::MonitorRoster { monitors: Vec&lt;MonitorRosterItem&gt; }</code> &mdash; a transport-only projection of <code>MonitorManager::roster()</code>. <strong>NOT an <code>OmegaEvent</code></strong>; never written to <code>events.jsonl</code>. Pushed (a)&nbsp;on client connect/reconnect when a session is active, (b)&nbsp;after reset, (c)&nbsp;after resume, (d)&nbsp;right after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event is forwarded in the streaming task (seam-aligned updates, not per-line streaming). Wire shape: <code>{ type: &ldquo;monitor_roster&rdquo;, monitors: [ { id, description, command, status: &ldquo;running&rdquo;|&ldquo;stopped&rdquo;, startedAt, firedCount, stderrTail: string[] } ] }</code>.</p><p><strong>Deferred:</strong> pending-queue contents tagged by source; UI&rarr;server <code>KillMonitor(id)</code> control frame.</p></td></tr>
-  <tr><td><strong>UI</strong></td>
-    <td><p><strong>Phase&nbsp;3 (done):</strong> Badge shown; shows <code>N running</code> + <code>M fired</code> (total <code>fired_count</code> across all monitors); click opens modal with roster table (id, description, command, status chip, started_at, fired_count, stderr tail &le;20 lines). Components: <code>MonitorsBadge</code> / <code>MonitorsModal</code> (<small class="path">frontends/leptos/src/monitors_panel.rs</small>); <code>roster</code> signal in <code>SessionStore</code> updated by the new WS message; reset on <code>ResetDone</code>.</p><p><strong>Phase&nbsp;5 (done):</strong> Badge is now <strong>always-visible</strong> (never hidden); idle label "Monitors" when roster is empty; modal shows empty-state message when no monitors are running. See &sect;9 for design rationale.</p><p><strong>Deferred:</strong> Kill button (deferred). <strong>Queue visualisation: <span class="keep">✔ IMPLEMENTED (§15 U1)</span></strong> &mdash; see the <em>Queue visualisation</em> subsection below. <strong>Deferred:</strong> Real-time per-line badge updates. See &sect;9 for notes.</p></td></tr>
-</table>
-
-<h2 id="schema">8. Event schema (implemented — see <small class="path">events.rs</small>)</h2>
-<p class="meta">The sketch below predates Phase&nbsp;0 and is illustrative only; the authoritative schema is in <small class="path">crates/omega-types/src/events.rs</small>. Note the shipped <code>MonitorDelivery</code> is monitor-sourced only (human input stayed <code>UserMessage</code>) — the unified model (&sect;15) revisits that choice.</p>
-<p>Field names illustrative; the point is the <em>variant boundaries</em>:</p>
-<pre><code>// canonical OmegaEvent variants (camelCase on the wire)
-MonitorStarted { id, description, command, time }
-MonitorDelivery {                       // drained at a seam; projects role:user
-    time,
-    items: [ { source, lines } ]        // source = Human | Monitor(id); per-source attribution
-}                                        // (human messages MAY stay their existing user-message
-                                         //  event, drained alongside — see open item)
-MonitorStderr  { id, chunk, time }       // DIAGNOSTIC: in events.jsonl, NOT in context.jsonl
-MonitorStopped { id, reason, exit_code, time }
-                                         // reason = StoppedByAgent | StoppedByUser | ProcessExited | ProcessCrashed | StoppedBySessionEnd
-</code></pre>
+<h2 id="codefacts">3. Resume map (where things live)</h2>
 <ul>
-  <li>The context fold must <strong>skip</strong> <code>MonitorStderr</code>.</li>
-  <li><code>MonitorDelivery</code> (and any human user message drained with it) projects to
-    <code>role:user</code>; consecutive user-role events merge into one API message at
-    the projection boundary (satisfies role alternation + "batch at seam").</li>
-  <li>Unexpected <code>MonitorStopped</code> (<code>StoppedByUser</code>/<code>ProcessCrashed</code>/
-    <code>ProcessExited</code> while the agent depends on it) should be projected into
-    context so the agent learns; <code>StoppedByAgent</code> need not (agent already
-    knows it called <code>stop_monitor</code>), and <code>StoppedBySessionEnd</code>
-    need not (session is terminating — no loop to notify).</li>
+  <li>Canonical events: <small class="path">crates/omega-types/src/events.rs</small>. Event sink:
+    <small class="path">crates/omega-agent/src/event_sink.rs</small>. Agent loop (split into modules):
+    <small class="path">crates/omega-agent/src/agent/</small> — <code>run_loop.rs</code>
+    (<code>run</code> + the large <code>drive_turn</code>), plus <code>inject.rs</code>,
+    <code>lifecycle.rs</code>, <code>resume.rs</code>, <code>context.rs</code>,
+    <code>stream_assembly.rs</code>, <code>util.rs</code>.</li>
+  <li>Monitor runtime: <small class="path">crates/omega-tools/src/monitors.rs</small>
+    (<code>MonitorManager</code>); tools in <small class="path">crates/omega-tools/src/tools/</small>.
+    Tool registry (single source of truth):
+    <small class="path">crates/omega-types/src/tools.rs</small>.</li>
+  <li>Server: <small class="path">crates/omega-server/src/router.rs</small>
+    (<code>handle_resume_session</code>; <code>should_replay</code> /
+    <code>REPLAY_EXCLUDE = ["ready","text"]</code>; <code>request_abort()</code>); WS transport
+    <small class="path">crates/omega-server/src/ws_message.rs</small>. Frontend monitor UI:
+    <small class="path">frontends/leptos/src/monitors_panel.rs</small>; protocol
+    <small class="path">frontends/leptos/src/protocol.rs</small>.</li>
+  <li>AGENTS.md essentials: branch <code>develop</code>; finish with
+    <code>git add -A &amp;&amp; git commit</code> (pre-commit hook runs the gate; never
+    <code>--no-verify</code>); targeted mutation testing per changed file with a Justfile recipe; tests
+    as end-to-end as possible (omega-tools via <code>execute_tool</code>, omega-agent via
+    <code>Agent::send_message</code> + <code>MockProvider</code>); declare only the cargo features a
+    crate actually uses.</li>
 </ul>
-
-<h2 id="ui">9. UI design</h2>
-<div class="box ok"><strong>Phase 3 &mdash; read-only roster surface implemented. Server-authoritative push. Phase 5 &mdash; badge now always-visible/discoverable.</strong></div>
-<div class="box callout">
-<strong>Standing UI principle &mdash; review/status affordances default to <em>always-visible</em>.</strong> Any badge or panel that surfaces live state for human review or steering &mdash; the <strong>monitor roster</strong>, the <strong>queue visualisation</strong>, and future equivalents &mdash; must be <strong>always visible with an explicit empty state</strong>, never hidden-when-empty. Hiding the entry point on an empty collection makes the feature undiscoverable and untestable &mdash; which has bitten us twice (the monitor badge, then the queue badge), since the empty state is exactly when a reviewer needs to find the control to confirm it works. Conditional hiding is only acceptable when the capability is genuinely <em>disabled</em> for the session (e.g. a tool not in the selection), never merely because it is <em>idle</em>.</div>
-<ul>
-  <li><strong>Collapsed badge</strong> (<strong>done</strong>) &mdash; <strong>always visible</strong> (never hidden, even when the roster is empty); shows "Monitors" in the idle state so the feature is discoverable, <code>N running</code> when monitors are active, and <code>M fired</code> for the total events-fired count (runaway backstop). Click opens the modal. Implemented in <code>MonitorsBadge</code> (<small class="path">frontends/leptos/src/monitors_panel.rs</small>). The always-visible approach is preferred over a gated badge: monitors are default-on, the badge is the only entry point to the modal, and hiding it on an empty roster makes the feature invisible to new users. If the store ever cleanly surfaces whether monitors are disabled in the tool selection, the badge <em>could</em> be conditionally hidden &mdash; but always-visible is the correct default.</li>
-  <li><strong>Modal</strong> (<strong>done</strong>) &mdash; roster table showing, for each monitor: id, description, command, status chip (running/stopped), started_at, fired_count, and a scrollable stderr tail (&le;20 lines). Closes on click-outside or the &times; button. Implemented in <code>MonitorsModal</code>.</li>
-  <li><strong>Server-authoritative push</strong> (<strong>done</strong>) &mdash; the server pushes a fresh roster snapshot (<code>WsMessage::MonitorRoster</code>) on client connect (when a session is active), after reset, after resume, and right after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event is forwarded. The frontend stores it in a <code>roster: RwSignal&lt;Vec&lt;MonitorRosterEntry&gt;&gt;</code> in <code>SessionStore</code>, reset on <code>ResetDone</code>. No client polling; no separate query endpoint.</li>
-</ul>
-<div class="box warn">
-  <h4>Deferred (not yet scheduled): kill button / KillMonitor</h4>
-  <ul>
-    <li><strong>Kill button / <code>KillMonitor</code> control frame.</strong> When picked up it needs: a new <code>MonitorManager</code> method that does the Running&rarr;Stopped status CAS, kills the process tree, enqueues a <code>PendingItem::Stopped{ reason: StoppedByUser, &hellip; }</code> (so the loop drains it into <code>MonitorStopped(StoppedByUser)</code> &mdash; single-writer preserved), and fires the roster-changed notify (so a loop parked on the last monitor wakes). Note <code>MonitorStopReason::StoppedByUser</code> exists in the schema but is currently unused. A <code>ClientFrame::KillMonitor{id}</code> would dispatch to it (mirror <code>handle_abort</code>). <strong>Deferred (not yet scheduled).</strong></li>
-    <li><strong>Live pending-queue visualisation:</strong> first-cut <span class="keep">✔ IMPLEMENTED (§15 U1, human-only)</span>; monitor sources <span class="keep">✔ IMPLEMENTED (§15 U2)</span> &mdash; <code>source = "monitor:&lt;id&gt;"</code>, WS push on monitor enqueue via <code>InputQueue::on_change</code>.  Sub-seam real-time streaming remains deferred.</li>
-    <li><strong>Real-time (per-line) badge updates</strong> &mdash; seam-aligned updates are sufficient now. <strong>Deferred.</strong></li>
-  </ul>
-</div>
-
-<h2 id="lifecycle">10. Lifecycle, shutdown, resume, headless</h2>
-<ul>
-  <li><strong>Within a running session:</strong> monitors are live runtime entities in the in-memory roster.</li>
-  <li><strong>Clean shutdown:</strong> kill all monitor process trees + best-effort write <code>MonitorStopped</code> for forensics.</li>
-  <li><strong>Hard crash / kill -9:</strong> dangling <code>MonitorStarted</code> with no <code>Stopped</code>; a forensic reader infers "process died here." Acceptable — intended signal.</li>
-  <li><strong>Resume</strong> (<code>handle_resume_session</code>): forks a <em>new</em> session from a resumption basis; does <strong>not</strong> inherit live monitors. Nothing to reconcile. Verify nothing tries to revive monitors from the prior log.</li>
-  <li><strong>WS reconnect/replay</strong> (<code>should_replay</code>): re-sends logged events to render the view; live roster reflects whatever the running process currently holds (empty after a restart). Liveness is never reconstructed.</li>
-  <li><strong>Headless:</strong> benchmark-only, bounded by an external time limit + session-end cleanup. No human-kill needed there.</li>
-</ul>
-
-<h2 id="steps">11. Implementation steps (phased)</h2>
-<div class="box ok"><strong>Order is contract-first:</strong> schema before runtime before UI. Run targeted mutation testing (<code>cargo mutants -p &lt;crate&gt; --cap-lints=true --file &lt;path&gt;</code>) after each non-trivial logic chunk; add a Justfile recipe per run (template: <code>mutants-system-prompt-guard</code>). Tests end-to-end: omega-tools via <code>execute_tool</code>, omega-agent via <code>Agent::send_message</code> + <code>MockProvider</code>.</div>
-<ol>
-  <li><strong>Phase 0 — Schema. <span class="keep">✔ DONE</span> (commit <code>0edc8d5</code>).</strong> Add the four <code>OmegaEvent</code> variants in
-    <small class="path">crates/omega-types/src/events.rs</small>. Mark
-    <code>MonitorStderr</code> non-projected in the context fold. Ensure the projection
-    merges consecutive user-role events into one API message. Tests: fold invariants,
-    projection merge, non-projection of stderr. <em>As built:</em> the merge is a request-assembly step (<code>project_messages()</code>), not a property of <code>context.jsonl</code> on disk — see §7. §12 decisions locked: monitor-only delivery items; <code>StoppedByAgent</code> not projected, other stop reasons projected; <code>MonitorStarted</code> not resurfaced.</li>
-  <li><strong>Phase 1 — Monitor runtime. <span class="keep">✔ DONE</span>.</strong> Process manager (<code>MonitorManager</code>,
-    <small class="path">crates/omega-tools/src/monitors.rs</small>): spawn shell command in its own
-    process group, stdout line → in-memory pending queue, stderr line → queue (chatty; becomes
-    <code>MonitorStderr</code> on Phase 2 drain) + bounded roster tail, process-tree track + kill
-    (<code>kill_group</code>) on <code>stop()</code> and <code>shutdown()</code> (session-end reaping; no orphans).
-    Ephemeral roster (id, description, command, status, start time, event-fired count, stderr tail).
-    Tools <code>monitor(description, command)</code> / <code>stop_monitor(id)</code> &mdash; both return
-    immediately; <code>MonitorStarted</code> / <code>MonitorStopped(StoppedByAgent)</code> are emitted via the
-    tool result&rsquo;s <code>extra_events</code> (single-writer: the agent appends, the monitor never does);
-    stopping a dead/unknown monitor is a no-op. <em>Ownership + clean-cutover decisions: see the Phase 1
-    build note in &sect;4.</em> The tools are intentionally <strong>not</strong> exposed to the model yet
-    (clean cutover). E2E tests via <code>execute_tool</code>; mutation recipes <code>mutants-monitors</code> /
-    <code>mutants-monitor-tools</code> (all caught/unviable).</li>
-  <li><strong>Phase 2 — Loop integration. <span class="keep">✔ DONE</span>.</strong>
-    The agent owns one <code>Arc&lt;MonitorManager&gt;</code> per session
-    (<small class="path">agent.rs</small>), cloned into every <code>ToolCtx</code> it
-    builds (the Phase 1 <code>monitors: None</code> is gone). <strong>Drain at the two
-    seams</strong> via <code>Agent::drain_monitors()</code>: <em>Seam&nbsp;B</em> right after
-    each tool_result (before the next model call) and <em>Seam&nbsp;A</em> after
-    <code>end_turn</code>. Stdout batches per-monitor into a projected
-    <code>MonitorDelivery</code> (<code>role: user</code>, merged with the preceding
-    tool_result user message by <code>project_messages()</code> so the
-    tool_use/tool_result pair is never split); stderr becomes a non-projected
-    <code>MonitorStderr</code>. <strong>Exit-status capture</strong> (now in scope): the
-    waiter classifies <code>ProcessExited</code> (normal exit, any code) vs
-    <code>ProcessCrashed</code> (signal death, no exit code) and enqueues a new
-    <code>PendingItem::Stopped{monitor_id, reason, exit_code}</code> — single-writer
-    preserved: the waiter only enqueues, the loop injects via
-    <code>inject_monitor_stopped</code> (projects per <code>should_project()</code>). A
-    natural Running→Stopped transition also calls <code>kill_group</code> to reap
-    orphaned grandchildren (decision below); the SIGKILL the waiter then observes for an
-    agent-/shutdown-killed monitor is suppressed (it was already <code>Stopped</code>), so
-    no spurious <code>ProcessCrashed</code>. <strong>Parking select</strong>: when a cycle would
-    end, the loop parks iff a live monitor or queued item exists, else terminates (never
-    hangs when nothing can fire). While parked it blocks on a select over
-    <code>{human (ControlHandle continue/abort), queue (item-notify), roster-changed}</code>;
-    <em>roster-changed</em> fires from <code>stop()</code>/<code>shutdown()</code> when the
-    live set shrinks <em>without</em> a drainable item (e.g. a UI kill while parked) so the
-    parked loop re-evaluates park-vs-terminate. On wake it drains and runs another
-    monitor-driven cycle (projected content) or re-parks (stderr only). <strong>Shutdown</strong>:
-    <code>Agent::shutdown_monitors()</code> + a <code>Drop</code> backstop call
-    <code>MonitorManager::shutdown()</code> on session end (reaps all trees). <strong>Cutover
-    complete</strong>: <code>monitor</code>/<code>stop_monitor</code> are in
-    <code>ALL_TOOL_NAMES</code> + the <code>all</code> preset (opt-in; <em>not</em> default —
-    decision below), their schema fns emit through <code>tool_definitions</code>, and the
-    teaching copy lives in the system prompt (<code>monitor_addendum</code>) and both tool
-    descriptions. The feature is now <strong>fully wired</strong>. E2E tests via
-    <code>Agent::send_message</code>+<code>MockProvider</code>; mutation recipes
-    <code>mutants-agent-projection</code>, <code>mutants-monitors</code>,
-    <code>mutants-system-prompt</code>, <code>mutants-schemas</code> (all caught/unviable).
-    <em>Deviation from the original sketch:</em> human input is <strong>not</strong> yet
-    routed through the unified queue — it remains the existing per-message
-    <code>send_message</code> path, with the parked loop woken via the
-    <code>ControlHandle</code> (continue = interjection, abort = terminate). Routing
-    free-typed input through the queue and surfacing the parked state in the UI is folded
-    into Phase 3; the three logical wake sources all exist today.</li>
-  <li><strong>Phase 3 &mdash; WS + UI. <span class="keep">&#x2714; DONE</span> (read-only roster surface).</strong>
-    <p><strong>Scope:</strong> server-authoritative ephemeral roster push. <code>WsMessage::MonitorRoster</code> variant added to the transport layer (never an <code>OmegaEvent</code>; never persisted to <code>events.jsonl</code>). The server stashes <code>Arc&lt;MonitorManager&gt;</code> in <code>ActiveSession</code> and pushes a fresh snapshot (a)&nbsp;on client connect/reconnect, (b)&nbsp;after reset/resume, and (c)&nbsp;after each <code>MonitorStarted</code>/<code>MonitorDelivery</code>/<code>MonitorStderr</code>/<code>MonitorStopped</code> event in the streaming task. Frontend: <code>roster: RwSignal</code> in <code>SessionStore</code>; <code>MonitorsBadge</code> (header badge, hidden when empty, shows running count + total fired count) + <code>MonitorsModal</code> (roster table with all fields) in <small class="path">frontends/leptos/src/monitors_panel.rs</small>. Tests: WS-level tests (roster sent on connect-with-session; roster not in events.jsonl), unit tests for <code>is_monitor_event</code> and <code>roster_snapshot_msg</code>, snapshot tests for badge/modal. Mutation recipes: <code>mutants-monitor-roster-push</code> (3 mutants, 2 caught, 1 unviable), <code>mutants-monitor-ws-message</code> (0 mutants &mdash; <code>serde_json::json!</code> macros are not mutated; wire-format covered by unit tests that snapshot the exact JSON output).</p>
-    <p><strong>Deferred (see &sect;9):</strong> Kill button / <code>KillMonitor</code> control frame; live pending-queue visualization; real-time per-line badge updates.</p></li>
-  <li><strong>Phase 4 — Shutdown / resume / headless. <span class="keep">&#x2714; DONE</span>.</strong>
-    <p><strong>Scope:</strong> (a) <code>MonitorStopReason</code> rename + new variant; (b) shutdown logging; (c) resume-safety proof; (d) headless CLI teardown.</p>
-    <p><strong>(a) <code>MonitorStopReason</code> rename + <code>StoppedBySessionEnd</code>.</strong>
-    The original variant names (<code>AgentStopped</code>, <code>UserKilled</code>, <code>Crashed</code>)
-    were renamed to <code>StoppedByAgent</code>, <code>StoppedByUser</code>, <code>ProcessCrashed</code>
-    to disambiguate actor vs event.  A new variant <code>StoppedBySessionEnd</code>
-    was added (wire value: <code>stopped_by_session_end</code>).
-    Per the loud-schema-change rule: the teardown path is a <em>different actor</em>
-    (session lifecycle) from an explicit <code>stop_monitor</code> call (<code>StoppedByAgent</code>)
-    — they must not share a variant.  Old logs with the previous wire values
-    (<code>agent_stopped</code>, <code>user_killed</code>, <code>crashed</code>) fail loudly on
-    deserialization (no defensive <code>#[serde(alias)]</code>) as intended.
-    <code>should_project()</code> returns <code>false</code> for both <code>StoppedByAgent</code> (agent
-    already knows) and <code>StoppedBySessionEnd</code> (session is terminating, no loop to
-    notify); <code>true</code> for <code>StoppedByUser</code>, <code>ProcessExited</code>, <code>ProcessCrashed</code>.</p>
-    <p><strong>(b) Shutdown logging.</strong>
-    <code>Agent::shutdown_and_log_monitors()</code> kills every live monitor's process tree
-    (via the existing <code>MonitorManager::shutdown()</code> CAS) and persists a
-    <code>MonitorStopped(StoppedBySessionEnd)</code> event for each.  Single-writer
-    preserved: the server calls <code>request_abort()</code> first, ensuring the agent loop
-    has stopped writing before teardown writes.  Wired at
-    <small class="path">omega-server/src/router.rs</small> (<code>handle_reset</code> and
-    <code>handle_resume_session</code>, before the slot is replaced) and
-    <small class="path">crates/omega-cli/src/main.rs</small> (after the stream drains,
-    before returning the exit code).  <code>Agent::drop</code> remains a kill-only backstop
-    (no logging — Drop is synchronous and has no access to the event store).</p>
-    <p><strong>(c) Resume-safety proof.</strong>
-    A resumed session always gets a fresh empty <code>MonitorManager</code>;
-    <code>handle_resume_session</code> only replays prior events into LLM context,
-    never calls <code>monitor_start</code> or spawns processes.
-    Two tests in <small class="path">omega-server/src/router.rs</small> prove this:
-    <code>resume_does_not_revive_completed_monitor</code> (prior session has
-    <code>MonitorStarted</code>+<code>MonitorStopped</code>) and
-    <code>resume_does_not_revive_dangling_monitor</code> (prior session has only
-    <code>MonitorStarted</code>, simulating a crash before clean shutdown).
-    Both assert an empty roster after resume.</p>
-    <p><strong>(d) Headless CLI teardown.</strong>
-    Tests in <small class="path">crates/omega-agent/tests/internal.rs</small>:
-    <code>shutdown_and_log_monitors_kills_process_and_persists_session_end_stop</code>
-    (process killed + event logged) and
-    <code>shutdown_and_log_monitors_does_not_double_log_already_stopped_monitor</code>
-    (CAS guard prevents double-logging for naturally-exited monitors).</p></li>
-</ol>
-
-<h2 id="sst">12. Single-source-of-truth refactor &amp; monitor promotion (implemented)</h2>
-<p>This was an unscheduled interlude refactor between Phases 3 and 4 — NOT Phase 4 itself. It completed the following structural changes:</p>
-<ul>
-  <li><strong>Single source of truth — tool registry moved to <small class="path">crates/omega-types/src/tools.rs</small>.</strong>
-    Previously, tool-name lists (<code>DEFAULT_TOOL_NAMES</code>, <code>ALL_TOOL_NAMES</code>,
-    <code>REPL_CENTRIC_TOOLS</code>), the <code>Preset</code> struct, <code>PRESETS</code>,
-    <code>preset_by_id</code>, and the pure selection helpers
-    (<code>default_tool_selection</code>, <code>resolve_preset</code>,
-    <code>serialize_selection</code>, <code>parse_stored_selection</code>) existed in
-    <em>three</em> places: <small class="path">omega-tools/src/schemas.rs</small>,
-    <small class="path">frontends/leptos/src/protocol.rs</small>, and
-    <small class="path">frontends/leptos/src/picker.rs</small>.  They are now in
-    <small class="path">omega-types/src/tools.rs</small> only, with
-    <code>pub use</code> re-exports in the other two files so existing call sites
-    continue to compile.  Structural drift (like the Phase-2 bug where monitors
-    were added to the backend but not the frontend) is now structurally impossible
-    — there is exactly one list.</li>
-  <li><strong>Monitors promoted to default across all three presets.</strong>
-    <code>DEFAULT_TOOL_NAMES</code> grew from 12 to 14 tools
-    (<code>monitor</code> and <code>stop_monitor</code> added).  <code>REPL_CENTRIC_TOOLS</code>
-    grew from 3 to 5 tools (same additions).  <code>ALL_TOOL_NAMES</code> stays at 15
-    (= default 14 + <code>python_repl</code>).  All three presets now include monitor tools:
-    Standard (14), All (15), REPL-centric (5).</li>
-  <li><strong>Off-switch: Monitors category in the UI picker.</strong>
-    A new &ldquo;Monitors&rdquo; category was added to <code>TOOL_CATEGORIES</code> in
-    <small class="path">frontends/leptos/src/picker.rs</small>, exposing
-    <code>monitor</code> and <code>stop_monitor</code> as per-tool checkboxes.  Users can
-    deselect them to create a Custom preset without monitors.</li>
-  <li><strong>Consistency guard test.</strong> A suite of structural invariant tests was added
-    to <small class="path">crates/omega-types/src/tools.rs</small>: every preset’s tools
-    are a subset of <code>ALL_TOOL_NAMES</code>; <code>ALL_TOOL_NAMES</code> equals
-    <code>DEFAULT_TOOL_NAMES</code> plus <code>python_repl</code>; both monitor tools are
-    present in all three presets; every picker category tool is known.  These tests
-    would have caught the original Phase-2 drift at CI time.</li>
-</ul>
-
-<h2 id="open">13. Open items (deferred, non-blocking)</h2>
-<ul>
-<li><strong>Action vs. effect completeness (deferred inspection).</strong>
-  The durable event log is currently inconsistent about recording the
-  <em>action</em> (when something happened in the world, or was requested) versus
-  the <em>effect</em> (when the system acted on it). The cleanest illustration is
-  monitor <strong>stdout</strong>: the line’s queue time &mdash; the action &mdash; is
-  computed as <code>InputQueueItem.enqueued_at</code> and shown in the live
-  queue-viz, but it is <em>discarded at delivery</em>; only
-  <code>MonitorDeliveryEvent.time</code> (the effect, stamped at the seam) is
-  persisted. So we already know when the line arrived and we throw it away when we
-  write the durable event. &sect;17 pushes the opposite way for other cases
-  (stderr and <code>HaltRequested</code> recorded at action-time;
-  <code>ModelChanged</code>’s action/click split from its turn-aligned effect),
-  which makes the inconsistency worth a deliberate policy. <strong>Open question,
-  do not resolve now:</strong> always record action <em>and</em> effect as separate
-  events? Sometimes only one &mdash; and by what rule? The inspection step:
-  enumerate every <code>OmegaEvent</code> variant, classify whether it captures the
-  action, the effect, or both, and decide a documented policy. Don’t overthink it
-  now &mdash; note it and observe.</li>
-<li><strong>One-shot vs streaming split (deferred design discussion).</strong>
-  Claude routes &ldquo;notify me once&rdquo; (e.g. <code>sleep 20 &amp;&amp; echo
-  done</code> &mdash; a single completion) to <code>Bash run_in_background</code>,
-  and reserves the <em>Monitor</em> tool for per-occurrence streaming
-  (<code>tail -f</code>, watchers). Omega collapses both into one
-  <code>monitor</code> tool, so our <code>sleep&hellip;echo</code> test case is a
-  one-shot Claude would <em>not</em> run via Monitor. Revisit whether Omega should
-  split the two, plus Claude's default <code>timeout_ms</code> (5&nbsp;min) +
-  <code>persistent</code> opt-out (ties to &sect;5's dropped timeout/auto-stop
-  rails). Not now &mdash; observe first.</li>
-  <li><strong>NUDGING REVAMP (implemented).</strong>
-    Real sessions showed the model mis-attributing monitor output to the human and fabricating
-    output (&sect;2 note). Implemented in Omega's own wording:
-    <ul>
-      <li><strong>Injected-message framing (<code>agent.rs</code>):</strong> replaced the weak
-        <code>[Monitor &hellip;]</code> bracket markers with
-        <code>&lt;monitor id=&ldquo;&hellip;&rdquo;&gt;&hellip;&lt;/monitor&gt;</code> for stdout deliveries
-        and the self-closing
-        <code>&lt;monitor-stopped id=&ldquo;&hellip;&rdquo; reason=&ldquo;&hellip;&rdquo; [exit-code=&ldquo;N&rdquo;]/&gt;</code>
-        for stop notifications. These survive merging into a user turn next to real human text.
-        The <code>OmegaEvent</code> schema is unchanged; this is a presentation change only.</li>
-      <li><strong>Tool description (<code>schemas.rs</code>):</strong> rewrote the <code>monitor</code>
-        description to carry: (1) output is NOT from the human user; (2) FABRICATION IS FORBIDDEN;
-        (3) after starting, END YOUR TURN and let the session park; (4) &ldquo;silence is not
-        success&rdquo; + line-buffering guidance. Updated <code>stop_monitor</code> to reference
-        the <code>&lt;monitor-stopped&hellip;/&gt;</code> tag.</li>
-      <li><strong>System-prompt addendum (<code>system_prompt.rs</code>):</strong> reinforced
-        <code>monitor_addendum()</code> with the three behavioral rules
-        (not-the-user / don't-fabricate / end-turn-and-wait) and the
-        <code>&lt;monitor id=&hellip;&gt;</code> tag reference. <code>has_monitor_tools</code> gating retained.</li>
-      <li><strong>Roster table CSS (<code>style.css</code>):</strong> added
-        <code>.monitors-table</code> + <code>.mt-*</code> cell rules (100&nbsp;% width, border-collapse,
-        padding, header emphasis, Command-column word-wrap) so columns align in the modal.</li>
-    </ul>
-    Behavioral verification is out of automated scope; validate live with a
-    <code>monitor(&ldquo;sleep 20 &amp;&amp; echo done&rdquo;)</code> scenario on Sonnet and Opus.</li>
-  <li><strong>MINIMAL TOOL-RESULT (implemented, &sect;2 finding #2).</strong>
-    Sonnet called <code>stop_monitor</code> ~3&nbsp;s after starting a monitor because the
-    <code>monitor()</code> tool result ended with &ldquo;Stop it with stop_monitor when no
-    longer needed&rdquo; &mdash; the exact cue that tipped it into acting. Stripped the result
-    to neutral bare data: <code>"Monitor `{id}` started."</code> All behavioural
-    guidance remains in the tool description (<code>schemas.rs</code>) and the
-    system-prompt addendum (<code>system_prompt.rs</code>). Test coverage: the
-    <code>monitor_returns_immediately_with_id_and_logs_started</code> test now asserts
-    the result (a)&nbsp;contains the monitor id and (b)&nbsp;does <em>not</em> contain
-    <code>stop_monitor</code> or &ldquo;no longer needed&rdquo;.</li>
-  <li><strong>Reconsider auto-stop of chatty monitors and line-buffering rails (open):</strong>
-    minimal script guidance (line-buffering/flush) has been added to the tool description;
-    auto-stop of runaway monitors is still open. &ldquo;Explorative minimalism&rdquo; dropped both;
-    Claude&nbsp;Code keeps both. Re-add on this evidence, or keep observing &mdash; decide deliberately.</li>
-  <li><strong>stderr coalescing granularity</strong> — by-lines vs by-time. Decided: accept chatty log for now, optimize later; no stable format required.</li>
-  <li><strong>Human-in-delivery representation</strong> — does <code>MonitorDelivery</code> aggregate human + monitor items in one event, or does the human message stay its existing user-message event drained <em>alongside</em> a monitor delivery? Lean: keep them as <em>separate</em> canonical events; the projection merges them. (Either way the UI tags by source.)</li>
-  <li><strong>Exact <code>reason</code> enum</strong> for <code>MonitorStopped</code> and which reasons project into context (lean: all "unexpected" ones do).</li>
-  <li><strong>Does <code>MonitorStarted</code> re-surface into context?</strong> Lean: no — the tool result already informs the agent; the event is for log/causality.</li>
-  <li><strong>Retire / reposition <code>wait_for_output</code>?</strong> Monitors are
-    the async replacement for the synchronous, Seam-B-blocking <code>wait_for_output</code>
-    (&sect;1, the original motivation). <strong>Do not remove it at Phase&nbsp;0</strong>
-    &mdash; that would delete a working capability before its replacement exists, and
-    Phase&nbsp;0 is schema-only. Options once monitors are proven: (a)&nbsp;hard-remove
-    the tool; (b)&nbsp;keep it but drop it from the default tool selection;
-    (c)&nbsp;keep it and note in its description that monitors are preferred for
-    non-blocking waits. Decision deferred until we observe whether the agent still
-    reaches for the blocking tool with monitors available. (Closely tied to the
-    prompt/tool-description prerequisite in &sect;5.)</li>
-  <li><strong>PLANNED: General per-tool toggle mechanism (CLI/non-UI).</strong>
-    Today the only server-side mechanism to change the active tool set is
-    <code>--preset &lt;id&gt;</code> (three coarse presets).  Per-tool toggling is currently
-    UI-only (the picker checkboxes).  A future <code>--tool &lt;name&gt;</code> /
-    <code>--no-tool &lt;name&gt;</code> CLI flag — or a config-file equivalent — would
-    allow headless/scripted sessions to selectively enable or disable individual
-    tools without writing a custom preset.  Out of scope for now.</li>
-  <li><strong>OPEN QUESTION: Should monitors be controllable from inside the Python REPL?</strong>
-    The REPL-centric preset includes <code>monitor</code> and <code>stop_monitor</code>;
-    the agent can call them as normal tools.  A deeper integration would expose
-    the monitor queue as a Python API inside the REPL (e.g.,
-    <code>omega.start_monitor(...)</code>) so that REPL code can react to monitor
-    events within the same Python session.  This is architecturally interesting
-    but out of scope — the tool-call boundary is the correct level of abstraction
-    for now.</li>
-  <li id="empty-response"><strong>EMPTY-RESPONSE CONTINUATION (implemented, §14 agent loop).</strong>
-    Anthropic documents that Claude occasionally returns a response with
-    <em>zero content blocks</em> (no text, no thinking, no tool_use) and
-    <code>stop_reason</code> <code>&ldquo;end_turn&rdquo;</code> <em>or</em>
-    <code>&ldquo;tool_use&rdquo;</code>, particularly after tool results.  Reference:
-    <a href="https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons"
-       target="_blank">Anthropic &mdash; Handling stop reasons</a>
-    (&ldquo;Empty responses with end_turn&rdquo;).
-    <p><strong>Detection:</strong> <code>assistant_blocks.is_empty()</code> after
-    stream assembly, regardless of <code>stop_reason</code>.</p>
-    <p><strong>Handling (NOT a plain retry):</strong> the agent injects a new
-    <em>visible</em> user-turn message (&ldquo;Please continue.&rdquo;) and
-    re-issues the LLM call.  The empty assistant turn is <em>not</em> persisted
-    to context (&ldquo;Claude already decided it&rsquo;s done&rdquo;).  A cap of
-    <code>EMPTY_RESPONSE_CAP&nbsp;=&nbsp;3</code> consecutive injections prevents
-    an infinite loop; a 4th consecutive empty response surfaces
-    <code>AgentError</code>&nbsp;+&nbsp;<code>TurnInterrupted</code>.</p>
-    <p><strong>Visible-vs-synthetic decision (option&nbsp;a):</strong> the
-    continuation is emitted as a plain <code>UserMessage</code> event (simplest;
-    matches the Anthropic docs example).  No new event-schema variant
-    needed.</p>
-    <p><strong>Seam-B note (§15 design input):</strong> the &ldquo;text after
-    <code>tool_result</code>&rdquo; root-cause question (why Claude returns empty
-    responses particularly after tool results) is distinct from this fix and
-    belongs to the Seam-B delivery re-design (§15 Unified Input Model).
-    This entry is the <em>symptom fix</em>; §15 addresses the structural cause.</p>
-  </li>
-</ul>
-
-<h2 id="codefacts">14. Codebase facts gathered (Omega = Rust workspace)</h2>
-<ul>
-  <li>Canonical events: <small class="path">crates/omega-types/src/events.rs</small> — <code>OmegaEvent</code> enum. Already has <code>SessionResumedEvent</code> / <code>SessionResumed</code> variant (<code>resumed_from</code> field, camelCase <code>resumedFrom</code>).</li>
-  <li>Server router: <small class="path">crates/omega-server/src/router.rs</small> — <code>handle_resume_session</code> forks a new session via <code>create_active_session</code>, using <code>extract_resumption_basis</code> + <code>extract_tool_selection</code> from the prior log, recording <code>resumed_from</code>. <code>should_replay</code> / <code>REPLAY_EXCLUDE = ["ready","text"]</code> govern WS replay to reconnecting clients. <code>ClientFrame::ResumeSession</code>. <code>request_abort()</code> exists (winds down an in-flight cycle — the existing transport-level interrupt).</li>
-  <li>WS transport: <small class="path">crates/omega-server/src/ws_message.rs</small> — <code>WsMessage</code> (transport projection; may carry extra ephemeral fields).</li>
-  <li>Process-cleanup precedent to mirror: pi-mono's <code>killProcessTree</code> / detached-PID tracking.</li>
-  <li>AGENTS.md essentials: branch <code>develop</code>; finish with <code>git add -A &amp;&amp; git commit</code> (pre-commit hook runs the gate; never <code>--no-verify</code>); mutation testing per changed file; tests as end-to-end as possible; declare only the cargo features a crate actually uses.</li>
-</ul>
-
-<hr/>
-<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: the monitor core (Phases&nbsp;0&ndash;4), the &sect;12 refactor, and the &sect;15 unified input model are all shipped &mdash; &sect;1&ndash;15 are the architectural record, not open work. &sect;16 (the WS-message mirror) is shipped. <a href="#sink">&sect;17, the event sink</a> &mdash; decoupling event emission from the turn loop so events born outside a turn (monitor stderr, control actions) land in <small class="path">events.jsonl</small> and the UI when they happen &mdash; is shipped as additive Phase&nbsp;A; Phase&nbsp;B (full unification) is the documented-but-unscheduled follow-up. &sect;13 lists remaining soft spots.</p>
-
-<h2 id="unified">15. Unified input model (planned refactor — supersedes &sect;4's parking)</h2>
-
-<p>The parking mechanic (&sect;4) makes &ldquo;a monitor is live&rdquo; masquerade
-as &ldquo;the agent is busy&rdquo;: parking lives <em>inside</em>
-<code>send_message</code>, which holds the agent lock for the whole turn. Two
-symptoms follow — (a) a human/synthetic asymmetry (a user message must be handled
-differently when parked), and (b) a real <strong>deadlock</strong>: a parked turn
-holds the agent lock, so a fresh <code>UserMessage</code> (which acquires that
-lock to start a turn) blocks forever, and the session is trapped. The fix is a
-unification, not a patch.</p>
-
-<div class="box callout">
-  <h4>The settled model</h4>
-  <ol>
-    <li><strong>One input queue for <em>async</em> user-role input.</strong> Everything that arrives asynchronously &mdash; human messages, monitor lines, monitor-stop notices, future async hook output &mdash; flows through a single queue. <strong>A human message is just a one-shot &ldquo;monitor&rdquo;: one item, then done.</strong> <code>source</code> is a tag affecting <em>rendering</em> (<code>&lt;monitor id=&hellip;&gt;</code> vs raw text), never <em>handling</em>. <strong>Carve-out:</strong> the agent's <em>synchronous self-repairs</em> (<code>HarnessRecovery</code> &mdash; empty-response continuation, tool-JSON nudge) are eventful but <em>not</em> queued; they are injected inline and re-sent immediately, since queuing would wrongly delay them to a seam.</li>
-    <li><strong>Inputs are enqueued, never injected by acquiring the agent.</strong>
-      The server's human-input handler does exactly what the monitor manager does:
-      <em>append&nbsp;+&nbsp;notify</em>. Nothing reaches in to &ldquo;start&rdquo;
-      the agent &mdash; so the deadlock is <em>impossible by construction</em>.</li>
-    <li><strong>Gather/Process alternation.</strong> <em>Seam = Gather</em> (drain
-      the queue &rarr; the next user-role turn; unlocked). <em>Block = Process</em>
-      = <code>[model call &rarr; tool_result | end_turn]</code>, uninterruptible.
-      Items arriving during a block wait for the next seam &mdash; no-preemption
-      falls out for free. The user-role turn is the artifact handed across the
-      seam (Gather builds it, Process consumes it); the lock covers only Process,
-      never the turn assembly.</li>
-    <li><strong>Idle = an empty-queue seam.</strong> Waiting for the human and
-      &ldquo;parked on a monitor&rdquo; become the <em>same</em> state. The
-      park/terminate/roster-changed machinery dissolves.</li>
-    <li><strong>Three orthogonal controls</strong> sit outside the queue. <strong>Queue</strong> &mdash; cooperative input; lands at the next seam; the agent keeps going unless halted. <strong>Halt</strong> &mdash; optional, graceful: stop advancing at the next seam and <em>wait</em> (the modernised &ldquo;pause&rdquo;). <strong>Abort</strong> &mdash; forceful: cancel the in-flight block now. Queuing never requires halting; you may halt <em>and</em> queue a steering message, or queue without halting. <strong>Halt is load-bearing</strong>: when the agent heads the wrong way, halt it so it stops advancing while you compose a steering message at leisure (vital for human review), then it resumes on your queued input. Abort, by contrast, discards the in-flight step.</li>
-    <li><strong>Headless</strong> is the sole place a termination rule survives:
-      empty queue + no live monitor &rarr; done. Interactive simply waits at the
-      seam.</li>
-    <li><strong>Interjection is preserved, modernised.</strong> Typing while a
-      block runs enqueues and is folded in at the next seam &mdash; automatically,
-      no pause-then-continue dance. The pause/continue <em>plumbing</em> for
-      interjection is superseded; the <em>capability</em> remains and is smoother. (The <strong>halt</strong> control above is the separate, retained piece of the old pause &mdash; &ldquo;freeze while I compose&rdquo; &mdash; <em>not</em> the interjection plumbing, which the queue supersedes.)</li>
-  </ol>
-</div>
-
-<h3>Queue visualisation &mdash; a first-class UX goal (review instrument)</h3>
-<div class="box callout">
-<p>The queue is the <em>fundamental</em> construct; the <strong>monitor roster is really one filtered view onto it</strong> (&ldquo;what's live/queued from monitor sources&rdquo;). So a <strong>queue visualisation is arguably the more important UX</strong> than the monitor roster &mdash; and it is a <strong>critical instrument for human review</strong>: seeing what is queued (and from which <code>source</code> &mdash; human, monitor, &hellip;), pending delivery at the next seam, is how the reviewer stays oriented while steering.</p>
-<p><strong>Status: <span class="keep">✔ IMPLEMENTED (U1, human-only)</span>.</strong>  The first-cut queue visualisation shipped as part of the U1 inbox-to-<code>InputQueue</code> refactor.  Foundation: <code>InputQueue</code> (<small class="path">crates/omega-agent/src/input_queue.rs</small>) replaces the bare <code>mpsc</code> channel; <code>push()</code> returns an atomic snapshot, <code>pop().await</code> parks on empty (one item per Gather, U1 semantics preserved), <code>snapshot()</code> is always inspectable.  Transport: <code>WsMessage::InputQueue&nbsp;{ items:&nbsp;Vec&lt;InputQueueItem&gt; }</code> &mdash; transport-only, <strong>never written to <code>events.jsonl</code></strong> &mdash; pushed (a)&nbsp;on enqueue (carrying the just-pushed item atomically), (b)&nbsp;after each <code>UserMessage</code> event (queue drained), (c)&nbsp;on connect/reset/resume.  UI: <code>QueueBadge</code>&nbsp;/&nbsp;<code>QueueModal</code> (<small class="path">frontends/leptos/src/queue_panel.rs</small>); <code>input_queue:&nbsp;RwSignal</code> in <code>SessionStore</code>; cleared on <code>ResetDone</code>.</p><p><strong>Discoverability decision (updated): badge is <em>always visible</em></strong> &mdash; never hidden when empty.  The queue panel is a <em>review instrument</em>; hiding its entry point on an empty queue makes the feature undiscoverable and untestable.  The empty state is exactly when a reviewer needs to be able to find the control and confirm it works &mdash; the same lesson learned from the monitor badge (initially gated, made always-visible in Phase&nbsp;5).  Idle label: <code>&ldquo;Queue&rdquo;</code>; live label: <code>&ldquo;N pending&rdquo;</code>.  Clicking the always-visible badge opens the modal, which shows an explicit empty-state message when nothing is pending.  <strong>Monitor sources joined in U2</strong> <span class="keep">&#x2713; IMPLEMENTED</span>: monitor items carry <code>source = "monitor:&lt;id&gt;"</code> in <code>snapshot()</code>, and an <code>InputQueue::on_change</code> callback (registered server-side in <code>spawn_run_task</code>) pushes the <code>input_queue</code> WS frame on <em>monitor</em> enqueue too &mdash; not only human.</p>
-<p class="meta">It also subsumes the monitor-roster UX direction: once the queue is visualised by source, the monitor roster can be a saved filter rather than a bespoke panel.</p>
-</div>
-
-<h3>From &rarr; to</h3>
-<table>
-  <tr><th>Current (&sect;4)</th><th>Unified (target)</th></tr>
-  <tr><td>one <code>send_message</code> per human message</td><td>one persistent per-session loop</td></tr>
-  <tr><td>human input acquires the agent lock to start a turn</td><td>human input = <em>append + notify</em> to the queue</td></tr>
-  <tr><td>parking lives inside <code>send_message</code> (lock held)</td><td>idle = empty-queue seam (no lock held)</td></tr>
-  <tr><td>human vs monitor handled by different paths</td><td>identical handling; <code>source</code> is a render tag only</td></tr>
-  <tr><td>park / terminate / roster-changed wake</td><td>dissolved (idle just waits; headless has the one termination rule)</td></tr>
-  <tr><td>pause-then-continue to interject</td><td>enqueue-while-running, lands at next seam</td></tr>
-</table>
-
-<h3>Why not the small &ldquo;reroute&rdquo; patch</h3>
-<p>An earlier option &mdash; route a <code>UserMessage</code>-while-parked through
-<code>request_continue</code> &mdash; would unblock chat without the refactor. We
-are <strong>not</strong> doing it: it entrenches the &ldquo;monitor = one long
-open turn&rdquo; model we are unwinding, and the deadlock does not actually block
-dog-fooding (migration sessions do ordinary coding turns and need not run a live
-monitor). So we go straight to the unified model; the unification <em>is</em> the
-deadlock fix.</p>
-
-<h3>Current shape (grounded in the code) and the core transformation</h3>
-<p>Today <code>Agent::send_message(user_message: String, cancel) -&gt; Stream&lt;AgentItem&gt;</code>
-borrows <code>&amp;mut self</code> for the stream's whole life &mdash; that borrow
-<em>is</em> the held lock. The <code>'agentic</code> loop inside it already parks
-and resumes; it is merely wrapped in a <em>per-message</em> entry seeded by one
-<code>String</code>. There are <strong>three ad-hoc input channels</strong>: the
-seed <code>String</code>, <code>controls.pending_continue</code> (interjection),
-and the monitor manager's pending queue + <code>notify_item</code>.
-<code>handle_user_message</code> spawns a task that does
-<code>agent.lock()&nbsp;&rarr;&nbsp;send_message&nbsp;&rarr;&nbsp;stream&nbsp;&rarr;&nbsp;WS</code>,
-holding the lock across parking &mdash; the deadlock.</p>
-<p><strong>The refactor, in one line:</strong> replace
-<code>send_message(String)</code> (borrows <code>&amp;mut self</code> per message)
-with <code>run(&amp;mut self, inbox)</code> (borrows <code>&amp;mut self</code> once
-per session), and collapse the three ad-hoc channels into one <code>inbox</code> of
-<code>InputItem</code>s (<code>source = Human | Monitor(id) | &hellip;</code>; a
-render tag, not a handling difference). Human input becomes
-<code>inbox.send(&hellip;)</code> &mdash; no agent lock &mdash; so the deadlock
-cannot form. The <code>'agentic</code> loop is largely unchanged: its
-<em>input source</em> moves to &ldquo;drain the inbox at the Gather seam&rdquo;
-and its <em>lifetime</em> moves from per-message to per-session.</p>
-
-<h3>Event design — agent-level events; <code>role:user</code> is a projection</h3>
-<div class="box callout">
-  <h4>(a) Invariant — completeness</h4>
-  <p>
-    <strong>Every user-role context record is the projection of some
-    <code>events.jsonl</code> event; nothing is appended to the context store as
-    user-role content without a backing event.</strong> This is the load-bearing
-    requirement of the unification — far more important than how the events are
-    shaped. <strong>Correction (2026-06-06):</strong> the two harness repairs (empty-response continuation, invalid-tool-JSON nudge) were <em>not</em> silent &mdash; they already emitted <code>OmegaEvent::UserMessage</code> events, i.e. they were in <code>events.jsonl</code> but <strong>mis-attributed as human messages</strong>. They are now <code>OmegaEvent::HarnessRecovery</code> events with correct agent-level identity (item (c)) &mdash; so this was really a principle-(b) attribution fix, not a completeness gap. Whether <em>every</em> user-role context append has a backing event (e.g. the session seed scaffolding in <code>seed_with_resumption_summary</code>) has <strong>not</strong> been exhaustively audited; treat the blanket invariant as a goal to verify, not yet proven.
-  </p>
-  <p><strong>Enforcement plan.</strong> The invariant will be made structural, not asserted:
-  <strong>A1 (now):</strong> funnel every <code>context_store.append(Role::User, …)</code> through a named event-emitting <code>inject_*</code> helper (or a documented bootstrap exemption), guarded by a source test that fails if any user-role append appears outside the allowlist. This settles the current state (including the seed) by construction. <strong>A2 (later, with U3):</strong> upgrade the guard from a source test to a <em>compile-time</em> guarantee &mdash; change the <code>ContextStore</code> API so a free <code>append(Role::User, …)</code> is unreachable and user-role appends must be made through a path that takes the backing event (omitting it becomes a compile error, not a test failure). A2 is the natural end-state of U3&rsquo;s single-writer inbox.</p>
-  <div class="box ok"><strong>A1 &mdash; IMPLEMENTED (2025-06-07).</strong>
-    <p>All nine <code>context_store.append(Role::User, …)</code> call sites in
-    <code>crates/omega-agent/src/agent.rs</code> are now inside a named
-    <code>inject_*</code> helper that emits the backing event <em>before</em> the
-    context append, or in a documented bootstrap function that does the same.</p>
-    <p><strong>Per-site disposition</strong> (4 inline <code>drive_turn</code> sites +
-    2 bootstrap sites; 3 pre-existing <code>inject_*</code> helpers were already
-    correct):</p>
-    <table style="border-collapse:collapse;font-size:0.88em;width:100%">
-      <thead><tr style="background:#e8f4e8">
-        <th style="padding:4px 8px;text-align:left">Site / function</th>
-        <th style="padding:4px 8px;text-align:left">Backing event</th>
-        <th style="padding:4px 8px;text-align:left">Disposition</th>
-      </tr></thead>
-      <tbody>
-        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; dangling <code>tool_use</code> repair</td><td style="padding:4px 8px"><code>ToolResult</code> (one per dangling tool)</td><td style="padding:4px 8px">New helper <code>inject_dangling_tool_results</code>; events now emitted BEFORE context append (was: after &mdash; ordering gap closed)</td></tr>
-        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; Step&nbsp;2 user message</td><td style="padding:4px 8px"><code>UserMessage</code></td><td style="padding:4px 8px">New helper <code>inject_user_message</code>; event now emitted BEFORE context append (was: after &mdash; ordering gap closed)</td></tr>
-        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; tool results batch</td><td style="padding:4px 8px"><code>ToolResult</code> events (emitted by tool dispatch loop before the helper is called)</td><td style="padding:4px 8px">New helper <code>inject_tool_results_batch</code>; individual <code>ToolResult</code> events already preceded the context append &mdash; funneled for structural enforcement</td></tr>
-        <tr><td style="padding:4px 8px"><code>drive_turn</code> &mdash; pause/continue interjection</td><td style="padding:4px 8px"><code>UserMessage</code></td><td style="padding:4px 8px">Reuses <code>inject_user_message</code>; event now emitted BEFORE context append (was: after &mdash; ordering gap closed)</td></tr>
-        <tr><td style="padding:4px 8px"><code>seed_with_resumption_summary</code> (bootstrap)</td><td style="padding:4px 8px"><code>SessionResumed</code></td><td style="padding:4px 8px">Already correctly ordered; added to allowlist with comment</td></tr>
-        <tr><td style="padding:4px 8px"><code>perform_resumption</code> (bootstrap)</td><td style="padding:4px 8px"><code>ResumingSession</code></td><td style="padding:4px 8px">Reordered: <code>ResumingSession</code> now emitted BEFORE context append (was: after &mdash; ordering gap closed); added to allowlist. Basis record is NOT pushed onto in-memory history (special contract); no <code>inject_*</code> wrapper used.</td></tr>
-      </tbody>
-    </table>
-    <p><strong>Guard test:</strong> <code>user_role_context_appends_are_event_backed</code> in
-    <code>crates/omega-agent/tests/internal.rs</code> &mdash; source scan that goes RED if any
-    <code>context_store.append(Role::User, …)</code> appears outside the allowlist of
-    8 functions. No new <code>OmegaEvent</code> variants; no frontend changes.</p>
-    <p><strong>Mutation testing (<code>just mutants-a1-inject-helpers</code>):</strong>
-    4 mutations generated; 2 caught, 2 unviable (body-replacement of return types that lack
-    <code>Default</code>), 0 missed.</p>
-  </div>
-  <p><strong>A2</strong> remains a future upgrade (with U3); the
-  <code>ContextStore</code> API is unchanged by A1.</p>
-</div>
-<div class="box callout">
-  <h4>(b) Principle — events are agent-level; the wire role is a projection</h4>
-  <p>
-    Per Contract Authority (&sect;7), <code>OmegaEvent</code> is the canonical,
-    <strong>agent-level</strong> domain model; <code>context.jsonl</code> / the
-    LLM <code>role:user</code> form is a <strong>derived projection</strong>.
-    &ldquo;A monitor delivered output,&rdquo; &ldquo;the human spoke,&rdquo;
-    &ldquo;the harness recovered from an empty response&rdquo; are <em>different
-    things at the agent level</em> even though all three project to
-    <code>role:user</code>. So:
-  </p>
-  <ul>
-    <li>Design event <em>types</em> by their <strong>agent-level meaning</strong>,
-      not by what they collapse to on the wire.</li>
-    <li><strong>Do not unify on <code>role:user</code></strong> — it is a
-      projection trait many event types share, not an identity. A single god
-      <code>UserInput</code> event would flatten meaningful agent-level
-      distinctions to match the projection — backwards. (Protocol fidelity is a
-      virtue of the projection layer, not of the event schema.)</li>
-  </ul>
-</div>
-<div class="box callout">
-  <h4>(c) Good-taste criteria + concrete to-dos</h4>
-  <ol>
-    <li>One event per distinct agent-level occurrence/cause; name it for what
-      happened <em>in the agent</em>, not for its wire role.</li>
-    <li>Don't unify on <code>role:user</code>; let several distinct event types
-      project to it.</li>
-    <li>Group only genuinely-alike things behind a small discriminator; avoid both
-      a god-event and gratuitous fragmentation.</li>
-    <li>Close the invariant: anything that appends user-role content emits a
-      backing event.</li>
-  </ol>
-  <p><strong>Concrete:</strong></p>
-  <ul>
-    <li><strong>Keep distinct (already good taste):</strong> <code>UserMessage</code>
-      (human), <code>MonitorDelivery</code>, <code>MonitorStopped</code>,
-      <code>ToolResult</code> — distinct agent-level things, several already
-      projecting <code>role:user</code>.</li>
-    <li><strong>Correct the two mis-attributed repairs (<code>UserMessage</code> &rarr; <code>HarnessRecovery</code>) &mdash; <span style="color:green">IMPLEMENTED</span>.</strong>
-      Chosen shape: a single discriminated event
-      <code>OmegaEvent::HarnessRecovery(HarnessRecoveryEvent { time, kind, content })</code>
-      with <code>HarnessRecoveryKind ∈ { EmptyResponseContinuation, InvalidToolJson }</code>.
-      Each injection site calls <code>Agent::inject_harness_recovery</code>, which
-      appends to the context store as <code>role:user</code> <em>and</em> emits the event
-      to <code>events.jsonl</code> <em>and</em> yields it as an <code>AgentItem::event</code>.
-      The <code>eprintln!</code> in the empty-response branch is gone; the event is the
-      canonical record of the occurrence. Wire format tag: <code>"harness_recovery"</code>;
-      kind values: <code>"empty_response_continuation"</code> | <code>"invalid_tool_json"</code>.</li>
-    <li><strong>Not part of this</strong> (flagged): <code>MonitorStderr</code> is
-      never projected (diagnostic only); the session seed scaffolding is bootstrap
-      context (decide later).</li>
-  </ul>
-</div>
-<h3>Migration plan (phased)</h3>
-<div class="box warn">
-  <strong>Governing invariant (dog-fooding):</strong> every intermediate version
-  of Omega must remain usable to execute the <em>next</em> migration step &mdash;
-  i.e. an ordinary human&rarr;agent coding turn (read / edit / run / commit) works
-  at every phase boundary. Monitor delivery and interjection MAY lapse temporarily
-  mid-migration; ordinary coding turns MUST NOT.
-</div>
-<div class="box ok"><strong>U1 &mdash; IMPLEMENTED.</strong>
-  <code>Agent::run(&amp;mut self, inbox: mpsc::Receiver&lt;InputItem&gt;, cancel)</code>
-  is the persistent per-session loop; <code>send_message</code> is gone (its
-  per-turn body became the private <code>drive_turn</code>, which <code>run</code>
-  drives once per gathered <code>InputItem::Human</code> then parks by awaiting
-  the inbox). The server spawns <strong>one</strong> run task per session at
-  reset/resume; it is the <em>sole</em> holder of the agent lock; the
-  WS-forwarding loop (turn-state + roster pushes) moved into it;
-  <code>handle_user_message</code> is now just <code>inbox.send(Human{content})</code>.
-  Reset/resume <code>teardown_prior_run</code> cancels + joins the prior run
-  task before reaping its monitors.
-  <br/><strong>Intact:</strong> ordinary human&rarr;agent coding turns (incl.
-  back-to-back messages on one parked run task &mdash; the old per-message
-  deadlock is gone); per-block <code>request_abort</code> (cancels the current
-  block, loop returns to park, run survives); monitor <strong>spawn/reap</strong>
-  (<code>Drop</code> + session-end <code>shutdown_and_log_monitors</code> via
-  <code>teardown_prior_run</code>).
-  <br/><strong>Dark (intentionally, until noted):</strong> monitor
-  <em>delivery</em> &mdash; Seam-B mid-turn drain and the Seam-A
-  park-on-<code>notify_item</code> were removed (re-wired to the inbox in U2);
-  interjection &mdash; <code>pause</code> / <code>pending_continue</code> plumbing
-  is kept but lapses (retired in U3). Delivery/park tests are
-  <code>#[ignore]</code>d with reason <em>“monitor delivery re-enabled in U2
-  (§15)”</em>; spawn/reap and session-end reaping tests stay green.
-  <br/>The model/effort handlers were moved off the agent lock onto a lock-free
-  <code>ModelEffortHandle</code> (shared cells + event store) so they no longer
-  contend with the run task that owns the lock for the session's life.</div>
-<div class="box ok"><strong>U2 &mdash; IMPLEMENTED.</strong>
-  Monitors are live again, delivering through the <em>same</em>
-  <code>InputQueue</code> inbox as human input.
-  <br/><strong>InputItem shape:</strong> two new variants &mdash;
-  <code>InputItem::MonitorStdout&nbsp;{ monitor_id, lines:&nbsp;Vec&lt;String&gt; }</code>
-  and <code>InputItem::MonitorStopped&nbsp;{ monitor_id, reason, exit_code }</code>.
-  <code>MonitorStderr</code> is deliberately <em>absent</em>: it is non-projected
-  diagnostic output that never becomes <code>role:user</code> content, so it stays
-  a direct <code>MonitorStderr</code> event and never enters the queue.
-  <br/><strong>Manager &rarr; inbox:</strong> <code>omega-tools</code> sits one crate
-  <em>below</em> <code>omega-agent</code> and cannot name <code>InputQueue</code>, so
-  the <code>MonitorManager</code> pushes through a decoupling trait
-  <code>MonitorSink</code> (<code>deliver_stdout</code> / <code>deliver_stopped</code>).
-  <code>omega-agent</code>'s <code>InboxSink</code> implements it by enqueuing
-  <code>InputItem::Monitor*</code> onto the inbox; <code>Agent::run</code> attaches it
-  synchronously before the loop. The stdout reader / exit waiter thus supersede the
-  manager's own pending-queue delivery path (kept only as a sink-less fallback for
-  <code>omega-tools</code> unit tests, plus the diagnostic <code>Stderr</code> drain).
-  <br/><strong>Two-seam drain:</strong> a non-blocking
-  <code>InputQueue::drain_pending()&nbsp;-&gt;&nbsp;Vec&lt;InputItem&gt;</code> drains
-  <em>all</em> currently-pending items at <strong>both</strong> seams;
-  <code>pop().await</code> still parks one item for the idle wait.
-  <strong>Seam&nbsp;B survives</strong> &mdash; after each <code>tool_result</code> the
-  loop drains the inbox and injects each item <em>between</em> the tool result and the
-  next model call (not held to <code>end_turn</code>). Each drained item routes via its
-  own eventful <code>inject_*</code> helper
-  (<code>MonitorStdout&rarr;inject_monitor_delivery</code>,
-  <code>MonitorStopped&rarr;inject_monitor_stopped</code>,
-  <code>Human&rarr;inject_user_message</code>) &mdash; <strong>one role:user context
-  record + one event each</strong>, preserving the A1 invariant.
-  <br/><strong>Batching is projection, not a god record:</strong> a human message and a
-  monitor line pending at one seam produce <em>two</em> context records and <em>two</em>
-  events, which <code>project_messages</code> merges into <em>one</em> API user message at
-  request-build time. No batched context append.
-  <br/><strong>Park / terminate (landed early from U3):</strong> idle = empty inbox.
-  With a live monitor and an empty inbox the loop <code>pop().await</code>s (a monitor may
-  yet fire); a natural exit enqueues <code>MonitorStopped</code> which wakes the park.
-  Headless (<code>config.headless</code>) terminates only when the inbox is empty
-  <em>and</em> no monitor is live; interactive simply waits. The &sect;4 park-select on
-  the roster-changed notify is gone &mdash; a stop is an ordinary inbox item.
-  <br/><strong>Queue viz:</strong> monitor items appear in <code>snapshot()</code> with
-  <code>source = "monitor:&lt;id&gt;"</code>; <code>InputQueue</code> gained an
-  <code>on_change</code> callback (registered by the server in
-  <code>spawn_run_task</code>) so a <strong>monitor-side push reaches the WS layer</strong>
-  &mdash; the <code>input_queue</code> frame now fires on monitor enqueue, not only human.
-  Badge stays always-visible (&sect;9).
-  <br/><strong>Dead code removed:</strong> <code>drain_monitors</code>, the
-  <code>MonitorDrain</code> struct, and the U1 &ldquo;delivery dark&rdquo; comments,
-  superseded by the unified two-seam drain.
-  <br/><strong>Verified:</strong> Agent+MockProvider Seam-A/Seam-B/batching/park tests,
-  a real short-lived shell monitor through the sink, a server WS test asserting the
-  <code>monitor:&lt;id&gt;</code> queue frame, the A1 guard
-  (<code>user_role_context_appends_are_event_backed</code>), and the dog-food
-  multi-cycle coding turn &mdash; all green.
-  <br/><strong>U3 landed all of this</strong> &mdash; see the U3 box below.</div>
-<div class="box ok"><strong>U3 &mdash; IMPLEMENTED. The migration is COMPLETE.</strong>
-  The old pause/continue-for-<em>injection</em> machinery is gone; the three
-  orthogonal controls (Queue / Halt / Abort) are reconciled.
-  <br/><strong>Removed (pause-for-injection):</strong> <code>request_pause</code>,
-  <code>request_continue(content)</code>, <code>pending_continue</code> and the
-  content-injection suspend path. Interjection is now <em>one</em> thing &mdash; a
-  push to the <code>InputQueue</code> (the <code>UserMessage</code> frame), drained at
-  the next seam. The events <code>PauseRequested</code> / <code>TurnPaused</code> /
-  <code>TurnContinued</code> (and <code>ContinueMode</code>) were <strong>renamed</strong>
-  to <code>HaltRequested</code> / <code>TurnHalted</code> / <code>TurnResumed</code>
-  (Contract Authority: a semantic change forces a syntax change), and
-  <code>ClientFrame::Pause</code> / <code>Continue</code> → <code>Halt</code> /
-  <code>Resume</code>.
-  <br/><strong>Kept: Halt (load-bearing) + Abort.</strong> <code>request_abort</code> is
-  unchanged (forceful: cancel the in-flight block <em>now</em>). <strong>Halt</strong>
-  repurposes the old suspend machinery: <code>request_halt()</code> sets a flag that is
-  honoured at the next <strong>Seam B</strong> (after a <code>tool_result</code>, before
-  the next model call) &mdash; the run loop yields <code>TurnHalted</code> and
-  <strong>parks</strong> instead of starting the next block, satisfying the
-  &ldquo;agent heading the wrong way &rarr; stop advancing &rarr; compose a steering
-  message at leisure&rdquo; use case.
-  <br/><strong>Resume UX &mdash; two ways (both exist):</strong> (1) <em>queue a steering
-  message</em> &mdash; Send pushes to the inbox, which wakes the parked loop; the
-  message is injected at the seam (its own event-backed <code>inject_*</code> append,
-  A1) and the loop continues with it; (2) <em>explicit <code>request_resume()</code></em>
-  (the <strong>Resume</strong> button) &mdash; &ldquo;never mind, carry on&rdquo;,
-  continues with no new input. The park is a single <code>tokio::select!</code> over
-  <code>cancel</code> (abort wins) / the resume notify / <code>inbox.pop()</code>; the
-  Seam-B drain right after picks up anything queued behind the first item.
-  <br/><strong>Turn-state markers (block boundaries):</strong> the frontend distinguishes
-  <code>running</code> (inside a block, processing), <code>halt_requested</code> (Halt
-  clicked, halting at the next seam), <code>halted</code> (parked at a halt seam) and
-  <code>idle</code> (parked at an empty-queue seam). These are <em>event-derived</em>
-  in <code>next_turn_state_for</code>: <code>UserMessage</code> /
-  <code>MonitorDelivery</code> / <code>MonitorStopped</code> / <code>TurnResumed</code>
-  &rarr; running; <code>TurnHalted</code> &rarr; halted; <code>TurnEnd</code> /
-  <code>TurnInterrupted</code> &rarr; idle; <code>handle_halt</code> sets
-  <code>halt_requested</code> directly. This fixes the long-standing
-  &ldquo;parked-looks-idle&rdquo; composer confusion.
-  <br/><strong>Composer (three-controls model):</strong> the Pause/Continue/Take-it-back
-  state machine and the pre-commit auto-drain are gone. <strong>Send</strong> always
-  enqueues (parked → drained immediately; in-block → queued until the next seam,
-  batched). <strong>Halt</strong> shows while <code>running</code>;
-  <strong>Resume</strong> while <code>halted</code>; <strong>Abort</strong> while
-  <code>running</code> / <code>halt_requested</code> / <code>halted</code>.
-  <br/><strong>Verified:</strong> Agent+MockProvider halt-parks / queued-resume /
-  resume-no-input tests; server WS halt / halt-then-queued-resume / dog-food
-  multi-cycle tests; a grep/test guard that the pause-for-injection plumbing is gone;
-  the A1 guard and the always-visible queue/monitor affordances (§9); composer
-  snapshot tests for Send/Halt/Resume/Abort; browser e2e halt / steer / abort; full
-  <code>just gate</code> green. Mutation: Halt/resume controls and the
-  turn-state/control-reconciliation logic &mdash; all caught or unviable.</div>
-<ol>
-  <li><strong>U1 &mdash; persistent <code>run</code> loop + inbox for human input;
-    monitor <em>delivery</em> goes dark.</strong>
-    <ul>
-      <li>New <code>Agent::run(&amp;mut self, inbox: Receiver&lt;InputItem&gt;, cancel)
-        -&gt; Stream</code>; the loop's first Gather pulls the first human message
-        from <code>inbox</code> (the seed <code>String</code> dissolves).</li>
-      <li>Server spawns <strong>one</strong> <code>run</code> task per session at
-        reset/resume (parked on an empty inbox); the inbox <code>Sender</code> is
-        stored in <code>ActiveSession</code>; <code>handle_user_message</code> becomes
-        <code>inbox.send(content)</code> (no lock). The WS-forwarding loop
-        (turn-state updates, roster push) <strong>moves into the run task</strong> &mdash;
-        one continuous per-session stream instead of one per message.</li>
-      <li>Monitor <em>delivery</em> is temporarily unwired (Seam-B drain +
-        park-on-<code>notify_item</code> removed); the manager still <strong>spawns
-        and reaps</strong> (session-end <code>shutdown_and_log_monitors</code>
-        preserved). <code>request_abort</code> kept; <code>pause</code> /
-        <code>pending_continue</code> may lapse.</li>
-      <li><em>Dog-food check:</em> human &rarr; inbox &rarr; Gather &rarr; Process
-        &rarr; reply &rarr; park-on-inbox is an ordinary coding turn. &#x2713;</li>
-    </ul></li>
-  <li><strong>U2 &mdash; re-attach monitors to the inbox. <span class="keep">&#x2713; IMPLEMENTED</span></strong> (see the U2 box above).
-    Monitor stdout/stop push <code>InputItem::MonitorStdout</code> /
-    <code>InputItem::MonitorStopped</code> into the <em>same</em> inbox (via
-    <code>MonitorSink</code>/<code>InboxSink</code>); Gather batches human + monitor at the
-    seam; the <strong>Seam-B mid-turn drain is re-wired to the inbox</strong> (survives
-    &mdash; monitor output injected between a <code>tool_result</code> and the next
-    model call); park awaits the inbox. The headless park/terminate rule landed here
-    early (originally slated for U3). <em>Dog-food check:</em> human turns still
-    work; monitor delivery back online. &#x2713;</li>
-  <li><strong>U3 &mdash; retire superseded machinery + reconcile. <span class="keep">&#x2713; IMPLEMENTED</span></strong> (see the U3 box above).
-    Remove <code>request_pause</code> + <code>pending_continue</code> (interjection
-    = enqueue-at-seam; <code>request_continue(content)</code> becomes a push to the
-    inbox); keep <code>request_abort</code>. Remove the roster-changed wake (a stop
-    enqueues a notice; idle = empty inbox). Add the headless rule (empty inbox + no
-    live monitor &rarr; <code>run</code> returns). UI turn-state: running = in a
-    block, idle = empty-inbox seam + block-boundary markers (also fixes the
-    composer's parked-looks-idle confusion). Drop the per-message
-    <code>current_turn</code> handle. <em>Dog-food check:</em> cleanup only. &#x2713;</li>
-</ol>
-<p class="meta">The one invariant the refactor must not break: the <strong>Seam-B
-mid-turn drain</strong> (monitor output injected mid-block) &mdash; only the
-Seam-A idle wait is being relocated. U1 is the invasive backbone; U2/U3 are
-incremental on top of it.</p>
-
-<h2 id="mirror">16. Eliminate the WS-message mirror (frontend protocol projection)</h2>
-
-<p><strong>Shipped.</strong> This section records a concrete defect found in user
-testing and the structural fix that closed it. It is retained as an architectural
-record alongside &sect;1&ndash;15: the diagnosis explains <em>why</em> the
-frontend now deserializes straight into <code>OmegaEvent</code>, and the
-drift-guard test it installed is what keeps the class of bug from recurring.</p>
-
-<div class="box warn">
-  <h4>Symptom (observed in user testing)</h4>
-  <p>With a <code>tail -F</code> monitor live, <strong>monitor delivery events do
-  not appear in the UI</strong> while the session is running. They <em>do</em>
-  appear after a page reload. So the data is on disk and the renderer works &mdash;
-  only the <em>live</em> path drops them.</p>
-</div>
-
-<h3>Root cause &mdash; two unlinked enums (Contract-Authority drift)</h3>
-<p>The frontend re-declares its own <code>WsMessage</code> enum
-(<small class="path">frontends/leptos/src/protocol.rs</small>,
-<code>#[serde(tag="type", rename_all="snake_case")]</code>) as a
-<strong>hand-maintained mirror</strong> of the wire protocol. It is a
-<em>structurally independent type</em> from the canonical
-<code>omega_types::OmegaEvent</code> &mdash; different crate, no shared definition,
-no codegen, <strong>no compiler-enforced link</strong>. That mirror is missing the
-four monitor variants <code>MonitorStarted</code>, <code>MonitorDelivery</code>,
-<code>MonitorStderr</code>, <code>MonitorStopped</code> (it carries only the
-ephemeral <code>MonitorRoster</code>). <code>HarnessRecovery</code> <em>is</em>
-present; by enumeration the four monitor events are the <em>only</em> gap today.</p>
-
-<p>The asymmetry that makes this insidious:</p>
-<ul>
-  <li><strong>Server is exhaustive over <code>OmegaEvent</code> for free.</strong>
-    It forwards events generically &mdash;
-    <small class="path">crates/omega-server/src/ws_message.rs</small>
-    <code>Self::Item(item) =&gt; serde_json::to_value(item.as_ref())</code>.
-    Adding a variant to <code>omega-types</code> ships it on the wire with
-    <em>zero</em> server edits and <em>zero</em> compile errors.</li>
-  <li><strong>Frontend mirror is silently incomplete.</strong> Adding that variant
-    produces no frontend compile error, because the two enums are unrelated types.
-    The new frame arrives as <code>{"type":"monitor_delivery",&hellip;}</code> and
-    fails to deserialize into <code>WsMessage</code>.</li>
-  <li><strong>The failure is swallowed.</strong>
-    <small class="path">frontends/leptos/src/ws.rs</small> does
-    <code>serde_json::from_str::&lt;WsMessage&gt;(&amp;text)</code> and, on
-    <code>Err</code>, only <code>leptos::logging::warn!(&hellip;)</code> then drops
-    the frame. No toast, no error block &mdash; a console warning nobody watches.</li>
-  <li><strong>Reload works by a different path.</strong> History replay parses into
-    <code>HistoryPayload { events: Vec&lt;OmegaEvent&gt; }</code> &mdash; the
-    <em>canonical</em> type &mdash; so persisted monitor events render after reload.
-    Server replay only excludes <code>ready</code>/<code>text</code>
-    (<code>REPLAY_EXCLUDE</code>), so the events are present; only the live
-    <code>WsMessage</code> hop drops them.</li>
-</ul>
-
-<div class="box callout">
-  <h4>Why the type system can't catch it, and why there's no runtime error</h4>
-  <p>This is exactly the <strong>Contract-Authority drift</strong> AGENTS.md warns
-  about: <code>OmegaEvent</code> is canonical; <code>WsMessage</code> is a derived
-  projection that <em>must</em> conform &mdash; but conformance here is maintained
-  by hand, not enforced. Because the mirror is a separate type, neither
-  <code>match</code> exhaustiveness nor any other check binds. And because the
-  parse error is deliberately tolerated (resilience to protocol skew), drift
-  degrades <em>silently</em> instead of failing loudly &mdash; the opposite of the
-  &ldquo;loud schema change&rdquo; rule.</p>
-</div>
-
-<h3>The fix &mdash; eliminate the mirror (the correction that shipped)</h3>
-<p>Patching the four missing variants by hand would have restored monitors but
-left the structure that produced the bug: the <em>next</em> event variant added to
-<code>omega-types</code> would drift again, just as silently. The shipped fix is
-structural:</p>
-<ol>
-  <li><strong>Event-carrying frames deserialize straight into
-    <code>omega_types::OmegaEvent</code>.</strong> The ~30 event variants are no
-    longer re-declared in the frontend. <code>WsMessage</code> is now an
-    <code>#[serde(untagged)]</code> enum with exactly two arms
-    (<small class="path">frontends/leptos/src/protocol.rs</small>):
-    <code>Event(OmegaEvent)</code> for every canonical event, and
-    <code>Envelope(WsEnvelope)</code> for the rest. Adding a variant to
-    <code>omega-types</code> now flows to the UI with no frontend edit &mdash; the
-    feed / <code>event_view</code> renderers are already exhaustive over
-    <code>OmegaEvent</code>, so the new frame parses into the <code>Event</code>
-    arm and renders for free.</li>
-  <li><strong>Only the genuinely frontend-specific frames remain hand-written.</strong>
-    <code>WsEnvelope</code> is a thin internally-tagged enum holding the
-    non-<code>OmegaEvent</code> frames &mdash; <code>Ready</code>, streaming
-    <code>Text</code>/<code>Thinking</code> deltas, <code>MonitorRoster</code>,
-    <code>InputQueue</code>, <code>History</code>, session-info, reset/ack, and the
-    envelope-level <code>AgentError { message }</code>. The only tag shared with an
-    <code>OmegaEvent</code> is <code>agent_error</code>; the two are disambiguated by
-    field shape (the envelope form requires <code>message</code>, the event form
-    requires <code>time</code>/<code>error</code>), and the untagged enum tries the
-    envelope arm first then falls through to <code>OmegaEvent</code>. The invariant
-    holds: <em>no event variant is re-typed in the frontend.</em></li>
-  <li><strong>Parse failure is loud, not swallowed.</strong> In
-    <code>ws.rs</code>, an unparseable frame now calls
-    <code>store.record_frame_parse_error(&hellip;)</code>, which pushes a message
-    onto <code>transport_errors</code>; a new <code>TransportErrorBanner</code>
-    (<small class="path">frontends/leptos/src/lib.rs</small>) renders that state as a
-    visible red banner. A dropped frame is diagnostic signal &mdash; it is no longer
-    invisible.</li>
-  <li><strong>A drift-guard test is installed.</strong> It round-trips <em>every</em>
-    <code>OmegaEvent</code> variant through the server's serialization
-    (<code>serde_json::to_value</code>) &rarr; the frontend parse &rarr; back to
-    <code>OmegaEvent</code>, asserting each yields the matching variant. A
-    compile-time exhaustive <code>match</code> (<code>variant_tag</code>) makes
-    adding a variant to <code>omega-types</code> without extending the guard a build
-    error &mdash; so a future omission cannot merge. It would have caught this one.</li>
-</ol>
-
-<div class="box ok">
-  <h4>Acceptance criteria &mdash; all met</h4>
-  <ul>
-    <li>&#10003; Monitor deliveries appear in the UI <strong>live</strong> &mdash;
-      <code>monitor_delivery</code> frames parse into
-      <code>Event(OmegaEvent::MonitorDelivery)</code> and reach the existing feed
-      renderer instead of being dropped.</li>
-    <li>&#10003; The frontend no longer re-declares per-event variants; adding a
-      variant to <code>omega-types</code> requires <em>no</em> frontend enum edit to
-      display it.</li>
-    <li>&#10003; An unparseable WS frame produces a <strong>visible</strong> signal
-      (<code>TransportErrorBanner</code>), not a silent drop.</li>
-    <li>&#10003; A drift-guard test exercises all <code>OmegaEvent</code> variants and
-      fails (at compile time, via the exhaustive <code>variant_tag</code> match) if
-      any cannot round-trip through the frontend.</li>
-    <li>&#10003; The gate is green; targeted <code>cargo mutants</code>
-      (<code>just mutants-ws-protocol</code> plus scoped runs on the changed
-      <code>store.rs</code>/<code>sessions.rs</code> functions) leaves no survivors.</li>
-  </ul>
-</div>
-
-<p class="meta"><strong>Note on Observation&nbsp;2 (not a bug).</strong> Appending
-two lines to a watched file produces <em>two</em> queue items: the monitor stdout
-reader is line-oriented
-(<small class="path">crates/omega-tools/src/monitors.rs</small> &rarr;
-<code>InboxSink::deliver_stdout</code> enqueues one
-<code>InputItem::MonitorStdout { lines: vec![line] }</code> per line). The two items
-become two <code>MonitorDelivery</code> events that <code>project_messages</code>
-merges into a single <code>role:user</code> API message when they land at the same
-seam (&sect;8, &sect;15). One-item-per-line is the intended design; this is correct.</p>
-
-<h2 id="sink">17. The event sink (decouple emission from the turn loop)</h2>
-
-<div class="box ok">
-  <p><strong>Status: Phase&nbsp;A shipped.</strong> The additive
-  <code>EventSink::emit</code> path is in place. The three out-of-band emitters now go
-  through it: monitor <code>MonitorStderr</code> is emitted the instant the reader reads
-  a line (production-time stamp, non-projected &mdash; event-log + WS only, never the
-  inbox/LLM context); <code>HaltRequested</code> is emitted once (disk&nbsp;<code>time</code>
-  == wire <code>time</code>, the double-stamp is gone); and <code>ModelChanged</code> /
-  <code>EffortChanged</code> are routed through the sink, with a
-  <code>drive_turn</code>-entry snapshot of model+effort so a mid-turn change is recorded
-  at click-time but only takes effect on the next turn. The WS half resolves the current
-  <code>ws_tx</code> at emit time via a per-session <code>WsEventBroadcaster</code> bound
-  to a shared cell (survives reconnect). The loop&rsquo;s existing append-and-yield path is
-  untouched. All Phase&nbsp;A acceptance criteria below are met, guarded by end-to-end
-  tests and targeted mutation recipes (<code>just mutants-event-sink</code>,
-  <code>mutants-event-sink-wiring</code>, <code>mutants-ws-event-broadcaster</code>,
-  <code>mutants-u2-monitor-sink</code>, <code>mutants-input-queue</code>,
-  <code>mutants-u3-controls</code>, <code>mutants-u2-drain-routing</code>).
-  <strong>Phase&nbsp;B (full unification) remains documented but unscheduled.</strong></p>
-</div>
-
-<p>Two defects from user testing share one root cause. (1) Monitor <strong>stderr</strong>
-is parked on an in-memory queue and only turned into <code>MonitorStderr</code>
-events when the agent loop next reaches a seam <em>for some other reason</em> &mdash;
-so it appears late and every event is stamped at drain time, not production time.
-(2) <code>HaltRequested</code> is persisted by <code>ControlHandle::request_halt</code>
-with one timestamp, then <em>re-created</em> in <code>handle_halt</code> with a fresh
-<code>now</code> for the WS broadcast &mdash; so disk and wire disagree.</p>
-
-<div class="box callout">
-  <strong>The smell.</strong> There is no first-class “emit an event” service.
-  Emitting an event is a <em>side-effect of <code>Agent::run</code></em>: the loop
-  does <code>event_store.append(&amp;ev)</code> then <code>yield AgentItem::event(ev)</code>
-  for the server to forward. So event creation is welded to the LLM conversation.
-  Historically every event <em>was</em> a turn consequence, so the loop doubling as
-  the event bus was invisible. Monitors introduced the first <em>asynchronous,
-  externally-driven</em> events; stderr is the first that is also <em>not</em>
-  LLM-bound, and it has nowhere to go. The acceptance test for the right design:
-  <em>an event that fires at wall-clock&nbsp;X must land in
-  <small class="path">events.jsonl</small> at&nbsp;X</em>, regardless of whether a
-  turn is running. Today that is impossible without an ad-hoc bypass.</p>
-</div>
-
-<h3>Audit: who already emits outside the loop</h3>
-
-<p>The “loop is the single writer” rule is already broken ad-hoc &mdash; four
-emitters share one <code>Arc&lt;EventStore&gt;</code> and append directly. They do it
-inconsistently, which is the smell made visible:</p>
-
-<table>
-  <tr><th>Event</th><th>Today</th><th>Verdict</th></tr>
-  <tr><td><code>MonitorStderr</code></td><td>Parked on the manager’s pending queue; drained at Seam&nbsp;B only</td><td class="drop">Buggy &mdash; late + drain-time stamp &rarr; <strong>sink</strong></td></tr>
-  <tr><td><code>HaltRequested</code></td><td><code>request_halt</code> appends (stamp&nbsp;#1); <code>handle_halt</code> re-creates with fresh <code>now</code> (stamp&nbsp;#2)</td><td class="drop">Buggy &mdash; disk &ne; wire &rarr; <strong>sink</strong></td></tr>
-  <tr><td><code>ModelChanged</code> / <code>EffortChanged</code></td><td><code>set_model</code>/<code>set_effort</code> append directly <em>and return the value</em> so the caller broadcasts the same event</td><td class="keep">Correct today &mdash; sink = uniformity, not a bugfix (see effect-timing below)</td></tr>
-  <tr><td><code>ServerStarted</code> / <code>ServerStopped</code> / <code>SessionStarted</code></td><td>Appended directly at bootstrap/shutdown (<code>ServerStopped</code> via a throwaway store at process exit)</td><td class="keep">Leave &mdash; lifecycle, pre-loop / no live client</td></tr>
-  <tr><td>Conversation events, <code>TurnHalted/Resumed</code>, <code>MonitorDelivery</code>, self-exit <code>MonitorStopped</code>, <code>MonitorStarted</code></td><td>Loop / inbox</td><td class="keep">Leave &mdash; correctly turn- or LLM-bound</td></tr>
-</table>
-
-<h3>The principle: event-time and commit-time are independent &mdash; keep both</h3>
-
-<div class="box ok">
-  <p>Two genuinely separate facts, neither derived from the other:</p>
-  <ul>
-    <li><strong>Event time</strong> &mdash; the embedded <code>time</code> field (and
-    the UUID&nbsp;v7 <code>event_id</code>, which encodes creation time): <em>when the
-    thing happened</em>.</li>
-    <li><strong>Commit / arrival order</strong> &mdash; the line’s position in
-    <small class="path">events.jsonl</small>: <em>the order the system observed and
-    durably recorded it</em>.</li>
-  </ul>
-  <p>Collapsing them loses information. Their <em>divergence is signal</em> &mdash; it
-  records clock skew, delivery latency, and out-of-band races directly in the log
-  (the original stderr bug would be visible as an event whose <code>time</code> is
-  seconds before its neighbours’ commit). So: <strong>never sort the log by time</strong>
-  (the UI displays in file/arrival order, each row showing its own <code>time</code>);
-  <strong>stamp <code>time</code> at the moment of occurrence, append whenever</strong>;
-  <strong>one occurrence = one creation = one <code>time</code> = one <code>event_id</code></strong>,
-  routed to both disk and wire from that single value.</p>
-</div>
-
-<h3>The sink contract</h3>
-
-<p><code>EventSink::emit(event)</code> = append to <small class="path">events.jsonl</small>
-+ broadcast to the WS, in arrival order, from any caller at any wall-clock time. The
-event already carries its true event-time; the sink only commits it. <strong>No
-coordination or locking is needed</strong>, precisely because we are <em>not</em>
-enforcing time order on the file:</p>
-<ul>
-  <li><code>EventStore</code> is stateless (<small class="path">struct { path }</small>);
-  <code>append(&amp;self)</code> opens with <code>O_APPEND</code> and does one
-  <code>write_all</code> of a single newline-terminated line &rarr; per-line atomic,
-  concurrent-writer-safe today. The persistence half of the sink already exists.</li>
-  <li><code>ws_tx</code> is a tokio <code>UnboundedSender&lt;WsMessage&gt;</code> &mdash;
-  already <code>Clone</code> + multi-producer. The only wrinkle is that it is
-  <code>Option</code> and replaced on reconnect, so the sink must resolve the
-  <em>current</em> sender at emit time rather than hold a stale clone.</li>
-</ul>
-
-<h3>User actions vs loop actions (model / effort)</h3>
-
-<div class="box warn">
-  <p>A model/effort change is a <strong>user action</strong>, so its <em>event</em>
-  belongs out of band &mdash; recorded and shown at click-time, even mid-turn (the UI
-  can truthfully say “switched to opus at&nbsp;T”). But its <em>effect</em> must be
-  <strong>turn-aligned</strong>: today <code>active_model</code> is read fresh on every
-  <code>LlmRequest</code>, and a turn issues several, so a mid-turn change leaks into
-  the remaining steps of the in-flight turn. The fix is to <strong>snapshot model +
-  effort at <code>drive_turn</code> entry</strong> and use that snapshot for the whole
-  turn; the change lands on the next turn. Record the action when it happens; apply
-  its effect when it is safe.</p>
-</div>
-
-<h3>Downsides &mdash; verdict</h3>
-
-<table>
-  <tr><th>Concern</th><th>Severity</th><th>Notes</th></tr>
-  <tr><td>Out-of-order file (later <code>time</code> committed before earlier)</td><td>None (by design)</td><td>Real sub-ms race window, but file-order display is accepted; each row shows its own <code>time</code>. Not a defect to repair.</td></tr>
-  <tr><td>Concurrent append safety</td><td>None</td><td>Stateless store + <code>O_APPEND</code> per-line atomic; already used concurrently by <code>ControlHandle</code>.</td></tr>
-  <tr><td>WS fan-out becomes multi-producer</td><td>Low</td><td><code>UnboundedSender</code> is already multi-producer; only the <code>Option</code>/reconnect lifecycle needs care.</td></tr>
-  <tr><td>Testability of async timing</td><td>Medium</td><td>Assert presence + content + plausible time, never tight timing or file position &mdash; flaky tests are forbidden.</td></tr>
-  <tr><td>Chattiness / backpressure</td><td>Medium</td><td>Direct emission loses seam-coalescing; a flooding monitor could write many events fast. Coalesce/rate-limit in the sink (&sect;13 already flagged stderr chattiness).</td></tr>
-  <tr><td>Crash leaves holes, not a clean prefix</td><td>Low</td><td>Per-line atomic = no torn lines; acceptable for a diagnostic log.</td></tr>
-</table>
-
-<h3>Plan: Phase&nbsp;A now, Phase&nbsp;B documented</h3>
-
-<p><strong>Phase&nbsp;A &mdash; additive sink. <span class="keep">[SHIPPED]</span></strong> Introduce
-<code>EventSink::emit</code> as a new path used by out-of-band emitters; leave the
-loop’s existing append-and-yield path untouched. The server’s WS writer drains both
-the <code>run()</code> stream (loop events) and the sink (async events). Migrate:</p>
-<ul>
-  <li><span class="keep">Bug-fix (mandatory):</span> <code>MonitorStderr</code> &mdash;
-  emit at the moment the reader reads the line, stamped at production time; delete the
-  pending-queue/<code>drain_monitor_stderr</code> stderr path. <code>HaltRequested</code>
-  &mdash; one <code>sink.emit</code>, killing the double-stamp.</li>
-  <li><span class="keep">Cleanup + correctness:</span> <code>ModelChanged</code> /
-  <code>EffortChanged</code> &mdash; route the event through the sink (so callers can’t
-  forget to fan out or re-stamp), and add the <code>drive_turn</code>-entry snapshot so
-  the effect is turn-aligned.</li>
-  <li>Stderr must stay <strong>non-projected</strong>: it never enters the inbox, never
-  becomes <code>role:user</code> context, never costs a token &mdash; it is event-log +
-  WS only.</li>
-</ul>
-<p><strong>Phase&nbsp;B (subsequent, if A earns its keep) &mdash; full unification.</strong>
-Make the sink the <em>only</em> emission path: the loop emits via the sink too and stops
-yielding events for forwarding; server and tests observe via the sink. The dominant cost
-is migrating the test harness (today <code>Agent::send_message</code> + <code>MockProvider</code>
-collect the returned <code>run()</code> stream to assert turn output). A <em>B-variant</em>
-re-exposes the stream as a subscriber/tee of the sink to soften that migration. Phase&nbsp;B
-is documented, not scheduled &mdash; do it only once the additive sink has proven its value.
-<span class="keep"><strong>[Status: not started &mdash; the documented-but-unscheduled follow-up to the shipped Phase&nbsp;A.]</strong></span></p>
-
-<div class="box callout">
-  <strong>Acceptance criteria (Phase&nbsp;A).</strong>
-  <ul>
-    <li>&#10003; Monitor stderr appears in the UI <em>when it is produced</em> (while
-    the agent is parked, not only at the next seam), with a <em>production-time</em>
-    timestamp &mdash; verified against a <code>tail&nbsp;-F</code> scenario.</li>
-    <li>&#10003; <code>HaltRequested</code> is created once; the timestamp on disk equals
-    the timestamp on the wire.</li>
-    <li>&#10003; A mid-turn model/effort change does not alter the in-flight turn; it
-    takes effect on the next turn; its event is recorded at click-time.</li>
-    <li>&#10003; Stderr never enters the inbox or LLM context (assert no
-    <code>role:user</code> projection, zero token cost).</li>
-    <li>&#10003; Tests assert presence/content/plausible-time, not tight timing or file
-    position; no flakiness across repeated runs.</li>
-    <li>&#10003; <code>just gate</code> green; targeted <code>cargo mutants</code> on the
-    changed files leaves no survivors (named Justfile recipe added).</li>
-  </ul>
-</div>
 
 </main>
 </body>
