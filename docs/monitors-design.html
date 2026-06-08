@@ -806,6 +806,24 @@ MonitorStopped { id, reason, exit_code, time }
 
 <h2 id="open">13. Open items (deferred, non-blocking)</h2>
 <ul>
+<li><strong>Action vs. effect completeness (deferred inspection).</strong>
+  The durable event log is currently inconsistent about recording the
+  <em>action</em> (when something happened in the world, or was requested) versus
+  the <em>effect</em> (when the system acted on it). The cleanest illustration is
+  monitor <strong>stdout</strong>: the line’s queue time &mdash; the action &mdash; is
+  computed as <code>InputQueueItem.enqueued_at</code> and shown in the live
+  queue-viz, but it is <em>discarded at delivery</em>; only
+  <code>MonitorDeliveryEvent.time</code> (the effect, stamped at the seam) is
+  persisted. So we already know when the line arrived and we throw it away when we
+  write the durable event. &sect;17 pushes the opposite way for other cases
+  (stderr and <code>HaltRequested</code> recorded at action-time;
+  <code>ModelChanged</code>’s action/click split from its turn-aligned effect),
+  which makes the inconsistency worth a deliberate policy. <strong>Open question,
+  do not resolve now:</strong> always record action <em>and</em> effect as separate
+  events? Sometimes only one &mdash; and by what rule? The inspection step:
+  enumerate every <code>OmegaEvent</code> variant, classify whether it captures the
+  action, the effect, or both, and decide a documented policy. Don’t overthink it
+  now &mdash; note it and observe.</li>
 <li><strong>One-shot vs streaming split (deferred design discussion).</strong>
   Claude routes &ldquo;notify me once&rdquo; (e.g. <code>sleep 20 &amp;&amp; echo
   done</code> &mdash; a single completion) to <code>Bash run_in_background</code>,
