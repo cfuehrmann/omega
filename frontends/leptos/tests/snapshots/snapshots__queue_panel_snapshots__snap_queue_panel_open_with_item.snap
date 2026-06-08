@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="queue-panel" class="bottom-panel queue-panel"><!><!--<() />--><table data-testid="queue-table" class="panel-table queue-table"><thead><tr><th>Source</th><th>Content</th><th>Queued At</th></tr></thead><tbody><tr data-testid="queue-item" class="queue-item"><td data-testid="queue-item-source" class="queue-item-source">Human</td><td data-testid="queue-item-preview" class="queue-item-preview">fix the bug please</td><td class="queue-item-time">2025-01-01T00:00:00.000Z</td></tr><!></tbody></table></div>

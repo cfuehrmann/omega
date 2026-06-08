@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: html
+---
+<div data-testid="monitors-panel" class="bottom-panel monitors-panel"><p data-testid="monitors-empty-state" class="monitors-empty-state">No monitors running — started monitors appear here.</p><!><!--<() />--></div>

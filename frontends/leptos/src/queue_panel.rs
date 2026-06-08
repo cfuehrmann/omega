@@ -1,53 +1,36 @@
-//! Queue panel — badge + modal for the ephemeral input-queue snapshot.
+//! Queue panel — full-width in-flow panel for the ephemeral input-queue snapshot.
 //!
 //! ## Structure
 //!
 //! ```text
 //! App
 //!  ├── provide_context::<QueuePanelOpen>
-//!  └── QueueBadge  ← visible-when-non-empty header entry point
-//!       └── QueueModal ← full-viewport modal toggled by the badge
+//!  └── QueuePanel  ← full-width in-flow panel (inside .bottom-panels-container)
+//!       └── <Show when=open>
+//!            └── <div class="bottom-panel queue-panel">
+//!                 └── queue-table (or empty-state message)
 //! ```
 //!
-//! ## Discoverability design (§15 queue visualisation)
+//! ## Design (Phase 6 — Unified bottom panels)
 //!
-//! **Decision: badge ALWAYS VISIBLE (never hidden when empty).**
-//!
-//! Rationale: the queue panel is a *review instrument*. Hiding its
-//! entry point when the queue is empty makes the feature
-//! undiscoverable and untestable — the empty state is exactly when a
-//! reviewer needs to be able to find the control and confirm it works.
-//! This is the same lesson learned from the monitor badge (which was
-//! also initially gated and then made always-visible in Phase 5).
-//!
-//! The idle label is `"Queue"` so the badge reads naturally when
-//! nothing is pending, and `"N pending"` when items are waiting for
-//! delivery at the next Gather seam. Clicking on the always-visible
-//! badge opens the modal, which shows an explicit empty-state message
-//! when the queue is empty.
-//!
-//! U2 (§15): monitor sources now join the queue — monitor stdout/stop are
-//! delivered through the *same* inbox as human input and carry a
-//! `"monitor:<id>"` source (rendered as `"Monitor <id>"` by
-//! [`format_source`]).
+//! `QueuePanel` is modelled on `UsagePanel`: a `<Show when=open>` wrapping
+//! a full-width `<div class="bottom-panel queue-panel">`.  Open/close is
+//! toggled via the "Panels ▾" menu in the composer row.
+//! The table uses the shared `.panel-table` CSS class for consistent grid
+//! lines with the Usage and Monitors panels.
 //!
 //! ## Server push points
 //!
 //! The server emits [`WsMessage::InputQueue`] frames:
 //! 1. Immediately after `handle_user_message` pushes a human item.
 //! 2. On ANY `InputQueue` push — human OR monitor — via the queue's
-//!    `on_change` callback registered in `spawn_run_task` (U2: this is how
-//!    a monitor enqueue reaches the WS layer, even though it originates on a
-//!    background reader task).
-//! 3. After the agent drains an item (triggered by `UserMessage` /
-//!    `MonitorDelivery` / `MonitorStopped` events flowing through
-//!    `spawn_run_task`); snapshot reflects the post-drain queue.
+//!    `on_change` callback.
+//! 3. After the agent drains an item.
 //! 4. On connect / reset / resume — initial state.
 //!
-//! The frontend stores the latest snapshot in
-//! [`SessionStore::input_queue`] and this module reads from that signal.
+//! The frontend stores the latest snapshot in [`SessionStore::input_queue`]
+//! and this module reads from that signal.
 
-use leptos::ev;
 use leptos::prelude::*;
 
 use crate::protocol::InputQueueItem;
@@ -58,7 +41,7 @@ use crate::store::SessionStore;
 // ---------------------------------------------------------------------------
 
 /// Wraps the open/close boolean for the queue panel.  Provided as context
-/// from `App`; consumed by [`QueueBadge`] (toggle) and [`QueueModal`]
+/// from `App`; consumed by the "Panels ▾" menu (toggle) and [`QueuePanel`]
 /// (conditional rendering).
 #[derive(Debug, Clone, Copy)]
 pub struct QueuePanelOpen(pub RwSignal<bool>);
@@ -107,10 +90,10 @@ pub fn pending_count(items: &[InputQueueItem]) -> usize {
     items.len()
 }
 
-/// Label text for the queue badge.
+/// Label text for the queue menu item.
 ///
 /// Returns `"Queue"` when the queue is empty (idle / discoverable state)
-/// so the badge always reads naturally.  Returns `"1 pending"` /
+/// so the label always reads naturally.  Returns `"1 pending"` /
 /// `"N pending"` when items are waiting for delivery.
 #[must_use]
 pub fn badge_label(count: usize) -> String {
@@ -139,141 +122,89 @@ pub fn format_source(source: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// QueueBadge component
+// QueuePanel component
 // ---------------------------------------------------------------------------
 
-/// Header badge showing the number of items pending in the input queue —
-/// **always visible** (never gated on queue size).
+/// Full-width in-flow panel listing all items currently pending in the queue.
 ///
-/// Shows `"Queue"` when idle and `"N pending"` when items are waiting.
-/// Clicking the badge opens [`QueueModal`], which shows an explicit
-/// empty-state message when nothing is pending.
+/// Visibility is toggled by the "Panels ▾" menu in the composer row via
+/// [`QueuePanelOpen`].  When open the panel stacks inside the
+/// `.bottom-panels-container` between the conversation feed and the composer.
+/// The queue is displayed as a table using the shared `.panel-table` CSS class
+/// for consistent grid lines with the Usage and Monitors panels.
 ///
-/// Marked `#[mutants::skip]` — reactive / DOM body is exercised by the
-/// snapshot tests; the pure derivation functions (`pending_count`,
-/// `badge_label`, `format_source`) carry the mutation-test budget.
+/// Marked `#[mutants::skip]` — DOM rendering is covered by snapshot tests;
+/// the pure derivation functions (`pending_count`, `badge_label`,
+/// `format_source`) carry the mutation-test budget.
 #[mutants::skip]
 #[component]
-pub fn QueueBadge() -> impl IntoView {
-    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
-    let panel_open = use_context::<QueuePanelOpen>().expect("QueuePanelOpen must be provided");
-
-    let count = Memo::new(move |_| store.input_queue.with(|q| pending_count(q)));
-
-    view! {
-        <button
-            class="queue-badge"
-            data-testid="queue-badge"
-            title="Items pending delivery to the agent — click to review"
-            on:click=move |_| panel_open.toggle()
-        >
-            <span class="queue-badge-count" data-testid="queue-badge-count">
-                {move || badge_label(count.get())}
-            </span>
-        </button>
-        <QueueModal />
-    }
-}
-
-// ---------------------------------------------------------------------------
-// QueueModal component
-// ---------------------------------------------------------------------------
-
-/// Full-viewport modal listing all items currently pending in the queue.
-///
-/// Visibility is toggled by [`QueueBadge`] via [`QueuePanelOpen`].
-/// The overlay click closes the modal (same pattern as `MonitorsModal`).
-///
-/// Marked `#[mutants::skip]` — DOM rendering is covered by snapshot tests.
-#[mutants::skip]
-#[component]
-pub fn QueueModal() -> impl IntoView {
+pub fn QueuePanel() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
     let panel_open = use_context::<QueuePanelOpen>().expect("QueuePanelOpen must be provided");
 
     view! {
         <Show when=move || panel_open.is_open() fallback=|| ()>
-            <div
-                class="queue-modal-overlay"
-                data-testid="queue-modal-overlay"
-                on:click=move |_| panel_open.close()
-            >
-                <div
-                    class="queue-modal"
-                    data-testid="queue-modal"
-                    on:click=move |e: ev::MouseEvent| e.stop_propagation()
+            <div class="bottom-panel queue-panel" data-testid="queue-panel">
+
+                // Empty state
+                <Show
+                    when=move || store.input_queue.with(|q| q.is_empty())
+                    fallback=|| ()
                 >
-                    <div class="queue-modal-header">
-                        <span class="queue-modal-title">"Input Queue"</span>
-                        <button
-                            class="queue-modal-close"
-                            data-testid="queue-modal-close"
-                            on:click=move |_| panel_open.close()
-                        >"✕"</button>
-                    </div>
-                    <p class="queue-modal-subtitle">
-                        "Items below are queued for delivery to the agent at the next Gather seam."
+                    <p
+                        class="queue-empty-state"
+                        data-testid="queue-empty-state"
+                    >
+                        "No items pending — the queue is empty."
                     </p>
+                </Show>
 
-                    // Empty state
-                    <Show
-                        when=move || store.input_queue.with(|q| q.is_empty())
-                        fallback=|| ()
-                    >
-                        <p
-                            class="queue-empty-state"
-                            data-testid="queue-empty-state"
-                        >
-                            "No items pending — the queue is empty."
-                        </p>
-                    </Show>
-
-                    // Item list
-                    <Show
-                        when=move || store.input_queue.with(|q| !q.is_empty())
-                        fallback=|| ()
-                    >
-                        <ul
-                            class="queue-item-list"
-                            data-testid="queue-item-list"
-                        >
+                // Queue table — shown when there is at least one item.
+                <Show
+                    when=move || store.input_queue.with(|q| !q.is_empty())
+                    fallback=|| ()
+                >
+                    <table class="panel-table queue-table" data-testid="queue-table">
+                        <thead>
+                            <tr>
+                                <th>"Source"</th>
+                                <th>"Content"</th>
+                                <th>"Queued At"</th>
+                            </tr>
+                        </thead>
+                        <tbody>
                             {move || store.input_queue.with(|items| {
                                 items.iter().map(|item| {
                                     let source = format_source(&item.source);
                                     let preview = item.content_preview.clone();
                                     let enqueued_at = item.enqueued_at.clone();
                                     view! {
-                                        <li
+                                        <tr
                                             class="queue-item"
                                             data-testid="queue-item"
                                         >
-                                            <div class="queue-item-meta">
-                                                <span
-                                                    class="queue-item-source"
-                                                    data-testid="queue-item-source"
-                                                >
-                                                    {source}
-                                                </span>
-                                                <span class="queue-item-time">
-                                                    {enqueued_at}
-                                                </span>
-                                            </div>
-                                            <p
+                                            <td
+                                                class="queue-item-source"
+                                                data-testid="queue-item-source"
+                                            >
+                                                {source}
+                                            </td>
+                                            <td
                                                 class="queue-item-preview"
                                                 data-testid="queue-item-preview"
                                             >
                                                 {preview}
-                                            </p>
-                                            <p class="queue-item-note">
-                                                "⏳ pending delivery at the next seam"
-                                            </p>
-                                        </li>
+                                            </td>
+                                            <td class="queue-item-time">
+                                                {enqueued_at}
+                                            </td>
+                                        </tr>
                                     }
                                 }).collect::<Vec<_>>()
                             })}
-                        </ul>
-                    </Show>
-                </div>
+                        </tbody>
+                    </table>
+                </Show>
             </div>
         </Show>
     }

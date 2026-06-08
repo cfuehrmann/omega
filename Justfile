@@ -321,6 +321,21 @@ mutants-repl-resume:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
+# Run cargo-mutants targeted at the Phase-6 unified bottom panels:
+# - serialize/parse_panels_open (localStorage open-set persistence)
+# - any_panel_activity (activity-dot derivation on the Panels button)
+#
+# Covers lib.rs (storage serialise/parse) and composer.rs (activity).
+# Template: mutants-system-prompt-guard (see AGENTS.md).
+mutants-bottom-panels:
+    mkdir -p {{mutants-tmp}}
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cap-lints=true \
+        --cargo-arg=--no-default-features --cargo-arg=--features=ssr \
+        --file "src/lib.rs" \
+        --file "src/composer.rs" \
+        --file "src/monitors_panel.rs" \
+        --file "src/queue_panel.rs"
+
 # Run cargo-mutants targeted at the absolute sessions-root resolution used by
 # GET /api/sessions, so the picker's "Copy @path" button yields an absolute
 # reference. Scoped to `absolute_sessions_root` (relative-default anchoring,

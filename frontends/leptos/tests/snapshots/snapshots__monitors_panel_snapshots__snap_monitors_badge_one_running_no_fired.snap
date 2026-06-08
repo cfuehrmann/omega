@@ -1,5 +1,0 @@
----
-source: tests/snapshots.rs
-expression: html
----
-<button data-testid="monitors-badge" title="Live monitors — click to inspect" class="monitors-badge"><span data-testid="monitors-badge-count" class="monitors-badge-count">1 running</span><!><!--<() />--></button><!><!--<() />-->

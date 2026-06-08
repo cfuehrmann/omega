@@ -40,10 +40,10 @@ use omega_types::events::{
 use omega_types::ids::{Origin, SessionId};
 use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
-use omega_web::monitors_panel::{MonitorsBadge, MonitorsModal, MonitorsPanelOpen};
+use omega_web::monitors_panel::{MonitorsPanel, MonitorsPanelOpen};
 use omega_web::picker::PickerOpen;
 use omega_web::protocol::{InputQueueItem, MonitorRosterEntry, SessionInfoPayload, TurnState};
-use omega_web::queue_panel::{QueueBadge, QueueModal, QueuePanelOpen};
+use omega_web::queue_panel::{QueuePanel, QueuePanelOpen};
 use omega_web::store::SessionStore;
 use omega_web::text_modal::TextModalState;
 use omega_web::usage_panel::UsagePanelOpen;
@@ -849,8 +849,10 @@ mod composer_states {
         provide_context(ws);
         // Phase 3.9: PickerOpen is required by <Composer /> (Sessions button).
         provide_context(PickerOpen::new());
-        // UsagePanelOpen is required by <Composer /> (Usage button).
+        // Panel open-states are required by <Composer /> (Panels menu button).
         provide_context(UsagePanelOpen::new());
+        provide_context(MonitorsPanelOpen::new());
+        provide_context(QueuePanelOpen::new());
     }
 
     #[test]
@@ -977,16 +979,14 @@ mod tool_picker_states {
 }
 
 // ---------------------------------------------------------------------------
-// MonitorsBadge + MonitorsModal
+// MonitorsPanel (Phase 6 — in-flow full-width panel)
 // ---------------------------------------------------------------------------
 //
 // Coverage:
-//   - Badge hidden when roster is empty.
-//   - Badge visible with running count when monitors exist.
-//   - Badge shows fired-count span when total_fired > 0.
-//   - Modal closed (empty output).
-//   - Modal open with a running monitor row.
-//   - Modal open with a stopped monitor row (no stderr).
+//   - Panel closed (default) — Show fallback: empty output.
+//   - Panel open with an empty roster — shows empty-state message.
+//   - Panel open with a running monitor that has stderr output.
+//   - Panel open with a stopped monitor and no stderr.
 
 mod monitors_panel_snapshots {
     use super::*;
@@ -1003,8 +1003,8 @@ mod monitors_panel_snapshots {
         }
     }
 
-    /// Install the contexts that `MonitorsBadge` and `MonitorsModal` require.
-    /// Returns the `MonitorsPanelOpen` so tests can toggle the modal.
+    /// Install the contexts that `MonitorsPanel` requires.
+    /// Returns the `MonitorsPanelOpen` so tests can toggle the panel.
     fn install_monitors_context(roster: Vec<MonitorRosterEntry>) -> MonitorsPanelOpen {
         let store = SessionStore::new();
         store.roster.set(roster);
@@ -1014,81 +1014,19 @@ mod monitors_panel_snapshots {
         panel
     }
 
-    // ── Badge ────────────────────────────────────────────────────────────
+    // ── Panel ────────────────────────────────────────────────────────────
 
-    /// Empty roster — badge must ALWAYS render, showing the idle label
-    /// "Monitors" so the feature remains discoverable.
+    /// Panel open with an empty roster — must show the empty-state message.
     #[test]
-    fn snap_monitors_badge_empty_roster_shows_idle_label() {
-        let html = render(|| {
-            install_monitors_context(vec![]);
-            view! { <MonitorsBadge /> }
-        });
-        assert!(
-            html.contains("data-testid=\"monitors-badge\""),
-            "badge must be visible even when roster is empty; got: {html}"
-        );
-        assert!(
-            html.contains("Monitors"),
-            "idle label must be 'Monitors' when no monitors are running; got: {html}"
-        );
-        assert!(
-            !html.contains("data-testid=\"monitors-badge-fired\""),
-            "fired span must be absent when total_fired == 0; got: {html}"
-        );
-        insta::assert_snapshot!(html);
-    }
-
-    /// One running monitor, no events fired yet — badge present, no
-    /// fired-count span.
-    #[test]
-    fn snap_monitors_badge_one_running_no_fired() {
-        let html = render(|| {
-            install_monitors_context(vec![entry("m1", "running", 0, &[])]);
-            view! { <MonitorsBadge /> }
-        });
-        assert!(
-            html.contains("data-testid=\"monitors-badge\""),
-            "badge must be visible when monitors exist; got: {html}"
-        );
-        assert!(
-            !html.contains("data-testid=\"monitors-badge-fired\""),
-            "fired span must be absent when total_fired == 0; got: {html}"
-        );
-        insta::assert_snapshot!(html);
-    }
-
-    /// Mixed roster (one running, one stopped) with total fired events
-    /// — badge present, fired-count span visible.
-    #[test]
-    fn snap_monitors_badge_mixed_with_fired() {
-        let html = render(|| {
-            install_monitors_context(vec![
-                entry("m1", "running", 5, &[]),
-                entry("m2", "stopped", 3, &[]),
-            ]);
-            view! { <MonitorsBadge /> }
-        });
-        assert!(
-            html.contains("data-testid=\"monitors-badge-fired\""),
-            "fired span must be present when total_fired > 0; got: {html}"
-        );
-        insta::assert_snapshot!(html);
-    }
-
-    // ── Modal ────────────────────────────────────────────────────────────
-
-    /// Modal open with an empty roster — must show the empty-state message.
-    #[test]
-    fn snap_monitors_modal_open_empty_roster() {
+    fn snap_monitors_panel_open_empty_roster() {
         let html = render(|| {
             let panel = install_monitors_context(vec![]);
-            panel.0.set(true); // open the modal
-            view! { <MonitorsModal /> }
+            panel.0.set(true); // open the panel
+            view! { <MonitorsPanel /> }
         });
         assert!(
-            html.contains("data-testid=\"monitors-modal\""),
-            "modal DOM must be present when open; got: {html}"
+            html.contains("data-testid=\"monitors-panel\""),
+            "panel DOM must be present when open; got: {html}"
         );
         assert!(
             html.contains("data-testid=\"monitors-empty-state\""),
@@ -1101,24 +1039,24 @@ mod monitors_panel_snapshots {
         insta::assert_snapshot!(html);
     }
 
-    /// Modal closed (default) — `<Show when=is_open>` must emit nothing.
+    /// Panel closed (default) — `<Show when=is_open>` must emit nothing.
     #[test]
-    fn snap_monitors_modal_closed() {
+    fn snap_monitors_panel_closed() {
         let html = render(|| {
             install_monitors_context(vec![entry("m1", "running", 1, &[])]);
             // Panel stays closed (is_open() == false by default).
-            view! { <MonitorsModal /> }
+            view! { <MonitorsPanel /> }
         });
         assert!(
-            !html.contains("data-testid=\"monitors-modal\""),
-            "modal DOM must be absent when closed; got: {html}"
+            !html.contains("data-testid=\"monitors-panel\""),
+            "panel DOM must be absent when closed; got: {html}"
         );
         insta::assert_snapshot!(html);
     }
 
-    /// Modal open with a running monitor that has stderr output.
+    /// Panel open with a running monitor that has stderr output.
     #[test]
-    fn snap_monitors_modal_running_with_stderr() {
+    fn snap_monitors_panel_running_with_stderr() {
         let html = render(|| {
             let panel = install_monitors_context(vec![entry(
                 "m1",
@@ -1126,12 +1064,12 @@ mod monitors_panel_snapshots {
                 7,
                 &["stderr line 1", "stderr line 2"],
             )]);
-            panel.0.set(true); // open the modal
-            view! { <MonitorsModal /> }
+            panel.0.set(true); // open the panel
+            view! { <MonitorsPanel /> }
         });
         assert!(
-            html.contains("data-testid=\"monitors-modal\""),
-            "modal DOM must be present when open; got: {html}"
+            html.contains("data-testid=\"monitors-panel\""),
+            "panel DOM must be present when open; got: {html}"
         );
         assert!(
             html.contains("data-testid=\"monitors-row\""),
@@ -1140,13 +1078,13 @@ mod monitors_panel_snapshots {
         insta::assert_snapshot!(html);
     }
 
-    /// Modal open with a stopped monitor and no stderr.
+    /// Panel open with a stopped monitor and no stderr.
     #[test]
-    fn snap_monitors_modal_stopped_no_stderr() {
+    fn snap_monitors_panel_stopped_no_stderr() {
         let html = render(|| {
             let panel = install_monitors_context(vec![entry("m2", "stopped", 0, &[])]);
             panel.0.set(true);
-            view! { <MonitorsModal /> }
+            view! { <MonitorsPanel /> }
         });
         assert!(
             html.contains("data-testid=\"monitors-row\""),
@@ -1157,25 +1095,15 @@ mod monitors_panel_snapshots {
 }
 
 // ---------------------------------------------------------------------------
-// CSS guard — .monitors-table is defined in style.css
+// QueuePanel (Phase 6 — in-flow full-width panel)
 // ---------------------------------------------------------------------------
 //
-// Justification for carve-out: the CSS lives in a static asset file, not in
-// Rust.  There is no type-checked link between the class name used in Rust
-// (monitors_panel.rs) and the CSS definition.  An SSR snapshot test verifies
-// that the HTML *contains* the class attribute, but cannot verify that the
-// browser will actually find a matching CSS rule.  This unit test reads the
-// raw CSS file and asserts the rule exists, closing the "shipped HTML but
-// forgot the CSS" failure mode.
-
-// ---------------------------------------------------------------------------
-// QueueBadge + QueueModal (§15 queue visualisation)
-// ---------------------------------------------------------------------------
-//
-// Discoverability decision: badge is ALWAYS VISIBLE (never hidden when empty).
-// Same lesson as the monitor badge: hiding the entry point when idle makes
-// the feature undiscoverable and untestable.  Idle label: "Queue".
-// Monitor sources join the queue in U2; U1 is human-only.
+// Coverage:
+//   - Panel closed by default — Show fallback: empty output.
+//   - Panel open, queue empty — shows empty-state message.
+//   - Panel open, one pending human item — shows item with source label.
+//   - Panel open, two pending items — both rendered.
+//   - Monitor-sourced item renders with "Monitor <id>" label.
 
 mod queue_panel_snapshots {
     use super::*;
@@ -1188,7 +1116,7 @@ mod queue_panel_snapshots {
         }
     }
 
-    /// Install the contexts that `QueueBadge` and `QueueModal` require.
+    /// Install the contexts that `QueuePanel` requires.
     fn install_queue_context(items: Vec<InputQueueItem>) -> QueuePanelOpen {
         let store = SessionStore::new();
         store.input_queue.set(items);
@@ -1198,94 +1126,33 @@ mod queue_panel_snapshots {
         panel
     }
 
-    // ── Badge ────────────────────────────────────────────────────────────
+    // ── Panel ────────────────────────────────────────────────────────────
 
-    /// Empty queue — badge must ALWAYS render, showing the idle label
-    /// "Queue" so the feature remains discoverable and testable.
+    /// Panel closed by default — no panel DOM emitted.
     #[test]
-    fn snap_queue_badge_always_visible_when_empty() {
+    fn snap_queue_panel_closed() {
         let html = render(|| {
-            install_queue_context(vec![]);
-            view! { <QueueBadge /> }
+            install_queue_context(vec![qi("human", "msg")]);
+            view! { <QueuePanel /> }
         });
         assert!(
-            html.contains("data-testid=\"queue-badge\""),
-            "badge must be visible even when queue is empty; got: {html}"
+            !html.contains("data-testid=\"queue-panel\""),
+            "panel DOM must be absent when closed; got: {html}"
         );
-        assert!(
-            html.contains("Queue"),
-            "idle label must be 'Queue' when no items are pending; got: {html}"
-        );
-        // The badge span shows "Queue" not "N pending" when empty; the snapshot
-        // below pins the exact rendered HTML so regressions are caught structurally.
         insta::assert_snapshot!(html);
     }
 
-    /// Non-empty queue — badge must render.
+    /// Panel open, queue empty — shows empty-state message.
     #[test]
-    fn snap_queue_badge_visible_when_pending() {
-        let html = render(|| {
-            install_queue_context(vec![qi("human", "hello world")]);
-            view! { <QueueBadge /> }
-        });
-        assert!(
-            html.contains("data-testid=\"queue-badge\""),
-            "badge must be visible when queue has items; got: {html}"
-        );
-    }
-
-    /// Badge count text — shows \"1 pending\" for a single item.
-    #[test]
-    fn snap_queue_badge_shows_singular_count() {
-        let html = render(|| {
-            install_queue_context(vec![qi("human", "test")]);
-            view! { <QueueBadge /> }
-        });
-        assert!(
-            html.contains("1 pending"),
-            "badge must show '1 pending' for a single item; got: {html}"
-        );
-    }
-
-    /// Badge count text — shows \"N pending\" for multiple items.
-    #[test]
-    fn snap_queue_badge_shows_plural_count() {
-        let html = render(|| {
-            install_queue_context(vec![qi("human", "first"), qi("human", "second")]);
-            view! { <QueueBadge /> }
-        });
-        assert!(
-            html.contains("2 pending"),
-            "badge must show '2 pending' for two items; got: {html}"
-        );
-    }
-
-    // ── Modal ────────────────────────────────────────────────────────────
-
-    /// Modal closed by default — no modal DOM.
-    #[test]
-    fn snap_queue_modal_closed() {
-        let html = render(|| {
-            install_queue_context(vec![qi("human", "msg")]);
-            view! { <QueueModal /> }
-        });
-        assert!(
-            !html.contains("data-testid=\"queue-modal\""),
-            "modal DOM must be absent when closed; got: {html}"
-        );
-    }
-
-    /// Modal open, queue empty — shows empty-state message.
-    #[test]
-    fn snap_queue_modal_open_empty_queue() {
+    fn snap_queue_panel_open_empty_queue() {
         let html = render(|| {
             let panel = install_queue_context(vec![]);
             panel.0.set(true);
-            view! { <QueueModal /> }
+            view! { <QueuePanel /> }
         });
         assert!(
-            html.contains("data-testid=\"queue-modal\""),
-            "modal DOM must be present when open; got: {html}"
+            html.contains("data-testid=\"queue-panel\""),
+            "panel DOM must be present when open; got: {html}"
         );
         assert!(
             html.contains("data-testid=\"queue-empty-state\""),
@@ -1295,15 +1162,16 @@ mod queue_panel_snapshots {
             !html.contains("data-testid=\"queue-item\""),
             "no item rows must appear for empty queue; got: {html}"
         );
+        insta::assert_snapshot!(html);
     }
 
-    /// Modal open, one pending human item — shows item with source label.
+    /// Panel open, one pending human item — shows item with source label.
     #[test]
-    fn snap_queue_modal_open_with_item() {
+    fn snap_queue_panel_open_with_item() {
         let html = render(|| {
             let panel = install_queue_context(vec![qi("human", "fix the bug please")]);
             panel.0.set(true);
-            view! { <QueueModal /> }
+            view! { <QueuePanel /> }
         });
         assert!(
             html.contains("data-testid=\"queue-item\""),
@@ -1321,22 +1189,19 @@ mod queue_panel_snapshots {
             html.contains("fix the bug please"),
             "content preview must appear; got: {html}"
         );
-        assert!(
-            html.contains("pending delivery at the next seam"),
-            "delivery note must appear; got: {html}"
-        );
+        insta::assert_snapshot!(html);
     }
 
-    /// Modal open, two pending items — both rendered.
+    /// Panel open, two pending items — both rendered.
     #[test]
-    fn snap_queue_modal_shows_all_items() {
+    fn snap_queue_panel_shows_all_items() {
         let html = render(|| {
             let panel = install_queue_context(vec![
                 qi("human", "first message"),
                 qi("human", "second message"),
             ]);
             panel.0.set(true);
-            view! { <QueueModal /> }
+            view! { <QueuePanel /> }
         });
         assert!(
             html.contains("first message"),
@@ -1346,17 +1211,17 @@ mod queue_panel_snapshots {
             html.contains("second message"),
             "second item preview must appear; got: {html}"
         );
+        insta::assert_snapshot!(html);
     }
 
     /// U2 (§15): a monitor-sourced queued item renders with a
-    /// `"Monitor <id>"` source label — monitors now deliver through the
-    /// same inbox/queue as human input.
+    /// `"Monitor <id>"` source label.
     #[test]
-    fn snap_queue_modal_monitor_source_renders_label() {
+    fn snap_queue_panel_monitor_source_renders_label() {
         let html = render(|| {
             let panel = install_queue_context(vec![qi("monitor:watch-1", "build failed")]);
             panel.0.set(true);
-            view! { <QueueModal /> }
+            view! { <QueuePanel /> }
         });
         assert!(
             html.contains("data-testid=\"queue-item-source\""),
@@ -1370,6 +1235,7 @@ mod queue_panel_snapshots {
             html.contains("build failed"),
             "monitor content preview must appear; got: {html}"
         );
+        insta::assert_snapshot!(html);
     }
 }
 
@@ -1390,25 +1256,28 @@ fn queue_panel_css_is_defined_in_style_css() {
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", css_path.display()));
 
     assert!(
-        css.contains(".queue-badge"),
-        "style.css must define .queue-badge; add the rule or the queue badge will be unstyled"
+        css.contains(".panel-table"),
+        "style.css must define .panel-table (shared table grid class); \
+         add it or all three bottom-panel tables will be unstyled"
     );
     assert!(
-        css.contains(".queue-modal"),
-        "style.css must define .queue-modal; add the rule or the queue modal will be unstyled"
+        css.contains(".queue-panel"),
+        "style.css must define .queue-panel; add the rule or the queue panel will be unstyled"
     );
     assert!(
         css.contains(".queue-item"),
-        "style.css must define .queue-item; add the rule or queue items will be unstyled"
+        "style.css must define .queue-item; add the rule or queue rows will be unstyled"
+    );
+    assert!(
+        css.contains(".bottom-panels-container"),
+        "style.css must define .bottom-panels-container; \
+         add the rule or the panels area will have no max-height cap"
     );
 }
 
 #[test]
 #[cfg(feature = "ssr")]
-fn monitors_table_css_is_defined_in_style_css() {
-    // Walk up from the test output directory to the workspace root.
-    // The CSS file lives at `frontends/leptos/style.css` relative to the
-    // repo root, which is two levels above `frontends/leptos/`.
+fn monitors_panel_css_is_defined_in_style_css() {
     let manifest =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set during tests");
     let css_path = std::path::Path::new(&manifest).join("style.css");
@@ -1416,15 +1285,19 @@ fn monitors_table_css_is_defined_in_style_css() {
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", css_path.display()));
 
     assert!(
-        css.contains(".monitors-table"),
-        "style.css must define .monitors-table; add the rule or the roster table will be unstyled"
+        css.contains(".panel-table"),
+        "style.css must define .panel-table (shared table grid class)"
     );
     assert!(
-        css.contains(".mt-header"),
-        "style.css must define .mt-header; add the rule for column header styling"
+        css.contains(".monitors-panel"),
+        "style.css must define .monitors-panel; add the rule or the panel will be unstyled"
     );
     assert!(
         css.contains(".mt-command"),
         "style.css must define .mt-command; add the rule for Command column word-wrap"
+    );
+    assert!(
+        css.contains(".bottom-panel"),
+        "style.css must define .bottom-panel (shared panel base class)"
     );
 }

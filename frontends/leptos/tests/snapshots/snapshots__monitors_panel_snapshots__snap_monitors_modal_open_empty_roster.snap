@@ -1,5 +1,0 @@
----
-source: tests/snapshots.rs
-expression: html
----
-<div data-testid="monitors-modal-overlay" class="monitors-modal-overlay"><div data-testid="monitors-modal" class="monitors-modal"><div class="monitors-modal-header"><span class="monitors-modal-title">Active Monitors</span><button data-testid="monitors-modal-close" class="monitors-modal-close">✕</button></div><p data-testid="monitors-empty-state" class="monitors-empty-state">No monitors running — started monitors appear here.</p><!><!--<() />--></div></div>

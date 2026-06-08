@@ -66,8 +66,10 @@ use web_sys::HtmlTextAreaElement;
 use crate::completion::{accept_completion, at_token_at_cursor, next_highlight, selected_item};
 use crate::event_view::current_status_label;
 use crate::http::get_files;
+use crate::monitors_panel::{MonitorsPanelOpen, running_count, total_fired};
 use crate::picker::PickerOpen;
 use crate::protocol::{ClientFrame, TurnState};
+use crate::queue_panel::{QueuePanelOpen, pending_count};
 use crate::store::SessionStore;
 use crate::usage_panel::UsagePanelOpen;
 use crate::ws::WsClient;
@@ -449,10 +451,6 @@ pub fn Composer() -> impl IntoView {
         }
     };
 
-    // "Usage" button toggles the usage panel.
-    let usage_panel_open =
-        use_context::<UsagePanelOpen>().expect("UsagePanelOpen must be provided");
-
     view! {
         <section
             class="leptos-composer"
@@ -467,14 +465,7 @@ pub fn Composer() -> impl IntoView {
             >
                 "Sessions"
             </button>
-            <button
-                class="leptos-composer-usage"
-                data-testid="leptos-composer-usage"
-                data-panel-open=move || usage_panel_open.is_open().to_string()
-                on:click=move |_| usage_panel_open.toggle()
-            >
-                {move || if usage_panel_open.is_open() { "▲ Usage" } else { "▼ Usage" }}
-            </button>
+            <PanelsMenuButton />
             <ModelSelect active=active_model on_change=on_model_change />
             <EffortSelect active=active_effort active_model=active_model on_change=on_effort_change />
             <div class="leptos-composer-textarea-wrap">
@@ -557,8 +548,135 @@ fn turn_state_tag(turn_state: TurnState) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// Pure control-visibility projections — Panels menu
+// ---------------------------------------------------------------------------
+
+/// Whether the "Panels" button should show an activity indicator.
+///
+/// Returns `true` when there is something noteworthy in the queue or the
+/// monitor roster, so the operator knows to open those panels even when
+/// the floating badges are gone.  The usage panel is excluded — it has no
+/// "pending" state; its content is always historical token counts.
+///
+/// Conditions:
+/// - `queue_count > 0`     → items are pending delivery at the next seam.
+/// - `running_monitors > 0` → at least one monitor is actively running.
+/// - `total_fired > 0`     → at least one monitor event has been fired.
+#[must_use]
+pub fn any_panel_activity(queue_count: usize, running_monitors: usize, total_fired: u64) -> bool {
+    queue_count > 0 || running_monitors > 0 || total_fired > 0
+}
+
+// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+/// "Panels ▾" menu button that toggles a dropdown with checkboxes for each
+/// bottom panel (Usage / Queue / Monitors).  Each checkbox is bound to the
+/// corresponding `*PanelOpen` context signal.  The dropdown closes when the
+/// user clicks outside it (via a full-screen backdrop layer).
+///
+/// Marked `#[mutants::skip]` — component body is reactive/DOM glue;
+/// `any_panel_activity` carries the mutation-test budget.
+#[mutants::skip]
+#[component]
+fn PanelsMenuButton() -> impl IntoView {
+    let store = use_context::<SessionStore>().expect("SessionStore must be provided");
+    let usage_panel_open =
+        use_context::<UsagePanelOpen>().expect("UsagePanelOpen must be provided");
+    let queue_panel_open =
+        use_context::<QueuePanelOpen>().expect("QueuePanelOpen must be provided");
+    let monitors_panel_open =
+        use_context::<MonitorsPanelOpen>().expect("MonitorsPanelOpen must be provided");
+
+    let menu_open = RwSignal::new(false);
+
+    // Derived counts for the menu-item labels.
+    let queue_count = Memo::new(move |_| store.input_queue.with(|q| pending_count(q)));
+    let running = Memo::new(move |_| store.roster.with(|r| running_count(r)));
+    let fired = Memo::new(move |_| store.roster.with(|r| total_fired(r)));
+    let has_activity =
+        Memo::new(move |_| any_panel_activity(queue_count.get(), running.get(), fired.get()));
+
+    let queue_label = move || {
+        let c = queue_count.get();
+        if c == 0 {
+            "Queue".to_owned()
+        } else {
+            format!("Queue ({c} pending)")
+        }
+    };
+    let monitors_label = move || {
+        let r = running.get();
+        let f = fired.get();
+        if r == 0 && f == 0 {
+            "Monitors".to_owned()
+        } else if f == 0 {
+            format!("Monitors ({r} running)")
+        } else {
+            format!("Monitors ({r} running, {f} fired)")
+        }
+    };
+
+    view! {
+        <div class="panels-menu-wrap" style="position:relative;display:inline-flex;">
+            // Main "Panels ▾" button.
+            <button
+                class="leptos-composer-panels"
+                data-testid="panels-menu-btn"
+                data-activity=move || has_activity.get().to_string()
+                on:click=move |_| menu_open.update(|v| *v = !*v)
+            >
+                <Show when=move || has_activity.get() fallback=|| ()>
+                    <span class="panels-activity-dot" aria-label="activity" />
+                </Show>
+                "Panels ▾"
+            </button>
+
+            // Dropdown (shown when menu_open is true).
+            <Show when=move || menu_open.get() fallback=|| ()>
+                // Full-screen transparent backdrop — clicking outside the
+                // menu closes it without triggering the button toggle.
+                <div
+                    style="position:fixed;inset:0;z-index:99;"
+                    on:click=move |_| menu_open.set(false)
+                />
+                <div
+                    class="panels-menu-dropdown"
+                    data-testid="panels-menu-dropdown"
+                >
+                    <label class="panels-menu-item">
+                        <input
+                            type="checkbox"
+                            data-testid="panels-usage-checkbox"
+                            prop:checked=move || usage_panel_open.is_open()
+                            on:change=move |_| usage_panel_open.toggle()
+                        />
+                        "Usage"
+                    </label>
+                    <label class="panels-menu-item">
+                        <input
+                            type="checkbox"
+                            data-testid="panels-queue-checkbox"
+                            prop:checked=move || queue_panel_open.is_open()
+                            on:change=move |_| queue_panel_open.toggle()
+                        />
+                        {queue_label}
+                    </label>
+                    <label class="panels-menu-item">
+                        <input
+                            type="checkbox"
+                            data-testid="panels-monitors-checkbox"
+                            prop:checked=move || monitors_panel_open.is_open()
+                            on:change=move |_| monitors_panel_open.toggle()
+                        />
+                        {monitors_label}
+                    </label>
+                </div>
+            </Show>
+        </div>
+    }
+}
 
 #[component]
 fn ModelSelect<F>(active: Memo<String>, on_change: F) -> impl IntoView
@@ -689,6 +807,7 @@ pub(crate) fn status_label(status: &str) -> &'static str {
 /// truth shared with the big-block renderer in `feed.rs`.
 ///
 /// `pointer-events: none` in CSS — never intercepts clicks on the composer.
+#[mutants::skip]
 #[component]
 fn StatusChip() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
@@ -797,6 +916,7 @@ mod tests {
     // ---- show_halt / show_resume / show_abort ------------------------------
 
     #[wasm_bindgen_test]
+    #[test]
     fn show_halt_only_while_running() {
         assert!(show_halt(TurnState::Running));
         assert!(!show_halt(TurnState::Idle));
@@ -805,6 +925,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn show_resume_only_while_halted() {
         assert!(show_resume(TurnState::Halted));
         assert!(!show_resume(TurnState::Idle));
@@ -813,6 +934,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn show_abort_in_every_non_idle_state() {
         assert!(show_abort(TurnState::Running));
         assert!(show_abort(TurnState::HaltRequested));
@@ -823,6 +945,7 @@ mod tests {
     // ---- selected_label_for ------------------------------------------------
 
     #[wasm_bindgen_test]
+    #[test]
     fn selected_label_returns_label_for_known_value() {
         assert_eq!(selected_label_for(MODELS, "claude-sonnet-4-6"), "Sonnet");
         assert_eq!(selected_label_for(MODELS, "claude-opus-4-8"), "Opus 4.8");
@@ -831,6 +954,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn selected_label_falls_back_to_value_when_unknown() {
         // `xhigh` is not in the Sonnet EFFORTS list — falls back to value.
         assert_eq!(selected_label_for(EFFORTS, "xhigh"), "xhigh");
@@ -840,11 +964,13 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn selected_label_handles_empty_options() {
         assert_eq!(selected_label_for(&[], "anything"), "anything");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn selected_label_returns_first_match_when_value_appears_twice() {
         // Defensive — duplicate values shouldn't happen but the
         // function must still terminate deterministically. Locks
@@ -857,6 +983,7 @@ mod tests {
     // ---- turn_state_tag ----------------------------------------------------
 
     #[wasm_bindgen_test]
+    #[test]
     fn turn_state_tag_per_state_is_distinct() {
         assert_eq!(turn_state_tag(TurnState::Idle), "idle");
         assert_eq!(turn_state_tag(TurnState::Running), "running");
@@ -865,6 +992,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn turn_state_tag_values_are_pairwise_unique() {
         let all = [
             TurnState::Idle,
@@ -882,52 +1010,62 @@ mod tests {
     // ---- status_str / status_label ----------------------------------------
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_str_offline_when_disconnected() {
         assert_eq!(status_str(false, TurnState::Idle), "offline");
         assert_eq!(status_str(false, TurnState::Running), "offline");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_str_streaming_when_running() {
         assert_eq!(status_str(true, TurnState::Running), "streaming");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_str_halting_for_halt_requested() {
         assert_eq!(status_str(true, TurnState::HaltRequested), "halting");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_str_halted_when_halted() {
         assert_eq!(status_str(true, TurnState::Halted), "halted");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_str_ready_when_idle_and_connected() {
         assert_eq!(status_str(true, TurnState::Idle), "ready");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_label_offline() {
         assert_eq!(status_label("offline"), "Offline");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_label_streaming() {
         assert_eq!(status_label("streaming"), "Streaming…");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_label_halting() {
         assert_eq!(status_label("halting"), "Halting…");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_label_halted() {
         assert_eq!(status_label("halted"), "Halted");
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn status_label_default_is_ready() {
         assert_eq!(status_label("ready"), "Ready");
         assert_eq!(status_label("other"), "Ready");
@@ -936,6 +1074,7 @@ mod tests {
     // ---- MODELS / EFFORTS hard-coded contents -----------------------------
 
     #[wasm_bindgen_test]
+    #[test]
     fn models_list_contains_two_supported_models() {
         let values: Vec<&str> = MODELS.iter().map(|(v, _)| *v).collect();
         assert_eq!(values.len(), 2);
@@ -944,6 +1083,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn efforts_list_contains_four_supported_levels() {
         let values: Vec<&str> = EFFORTS.iter().map(|(v, _)| *v).collect();
         assert_eq!(values.len(), 4);
@@ -951,6 +1091,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn efforts_opus47_list_contains_five_levels_including_xhigh() {
         let values: Vec<&str> = EFFORTS_OPUS47.iter().map(|(v, _)| *v).collect();
         assert_eq!(values.len(), 5);
@@ -958,22 +1099,75 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn efforts_for_model_returns_opus47_list_for_opus47() {
         assert_eq!(efforts_for_model("claude-opus-4-7"), EFFORTS_OPUS47);
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn efforts_for_model_returns_opus47_list_for_opus48() {
         assert_eq!(efforts_for_model("claude-opus-4-8"), EFFORTS_OPUS47);
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn efforts_for_model_returns_standard_list_for_sonnet() {
         assert_eq!(efforts_for_model("claude-sonnet-4-6"), EFFORTS);
     }
 
     #[wasm_bindgen_test]
+    #[test]
     fn efforts_for_model_returns_standard_list_for_unknown_model() {
         assert_eq!(efforts_for_model("unknown-model"), EFFORTS);
+    }
+
+    // ---- any_panel_activity -----------------------------------------------
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn any_panel_activity_false_when_all_zero() {
+        assert!(!any_panel_activity(0, 0, 0));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn any_panel_activity_true_when_queue_non_empty() {
+        assert!(any_panel_activity(1, 0, 0));
+        assert!(any_panel_activity(5, 0, 0));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn any_panel_activity_true_when_running_monitor() {
+        assert!(any_panel_activity(0, 1, 0));
+        assert!(any_panel_activity(0, 3, 0));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn any_panel_activity_true_when_fired_events() {
+        assert!(any_panel_activity(0, 0, 1));
+        assert!(any_panel_activity(0, 0, 99));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn any_panel_activity_true_when_all_non_zero() {
+        assert!(any_panel_activity(2, 1, 5));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn any_panel_activity_queue_only_drives_dot() {
+        // One pending message, no monitors at all: still shows activity.
+        assert!(any_panel_activity(1, 0, 0));
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn any_panel_activity_fired_only_no_running_monitors() {
+        // All monitors stopped but some fired events recorded: still shows activity.
+        assert!(any_panel_activity(0, 0, 7));
     }
 }

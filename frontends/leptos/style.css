@@ -1822,10 +1822,10 @@ main > h1 {
 .status-chip[data-status="streaming"][data-event-type="resuming_session"],
 .status-chip[data-status="streaming"][data-event-type="session_resumed"] { color: var(--mauve); }
 
-/* ── Usage panel (sticky, above Composer) ───────────────────────────────── */
+/* ── Bottom-panels system (Phase 6 — Unified bottom panels) ─────────────── */
 
-/* "▼ Usage" / "▲ Usage" toggle button — styled like .leptos-composer-sessions */
-.leptos-composer-usage {
+/* "Panels ▾" menu button — wraps .leptos-composer-sessions style */
+.leptos-composer-panels {
   background: none;
   border: 1px solid var(--ctp-surface2);
   border-radius: var(--radius);
@@ -1840,25 +1840,123 @@ main > h1 {
   white-space: nowrap;
   transition: border-color 0.15s, color 0.15s;
   user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.leptos-composer-usage:hover {
+.leptos-composer-panels:hover {
   border-color: var(--ctp-blue);
   color: var(--ctp-blue);
 }
-.leptos-composer-usage[data-panel-open="true"] {
-  color: var(--ctp-blue);
-  border-color: var(--ctp-blue);
+.leptos-composer-panels[data-activity="true"] {
+  border-color: var(--ctp-yellow);
+  color: var(--ctp-yellow);
 }
 
-/* The panel itself — sits between the feed and the composer row */
+/* Activity dot — small coloured circle shown inside the button when there
+   is pending queue or monitor activity. */
+.panels-activity-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ctp-yellow);
+  flex-shrink: 0;
+}
+
+/* Dropdown menu container. */
+.panels-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 0;
+  min-width: 180px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Each checkbox row inside the dropdown. */
+.panels-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ctp-subtext0);
+  transition: background 0.12s;
+  user-select: none;
+}
+.panels-menu-item:hover {
+  background: color-mix(in srgb, var(--ctp-blue) 10%, transparent);
+  color: var(--fg);
+}
+.panels-menu-item input[type="checkbox"] {
+  accent-color: var(--ctp-blue);
+  cursor: pointer;
+}
+
+/* Scrollable container that stacks the three open panels between the
+   conversation feed and the composer row.  A capped max-height + overflow-y
+   means the stack never grows tall enough to push the composer off-screen. */
+.bottom-panels-container {
+  flex-shrink: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Shared base class for all three bottom panels (Usage, Queue, Monitors). */
+.bottom-panel {
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  padding: 6px 8px 8px;
+}
+
+/* ── Shared panel table style ──────────────────────────────────────────────
+ *
+ * All three panels (Usage, Queue, Monitors) share this class so their tables
+ * look identical: same font, same cell padding, same visible row+column grid.
+ * Panel-specific classes (.usage-table, .monitors-table, .queue-table) may
+ * add column-level overrides (alignment, max-width, etc.) but must NOT
+ * re-declare the shared properties.
+ */
+.panel-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--dim);
+  width: 100%;
+}
+.panel-table th,
+.panel-table td {
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.panel-table th {
+  background: color-mix(in srgb, var(--ctp-surface0) 40%, transparent);
+  font-weight: bold;
+  color: var(--ctp-subtext1);
+  white-space: nowrap;
+}
+
+/* The panel itself — Usage-specific overrides (keeps the name for CSS guard). */
 .usage-panel {
+  /* Inherits .bottom-panel behaviour; also present standalone for panels
+     that are direct children of the container before CSS migration. */
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   overflow-x: auto;
   padding: 6px 4px 4px;
 }
 
-/* Metrics table */
+/* Metrics table — overrides for the usage table's right-aligned values. */
 .usage-table {
   border-collapse: collapse;
   font-size: 13px;
@@ -2141,91 +2239,11 @@ main > h1 {
   cursor: default;
 }
 
-/* ── Monitors panel: badge + modal + roster table ──────────────────────── */
-/*
- * Phase 5 (Monitors UI) — the MonitorsBadge and MonitorsModal components
- * use the class names below.  The roster table (.monitors-table / .mt-*)
- * is modelled on .usage-table so column alignment is consistent.
- */
+/* ── Monitors panel (Phase 6 — in-flow, full-width) ─────────────────────── */
 
-/* Badge in the composer header strip. */
-.monitors-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: none;
-  color: var(--ctp-subtext0);
-  font-family: var(--font);
-  font-size: 12px;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-}
-.monitors-badge:hover {
-  border-color: var(--ctp-blue);
-  color: var(--ctp-blue);
-}
-.monitors-badge-count {
-  white-space: nowrap;
-}
-.monitors-badge-fired {
-  color: var(--ctp-yellow);
-  white-space: nowrap;
-}
-
-/* Full-viewport modal overlay. */
-.monitors-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 60px;
-  z-index: 300;
-}
-
-/* Modal panel. */
-.monitors-modal {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 20px 20px;
-  width: min(90vw, 900px);
-  max-height: 80vh;
-  overflow-y: auto;
-}
-
-/* Modal header bar: title + close button. */
-.monitors-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
-}
-.monitors-modal-title {
-  font-size: 14px;
-  font-weight: bold;
-  color: var(--fg);
-}
-.monitors-modal-close {
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: none;
-  color: var(--ctp-subtext0);
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 13px;
-  padding: 1px 6px;
-  transition: border-color 0.15s, color 0.15s;
-}
-.monitors-modal-close:hover {
-  border-color: var(--red);
-  color: var(--red);
+/* Panel container — shared .bottom-panel base + monitors-specific id. */
+.monitors-panel {
+  /* No additional overrides beyond .bottom-panel. */
 }
 
 /* Empty-state message when no monitors have been started. */
@@ -2233,49 +2251,23 @@ main > h1 {
   color: var(--dim);
   font-size: 13px;
   font-style: italic;
-  margin: 12px 0;
+  margin: 6px 0;
 }
 
-/* Roster table — modelled on .usage-table for consistent column alignment. */
+/* Roster table — uses shared .panel-table for grid lines. */
 .monitors-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  color: var(--fg);
+  /* Column-specific overrides on top of .panel-table: */
 }
 
-/* Header cells: bold, dimmed, bottom border for separation. */
-.mt-header {
-  font-weight: bold;
-  color: var(--dim);
-  text-align: left;
-  padding: 4px 10px 4px 0;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-/* Data cells share the same horizontal padding as headers. */
-.mt-id,
-.mt-description,
-.mt-status,
-.mt-started,
-.mt-fired,
-.mt-stderr {
-  padding: 4px 10px 4px 0;
-  vertical-align: top;
-  white-space: nowrap;
-}
-
-/* Command column may be long — allow wrapping and limit its width. */
+/* Command column — allow wrapping and cap the width so long commands
+   don't crowd out other columns. */
 .mt-command {
-  padding: 4px 10px 4px 0;
-  vertical-align: top;
   white-space: normal;
   word-break: break-all;
   max-width: 260px;
 }
 
-/* Zebra stripe for readability. */
+/* Zebra stripe for readability across the wider full-width table. */
 .monitors-row:nth-child(even) {
   background: color-mix(in srgb, var(--bg2) 60%, var(--ctp-surface0));
 }
@@ -2292,98 +2284,18 @@ main > h1 {
   color: var(--ctp-red);
   white-space: pre-wrap;
   word-break: break-all;
-  max-width: 280px;
+  max-width: 320px;
 }
 
 /* ==========================================================================
-   §15 U1 — Input-queue panel (review instrument)
-   Modelled on .monitors-badge / .monitors-modal.
-   Visible-when-non-empty: the badge is rendered only when the queue has
-   at least one item; it disappears automatically once the queue drains.
+   §15 U1 — Input-queue panel (Phase 6 — in-flow, full-width)
+   Converted from badge+modal to a stacked in-flow panel using the shared
+   .panel-table CSS class for consistent grid lines with Usage and Monitors.
    ========================================================================== */
 
-/* Badge in the header strip — shown only when items are pending. */
-.queue-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid var(--ctp-yellow);
-  border-radius: 4px;
-  color: var(--ctp-yellow);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 3px 8px;
-  transition: border-color 0.15s, color 0.15s;
-}
-.queue-badge:hover {
-  border-color: var(--ctp-peach);
-  color: var(--ctp-peach);
-}
-.queue-badge-count {
-  white-space: nowrap;
-  font-weight: bold;
-}
-
-/* Full-viewport modal overlay. */
-.queue-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 80px;
-  z-index: 1000;
-}
-
-/* Modal panel. */
-.queue-modal {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 16px 20px;
-  min-width: 360px;
-  max-width: 640px;
-  width: 100%;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-
-/* Modal header bar: title + close button. */
-.queue-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
-}
-.queue-modal-title {
-  font-size: 14px;
-  font-weight: bold;
-  color: var(--fg);
-}
-.queue-modal-close {
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 2px 6px;
-  transition: border-color 0.15s, color 0.15s;
-}
-.queue-modal-close:hover {
-  border-color: var(--red);
-  color: var(--red);
-}
-
-/* Subtitle below the header. */
-.queue-modal-subtitle {
-  color: var(--dim);
-  font-size: 12px;
-  margin: 6px 0 12px;
+/* Panel container — stacks inside .bottom-panels-container. */
+.queue-panel {
+  /* No additional overrides beyond .bottom-panel. */
 }
 
 /* Empty-state message. */
@@ -2391,61 +2303,38 @@ main > h1 {
   color: var(--dim);
   font-size: 13px;
   font-style: italic;
-  margin: 12px 0;
+  margin: 6px 0;
 }
 
-/* Pending-item list. */
-.queue-item-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* Queue table — uses shared .panel-table for grid lines. */
+.queue-table {
+  /* Column-specific overrides on top of .panel-table go here. */
 }
 
-/* Individual queued item. */
+/* Individual queued item (table row). */
 .queue-item {
-  background: color-mix(in srgb, var(--bg2) 70%, var(--ctp-surface0));
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--ctp-yellow);
-  border-radius: 4px;
-  padding: 8px 12px;
+  /* Zebra stripe for readability. */
+}
+.queue-item:nth-child(even) {
+  background: color-mix(in srgb, var(--bg2) 60%, var(--ctp-surface0));
 }
 
-/* Meta row: source label + timestamp. */
-.queue-item-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 4px;
-}
+/* Source cell — uppercase label. */
 .queue-item-source {
-  font-size: 12px;
   font-weight: bold;
   color: var(--ctp-yellow);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.queue-item-time {
-  font-size: 11px;
-  color: var(--dim);
   white-space: nowrap;
 }
 
-/* Content preview — may be truncated server-side. */
+/* Content preview — may wrap to multiple lines. */
 .queue-item-preview {
-  font-size: 13px;
-  color: var(--fg);
-  margin: 0 0 4px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-/* Delivery note. */
-.queue-item-note {
-  font-size: 11px;
+/* Timestamp cell. */
+.queue-item-time {
+  white-space: nowrap;
   color: var(--dim);
-  font-style: italic;
-  margin: 0;
+  font-size: 11px;
 }

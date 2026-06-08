@@ -1,5 +1,0 @@
----
-source: tests/snapshots.rs
-expression: html
----
-<button data-testid="queue-badge" title="Items pending delivery to the agent — click to review" class="queue-badge"><span data-testid="queue-badge-count" class="queue-badge-count">Queue</span></button><!><!--<() />-->
