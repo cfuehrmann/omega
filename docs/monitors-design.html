@@ -85,6 +85,13 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   into <code>OmegaEvent</code>, a drift-guard test keeps it that way, and
   unparseable frames surface visibly. &sect;16 records the diagnosis and the
   fix.</p>
+  <p><strong>The live frontier is now &sect;17 &mdash; the event sink.</strong>
+  User testing surfaced two more defects of one shape: monitor <em>stderr</em>
+  appears late and with stop-time timestamps, and <code>HaltRequested</code> is
+  written to disk and the wire with two <em>different</em> timestamps. Both are
+  symptoms of a structural gap: emitting an event is a side-effect of the turn
+  loop, so anything born outside a turn has no clean home. &sect;17 introduces a
+  first-class event sink and the event-time / commit-time distinction.</p>
 </div>
 
 <div class="toc">
@@ -105,7 +112,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <li><a href="#open">Open items (deferred, non-blocking)</a></li>
     <li><a href="#codefacts">Codebase facts gathered</a></li>
     <li><a href="#unified">Unified input model (implemented)</a></li>
-    <li><a href="#mirror"><strong>Eliminate the WS-message mirror (shipped — frontend protocol projection)</strong></a></li>
+    <li><a href="#mirror">Eliminate the WS-message mirror (shipped — frontend protocol projection)</a></li>
+    <li><a href="#sink"><strong>The event sink (live frontier — decouple emission from the loop)</strong></a></li>
   </ol></div>
 
 <h2 id="goal">1. Goal &amp; motivation</h2>
@@ -916,7 +924,7 @@ MonitorStopped { id, reason, exit_code, time }
 </ul>
 
 <hr/>
-<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: the monitor core (Phases&nbsp;0&ndash;4), the &sect;12 refactor, and the &sect;15 unified input model are all shipped &mdash; &sect;1&ndash;15 are the architectural record, not open work. The live frontier is <a href="#mirror">&sect;16, eliminating the WS-message mirror</a>; &sect;13 lists remaining soft spots.</p>
+<p class="meta">End of document. If continuing the <em>discussion</em> rather than implementing: the monitor core (Phases&nbsp;0&ndash;4), the &sect;12 refactor, and the &sect;15 unified input model are all shipped &mdash; &sect;1&ndash;15 are the architectural record, not open work. &sect;16 (the WS-message mirror) is shipped. The live frontier is <a href="#sink">&sect;17, the event sink</a> &mdash; decoupling event emission from the turn loop so events born outside a turn (monitor stderr, control actions) land in <small class="path">events.jsonl</small> and the UI when they happen. &sect;13 lists remaining soft spots.</p>
 
 <h2 id="unified">15. Unified input model (planned refactor — supersedes &sect;4's parking)</h2>
 
@@ -1434,6 +1442,157 @@ reader is line-oriented
 become two <code>MonitorDelivery</code> events that <code>project_messages</code>
 merges into a single <code>role:user</code> API message when they land at the same
 seam (&sect;8, &sect;15). One-item-per-line is the intended design; this is correct.</p>
+
+<h2 id="sink">17. The event sink (decouple emission from the turn loop)</h2>
+
+<p>Two defects from user testing share one root cause. (1) Monitor <strong>stderr</strong>
+is parked on an in-memory queue and only turned into <code>MonitorStderr</code>
+events when the agent loop next reaches a seam <em>for some other reason</em> &mdash;
+so it appears late and every event is stamped at drain time, not production time.
+(2) <code>HaltRequested</code> is persisted by <code>ControlHandle::request_halt</code>
+with one timestamp, then <em>re-created</em> in <code>handle_halt</code> with a fresh
+<code>now</code> for the WS broadcast &mdash; so disk and wire disagree.</p>
+
+<div class="box callout">
+  <strong>The smell.</strong> There is no first-class “emit an event” service.
+  Emitting an event is a <em>side-effect of <code>Agent::run</code></em>: the loop
+  does <code>event_store.append(&amp;ev)</code> then <code>yield AgentItem::event(ev)</code>
+  for the server to forward. So event creation is welded to the LLM conversation.
+  Historically every event <em>was</em> a turn consequence, so the loop doubling as
+  the event bus was invisible. Monitors introduced the first <em>asynchronous,
+  externally-driven</em> events; stderr is the first that is also <em>not</em>
+  LLM-bound, and it has nowhere to go. The acceptance test for the right design:
+  <em>an event that fires at wall-clock&nbsp;X must land in
+  <small class="path">events.jsonl</small> at&nbsp;X</em>, regardless of whether a
+  turn is running. Today that is impossible without an ad-hoc bypass.</p>
+</div>
+
+<h3>Audit: who already emits outside the loop</h3>
+
+<p>The “loop is the single writer” rule is already broken ad-hoc &mdash; four
+emitters share one <code>Arc&lt;EventStore&gt;</code> and append directly. They do it
+inconsistently, which is the smell made visible:</p>
+
+<table>
+  <tr><th>Event</th><th>Today</th><th>Verdict</th></tr>
+  <tr><td><code>MonitorStderr</code></td><td>Parked on the manager’s pending queue; drained at Seam&nbsp;B only</td><td class="drop">Buggy &mdash; late + drain-time stamp &rarr; <strong>sink</strong></td></tr>
+  <tr><td><code>HaltRequested</code></td><td><code>request_halt</code> appends (stamp&nbsp;#1); <code>handle_halt</code> re-creates with fresh <code>now</code> (stamp&nbsp;#2)</td><td class="drop">Buggy &mdash; disk &ne; wire &rarr; <strong>sink</strong></td></tr>
+  <tr><td><code>ModelChanged</code> / <code>EffortChanged</code></td><td><code>set_model</code>/<code>set_effort</code> append directly <em>and return the value</em> so the caller broadcasts the same event</td><td class="keep">Correct today &mdash; sink = uniformity, not a bugfix (see effect-timing below)</td></tr>
+  <tr><td><code>ServerStarted</code> / <code>ServerStopped</code> / <code>SessionStarted</code></td><td>Appended directly at bootstrap/shutdown (<code>ServerStopped</code> via a throwaway store at process exit)</td><td class="keep">Leave &mdash; lifecycle, pre-loop / no live client</td></tr>
+  <tr><td>Conversation events, <code>TurnHalted/Resumed</code>, <code>MonitorDelivery</code>, self-exit <code>MonitorStopped</code>, <code>MonitorStarted</code></td><td>Loop / inbox</td><td class="keep">Leave &mdash; correctly turn- or LLM-bound</td></tr>
+</table>
+
+<h3>The principle: event-time and commit-time are independent &mdash; keep both</h3>
+
+<div class="box ok">
+  <p>Two genuinely separate facts, neither derived from the other:</p>
+  <ul>
+    <li><strong>Event time</strong> &mdash; the embedded <code>time</code> field (and
+    the UUID&nbsp;v7 <code>event_id</code>, which encodes creation time): <em>when the
+    thing happened</em>.</li>
+    <li><strong>Commit / arrival order</strong> &mdash; the line’s position in
+    <small class="path">events.jsonl</small>: <em>the order the system observed and
+    durably recorded it</em>.</li>
+  </ul>
+  <p>Collapsing them loses information. Their <em>divergence is signal</em> &mdash; it
+  records clock skew, delivery latency, and out-of-band races directly in the log
+  (the original stderr bug would be visible as an event whose <code>time</code> is
+  seconds before its neighbours’ commit). So: <strong>never sort the log by time</strong>
+  (the UI displays in file/arrival order, each row showing its own <code>time</code>);
+  <strong>stamp <code>time</code> at the moment of occurrence, append whenever</strong>;
+  <strong>one occurrence = one creation = one <code>time</code> = one <code>event_id</code></strong>,
+  routed to both disk and wire from that single value.</p>
+</div>
+
+<h3>The sink contract</h3>
+
+<p><code>EventSink::emit(event)</code> = append to <small class="path">events.jsonl</small>
++ broadcast to the WS, in arrival order, from any caller at any wall-clock time. The
+event already carries its true event-time; the sink only commits it. <strong>No
+coordination or locking is needed</strong>, precisely because we are <em>not</em>
+enforcing time order on the file:</p>
+<ul>
+  <li><code>EventStore</code> is stateless (<small class="path">struct { path }</small>);
+  <code>append(&amp;self)</code> opens with <code>O_APPEND</code> and does one
+  <code>write_all</code> of a single newline-terminated line &rarr; per-line atomic,
+  concurrent-writer-safe today. The persistence half of the sink already exists.</li>
+  <li><code>ws_tx</code> is a tokio <code>UnboundedSender&lt;WsMessage&gt;</code> &mdash;
+  already <code>Clone</code> + multi-producer. The only wrinkle is that it is
+  <code>Option</code> and replaced on reconnect, so the sink must resolve the
+  <em>current</em> sender at emit time rather than hold a stale clone.</li>
+</ul>
+
+<h3>User actions vs loop actions (model / effort)</h3>
+
+<div class="box warn">
+  <p>A model/effort change is a <strong>user action</strong>, so its <em>event</em>
+  belongs out of band &mdash; recorded and shown at click-time, even mid-turn (the UI
+  can truthfully say “switched to opus at&nbsp;T”). But its <em>effect</em> must be
+  <strong>turn-aligned</strong>: today <code>active_model</code> is read fresh on every
+  <code>LlmRequest</code>, and a turn issues several, so a mid-turn change leaks into
+  the remaining steps of the in-flight turn. The fix is to <strong>snapshot model +
+  effort at <code>drive_turn</code> entry</strong> and use that snapshot for the whole
+  turn; the change lands on the next turn. Record the action when it happens; apply
+  its effect when it is safe.</p>
+</div>
+
+<h3>Downsides &mdash; verdict</h3>
+
+<table>
+  <tr><th>Concern</th><th>Severity</th><th>Notes</th></tr>
+  <tr><td>Out-of-order file (later <code>time</code> committed before earlier)</td><td>None (by design)</td><td>Real sub-ms race window, but file-order display is accepted; each row shows its own <code>time</code>. Not a defect to repair.</td></tr>
+  <tr><td>Concurrent append safety</td><td>None</td><td>Stateless store + <code>O_APPEND</code> per-line atomic; already used concurrently by <code>ControlHandle</code>.</td></tr>
+  <tr><td>WS fan-out becomes multi-producer</td><td>Low</td><td><code>UnboundedSender</code> is already multi-producer; only the <code>Option</code>/reconnect lifecycle needs care.</td></tr>
+  <tr><td>Testability of async timing</td><td>Medium</td><td>Assert presence + content + plausible time, never tight timing or file position &mdash; flaky tests are forbidden.</td></tr>
+  <tr><td>Chattiness / backpressure</td><td>Medium</td><td>Direct emission loses seam-coalescing; a flooding monitor could write many events fast. Coalesce/rate-limit in the sink (&sect;13 already flagged stderr chattiness).</td></tr>
+  <tr><td>Crash leaves holes, not a clean prefix</td><td>Low</td><td>Per-line atomic = no torn lines; acceptable for a diagnostic log.</td></tr>
+</table>
+
+<h3>Plan: Phase&nbsp;A now, Phase&nbsp;B documented</h3>
+
+<p><strong>Phase&nbsp;A (this work) &mdash; additive sink.</strong> Introduce
+<code>EventSink::emit</code> as a new path used by out-of-band emitters; leave the
+loop’s existing append-and-yield path untouched. The server’s WS writer drains both
+the <code>run()</code> stream (loop events) and the sink (async events). Migrate:</p>
+<ul>
+  <li><span class="keep">Bug-fix (mandatory):</span> <code>MonitorStderr</code> &mdash;
+  emit at the moment the reader reads the line, stamped at production time; delete the
+  pending-queue/<code>drain_monitor_stderr</code> stderr path. <code>HaltRequested</code>
+  &mdash; one <code>sink.emit</code>, killing the double-stamp.</li>
+  <li><span class="keep">Cleanup + correctness:</span> <code>ModelChanged</code> /
+  <code>EffortChanged</code> &mdash; route the event through the sink (so callers can’t
+  forget to fan out or re-stamp), and add the <code>drive_turn</code>-entry snapshot so
+  the effect is turn-aligned.</li>
+  <li>Stderr must stay <strong>non-projected</strong>: it never enters the inbox, never
+  becomes <code>role:user</code> context, never costs a token &mdash; it is event-log +
+  WS only.</li>
+</ul>
+<p><strong>Phase&nbsp;B (subsequent, if A earns its keep) &mdash; full unification.</strong>
+Make the sink the <em>only</em> emission path: the loop emits via the sink too and stops
+yielding events for forwarding; server and tests observe via the sink. The dominant cost
+is migrating the test harness (today <code>Agent::send_message</code> + <code>MockProvider</code>
+collect the returned <code>run()</code> stream to assert turn output). A <em>B-variant</em>
+re-exposes the stream as a subscriber/tee of the sink to soften that migration. Phase&nbsp;B
+is documented, not scheduled &mdash; do it only once the additive sink has proven its value.</p>
+
+<div class="box callout">
+  <strong>Acceptance criteria (Phase&nbsp;A).</strong>
+  <ul>
+    <li>&#10003; Monitor stderr appears in the UI <em>when it is produced</em> (while
+    the agent is parked, not only at the next seam), with a <em>production-time</em>
+    timestamp &mdash; verified against a <code>tail&nbsp;-F</code> scenario.</li>
+    <li>&#10003; <code>HaltRequested</code> is created once; the timestamp on disk equals
+    the timestamp on the wire.</li>
+    <li>&#10003; A mid-turn model/effort change does not alter the in-flight turn; it
+    takes effect on the next turn; its event is recorded at click-time.</li>
+    <li>&#10003; Stderr never enters the inbox or LLM context (assert no
+    <code>role:user</code> projection, zero token cost).</li>
+    <li>&#10003; Tests assert presence/content/plausible-time, not tight timing or file
+    position; no flakiness across repeated runs.</li>
+    <li>&#10003; <code>just gate</code> green; targeted <code>cargo mutants</code> on the
+    changed files leaves no survivors (named Justfile recipe added).</li>
+  </ul>
+</div>
 
 </main>
 </body>
