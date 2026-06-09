@@ -1867,7 +1867,7 @@ main > h1 {
 /* Dropdown menu container. */
 .panels-menu-dropdown {
   position: absolute;
-  top: calc(100% + 4px);
+  bottom: calc(100% + 4px);
   left: 0;
   z-index: 100;
   background: var(--bg2);
