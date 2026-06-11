@@ -155,8 +155,8 @@ pub fn MonitorsPanel() -> impl IntoView {
                                 <th>"Command"</th>
                                 <th>"Status"</th>
                                 <th>"Started"</th>
-                                <th>"Events fired"</th>
-                                <th>"Stderr tail"</th>
+                                <th>"# Events"</th>
+                                <th>"Stderr"</th>
                             </tr>
                         </thead>
                         <tbody>
