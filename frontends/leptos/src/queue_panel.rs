@@ -155,7 +155,7 @@ pub fn QueuePanel() -> impl IntoView {
                         class="queue-empty-state"
                         data-testid="queue-empty-state"
                     >
-                        "No items pending — the queue is empty."
+                        "No prompts pending — queued prompts appear here."
                     </p>
                 </Show>
 
