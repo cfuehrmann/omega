@@ -128,6 +128,7 @@ pub fn MonitorsPanel() -> impl IntoView {
     view! {
         <Show when=move || panel_open.is_open() fallback=|| ()>
             <div class="bottom-panel monitors-panel" data-testid="monitors-panel">
+                <h3 class="panel-heading">"Monitors"</h3>
 
                 // Empty state — shown when no monitors are in the roster.
                 <Show

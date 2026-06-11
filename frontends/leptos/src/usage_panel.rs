@@ -198,6 +198,7 @@ pub fn UsagePanel() -> impl IntoView {
     view! {
         <Show when=move || panel_open.is_open() fallback=|| ()>
             <div class="usage-panel" data-testid="usage-panel">
+                <h3 class="panel-heading">"Usage"</h3>
                 <table class="panel-table usage-table">
                     <thead>
                         <tr>

@@ -2,4 +2,4 @@
 source: tests/snapshots.rs
 expression: html
 ---
-<div data-testid="queue-panel" class="bottom-panel queue-panel"><p data-testid="queue-empty-state" class="queue-empty-state">No prompts pending — queued prompts appear here.</p><!><!--<() />--></div>
+<div data-testid="queue-panel" class="bottom-panel queue-panel"><h3 class="panel-heading">Prompts</h3><p data-testid="queue-empty-state" class="queue-empty-state">No prompts pending — queued prompts appear here.</p><!><!--<() />--></div>

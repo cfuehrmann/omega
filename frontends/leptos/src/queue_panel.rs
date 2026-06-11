@@ -147,6 +147,7 @@ pub fn QueuePanel() -> impl IntoView {
     view! {
         <Show when=move || panel_open.is_open() fallback=|| ()>
             <div class="bottom-panel queue-panel" data-testid="queue-panel">
+                <h3 class="panel-heading">"Prompts"</h3>
 
                 // Empty state
                 <Show
