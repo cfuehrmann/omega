@@ -15,7 +15,7 @@
 //!
 //! `QueuePanel` is modelled on `UsagePanel`: a `<Show when=open>` wrapping
 //! a full-width `<div class="bottom-panel queue-panel">`.  Open/close is
-//! toggled via the "Panels ▾" menu in the composer row.
+//! toggled via the "Panels" menu in the composer row.
 //! The table uses the shared `.panel-table` CSS class for consistent grid
 //! lines with the Usage and Monitors panels.
 //!
@@ -44,7 +44,7 @@ use crate::ws::WsClient;
 // ---------------------------------------------------------------------------
 
 /// Wraps the open/close boolean for the queue panel.  Provided as context
-/// from `App`; consumed by the "Panels ▾" menu (toggle) and [`QueuePanel`]
+/// from `App`; consumed by the "Panels" menu (toggle) and [`QueuePanel`]
 /// (conditional rendering).
 #[derive(Debug, Clone, Copy)]
 pub struct QueuePanelOpen(pub RwSignal<bool>);
@@ -130,7 +130,7 @@ pub fn format_source(source: &str) -> String {
 
 /// Full-width in-flow panel listing all items currently pending in the queue.
 ///
-/// Visibility is toggled by the "Panels ▾" menu in the composer row via
+/// Visibility is toggled by the "Panels" menu in the composer row via
 /// [`QueuePanelOpen`].  When open the panel stacks inside the
 /// `.bottom-panels-container` between the conversation feed and the composer.
 /// The queue is displayed as a table using the shared `.panel-table` CSS class

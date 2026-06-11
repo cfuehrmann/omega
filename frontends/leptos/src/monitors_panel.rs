@@ -15,7 +15,7 @@
 //!
 //! `MonitorsPanel` is modelled on `UsagePanel`: a `<Show when=open>` wrapping
 //! a full-width `<div class="bottom-panel monitors-panel">`.  Open/close is
-//! toggled via the "Panels ▾" menu in the composer row (not a floating badge).
+//! toggled via the "Panels" menu in the composer row (not a floating badge).
 //! The table now gets the full container width and is styled with visible row
 //! *and* column dividers via the shared `.panel-table` CSS class.
 //!
@@ -38,7 +38,7 @@ use crate::store::SessionStore;
 // ---------------------------------------------------------------------------
 
 /// Wraps the open/close boolean for the monitors panel. Provided as context
-/// from `App`; consumed by the "Panels ▾" menu (toggle) and [`MonitorsPanel`]
+/// from `App`; consumed by the "Panels" menu (toggle) and [`MonitorsPanel`]
 /// (conditional rendering).
 #[derive(Debug, Clone, Copy)]
 pub struct MonitorsPanelOpen(pub RwSignal<bool>);
@@ -109,7 +109,7 @@ pub fn badge_label(running: usize) -> String {
 
 /// Full-width in-flow panel listing all monitors in the current session.
 ///
-/// Visibility is toggled by the "Panels ▾" menu in the composer row via
+/// Visibility is toggled by the "Panels" menu in the composer row via
 /// [`MonitorsPanelOpen`].  When open the panel stacks inside the
 /// `.bottom-panels-container` between the conversation feed and the composer.
 /// The roster table uses the shared `.panel-table` CSS class for consistent

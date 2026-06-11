@@ -81,10 +81,7 @@ use crate::ws::WsClient;
 /// Models the operator may choose between in the composer's model
 /// dropdown. Hard-coded — see Phase 3.4 design notes for the
 /// "discovery endpoint" rationale.
-pub const MODELS: &[(&str, &str)] = &[
-    ("claude-sonnet-4-6", "Sonnet"),
-    ("claude-opus-4-8", "Opus 4.8"),
-];
+pub const MODELS: &[(&str, &str)] = &[("claude-sonnet-4-6", "Sonnet"), ("claude-opus-4-8", "Opus")];
 
 /// Effort levels for Sonnet 4.6 (and Opus 4.6 if ever re-added).
 /// These models support `low` / `medium` / `high` / `max`.
@@ -571,7 +568,7 @@ pub fn any_panel_activity(queue_count: usize, running_monitors: usize, total_fir
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/// "Panels ▾" menu button that toggles a dropdown with checkboxes for each
+/// "Panels" menu button that toggles a dropdown with checkboxes for each
 /// bottom panel (Usage / Queue / Monitors).  Each checkbox is bound to the
 /// corresponding `*PanelOpen` context signal.  The dropdown closes when the
 /// user clicks outside it (via a full-screen backdrop layer).
@@ -620,7 +617,7 @@ fn PanelsMenuButton() -> impl IntoView {
 
     view! {
         <div class="panels-menu-wrap" style="position:relative;display:inline-flex;">
-            // Main "Panels ▾" button.
+            // Main "Panels" button.
             <button
                 class="leptos-composer-panels"
                 data-testid="panels-menu-btn"
@@ -630,7 +627,7 @@ fn PanelsMenuButton() -> impl IntoView {
                 <Show when=move || has_activity.get() fallback=|| ()>
                     <span class="panels-activity-dot" aria-label="activity" />
                 </Show>
-                "Panels ▾"
+                "Panels"
             </button>
 
             // Dropdown (shown when menu_open is true).
@@ -948,7 +945,7 @@ mod tests {
     #[test]
     fn selected_label_returns_label_for_known_value() {
         assert_eq!(selected_label_for(MODELS, "claude-sonnet-4-6"), "Sonnet");
-        assert_eq!(selected_label_for(MODELS, "claude-opus-4-8"), "Opus 4.8");
+        assert_eq!(selected_label_for(MODELS, "claude-opus-4-8"), "Opus");
         assert_eq!(selected_label_for(EFFORTS, "low"), "Low");
         assert_eq!(selected_label_for(EFFORTS, "max"), "Max");
     }

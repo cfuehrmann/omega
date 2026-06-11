@@ -963,7 +963,7 @@ main > h1 {
 .leptos-composer-model,
 .leptos-composer-effort {
   height: 38px;
-  padding: 0 8px;
+  padding: 0 28px 0 8px;         /* right pad makes room for the custom arrow */
   border: 1px solid var(--ctp-surface2);
   border-radius: var(--radius);
   background: var(--bg);
@@ -973,13 +973,20 @@ main > h1 {
   cursor: pointer;
   align-self: flex-end;
   flex-shrink: 0;
-  transition: border-color 0.15s, color 0.15s;
-  /* Keep the native arrow visible — option (a) per the 3.4 record. */
+  transition: border-color 0.15s, color 0.15s, background-image 0s;
+  /* Custom chevron arrow — appearance: none removes the OS-native arrow. */
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1 5 5 9 1' fill='none' stroke='%23a6adc8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 10px 6px;
 }
 .leptos-composer-model:hover:not(:disabled),
 .leptos-composer-effort:hover:not(:disabled) {
   border-color: var(--ctp-blue);
   color: var(--ctp-blue);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1 5 5 9 1' fill='none' stroke='%2389b4fa' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .leptos-composer-model:focus,
 .leptos-composer-effort:focus {
@@ -1838,7 +1845,8 @@ main > h1 {
 
 /* ── Bottom-panels system (Phase 6 — Unified bottom panels) ─────────────── */
 
-/* "Panels ▾" menu button — wraps .leptos-composer-sessions style */
+/* "Panels" menu button — arrow rendered via ::after with CSS mask so it
+ * automatically inherits currentColor in every state. */
 .leptos-composer-panels {
   background: none;
   border: 1px solid var(--ctp-surface2);
@@ -1857,6 +1865,16 @@ main > h1 {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.leptos-composer-panels::after {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 6px;
+  flex-shrink: 0;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1 5 5 9 1' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 10px 6px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1 5 5 9 1' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 10px 6px;
 }
 .leptos-composer-panels:hover {
   border-color: var(--ctp-blue);
