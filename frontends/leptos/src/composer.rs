@@ -37,9 +37,7 @@
 //! |-------|----------------------------|-----------------------|
 //! | `⏎`   | any (non-empty draft)      | Send (enqueue)        |
 //! | `⇧⏎`  | any                        | newline               |
-//! | `⎋`   | Running                    | Halt                  |
-//! | `⎋`   | HaltRequested \| Halted    | Abort                 |
-//! | `⎋`   | Idle                       | browser default       |
+//! | `⎋`   | completion popup open      | close popup           |
 //!
 //! ## Pure projection
 //!
@@ -410,23 +408,6 @@ pub fn Composer() -> impl IntoView {
             // the prefix; on_input fires next).
         }
 
-        // ⎋: Halt from Running; escalate to Abort while halting/halted.
-        // (Popup Escape is already handled above and returns early.)
-        if key == "Escape" {
-            match store.turn_state.get_untracked() {
-                TurnState::Running => {
-                    evt.prevent_default();
-                    do_halt();
-                }
-                TurnState::HaltRequested | TurnState::Halted => {
-                    evt.prevent_default();
-                    do_abort();
-                }
-                TurnState::Idle => {} // browser default
-            }
-            return;
-        }
-
         // ⏎ (no Shift): Send always enqueues — works in every turn state
         // (parked → drained immediately; in-block → queued for the next
         // seam). ⇧⏎ falls through to the textarea for a newline.
@@ -500,7 +481,7 @@ pub fn Composer() -> impl IntoView {
                     data-testid="leptos-composer-halt"
                     on:click=on_halt_click
                 >
-                    "Halt ⎋"
+                    "Halt"
                 </button>
             </Show>
             <Show when=move || show_resume(store.turn_state.get()) fallback=|| ().into_any()>
@@ -518,7 +499,7 @@ pub fn Composer() -> impl IntoView {
                     data-testid="leptos-composer-abort"
                     on:click=on_abort_click
                 >
-                    "Abort ⎋"
+                    "Abort"
                 </button>
             </Show>
             <button
