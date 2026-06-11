@@ -461,7 +461,7 @@ pub fn ConversationFeed() -> impl IntoView {
 /// both human readers and LLMs.
 #[mutants::skip]
 #[component]
-fn TimestampChip(
+pub fn TimestampChip(
     /// Raw ISO-8601 UTC timestamp — the copy payload.
     iso: String,
     /// Human-readable local time to display.

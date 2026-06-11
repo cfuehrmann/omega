@@ -1596,6 +1596,20 @@ main > h1 {
 .block-label-row:not(:has(.block-label-row-btn)) .block-timestamp-pill {
   margin-left: auto;
 }
+/* Table-cell context (queue / monitors panels) — chip always visible,
+ * not hover-gated, since there is no .block ancestor. */
+.queue-item-time .block-timestamp-pill,
+.mt-started .block-timestamp-pill {
+  opacity: 0.8;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.queue-item-time .block-timestamp-pill:hover,
+.mt-started .block-timestamp-pill:hover {
+  opacity: 1;
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
 
 /* Correlation-integer superscript on tool_call and tool_result blocks.
  * Shows the 1-based ordinal assigned by assign_tool_corr() so the user

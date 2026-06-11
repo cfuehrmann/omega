@@ -33,6 +33,8 @@
 
 use leptos::prelude::*;
 
+use crate::event_view::format_time;
+use crate::feed::TimestampChip;
 use crate::protocol::InputQueueItem;
 use crate::store::SessionStore;
 
@@ -173,35 +175,43 @@ pub fn QueuePanel() -> impl IntoView {
                             </tr>
                         </thead>
                         <tbody>
-                            {move || store.input_queue.with(|items| {
-                                items.iter().map(|item| {
-                                    let source = format_source(&item.source);
-                                    let preview = item.content_preview.clone();
-                                    let enqueued_at = item.enqueued_at.clone();
-                                    view! {
-                                        <tr
-                                            class="queue-item"
-                                            data-testid="queue-item"
-                                        >
-                                            <td
-                                                class="queue-item-source"
-                                                data-testid="queue-item-source"
+                            {move || {
+                                let tz = store.agent_time_zone.get();
+                                store.input_queue.with(|items| {
+                                    items.iter().map(|item| {
+                                        let source = format_source(&item.source);
+                                        let preview = item.content_preview.clone();
+                                        let iso = item.enqueued_at.clone();
+                                        let display = format_time(&iso, &tz);
+                                        view! {
+                                            <tr
+                                                class="queue-item"
+                                                data-testid="queue-item"
                                             >
-                                                {source}
-                                            </td>
-                                            <td
-                                                class="queue-item-preview"
-                                                data-testid="queue-item-preview"
-                                            >
-                                                {preview}
-                                            </td>
-                                            <td class="queue-item-time">
-                                                {enqueued_at}
-                                            </td>
-                                        </tr>
-                                    }
-                                }).collect::<Vec<_>>()
-                            })}
+                                                <td
+                                                    class="queue-item-source"
+                                                    data-testid="queue-item-source"
+                                                >
+                                                    {source}
+                                                </td>
+                                                <td
+                                                    class="queue-item-preview"
+                                                    data-testid="queue-item-preview"
+                                                >
+                                                    {preview}
+                                                </td>
+                                                <td class="queue-item-time">
+                                                    <TimestampChip
+                                                        iso=iso
+                                                        display=display
+                                                        pill=true
+                                                    />
+                                                </td>
+                                            </tr>
+                                        }
+                                    }).collect::<Vec<_>>()
+                                })
+                            }}
                         </tbody>
                     </table>
                 </Show>

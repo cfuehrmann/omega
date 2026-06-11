@@ -28,6 +28,8 @@
 
 use leptos::prelude::*;
 
+use crate::event_view::format_time;
+use crate::feed::TimestampChip;
 use crate::protocol::MonitorRosterEntry;
 use crate::store::SessionStore;
 
@@ -158,45 +160,55 @@ pub fn MonitorsPanel() -> impl IntoView {
                             </tr>
                         </thead>
                         <tbody>
-                            {move || store.roster.with(|roster| {
-                                roster.iter().map(|m| {
-                                    let id = m.id.clone();
-                                    let id2 = id.clone();
-                                    let description = m.description.clone();
-                                    let command = m.command.clone();
-                                    let status = m.status.clone();
-                                    let started_at = m.started_at.clone();
-                                    let fired_count = m.fired_count;
-                                    let stderr = m.stderr_tail.join("\n");
-                                    let stderr2 = stderr.clone();
-                                    let status_class = if status == "running" {
-                                        "mt-status-running"
-                                    } else {
-                                        "mt-status-stopped"
-                                    };
-                                    view! {
-                                        <tr
-                                            class="monitors-row"
-                                            data-testid="monitors-row"
-                                            data-monitor-id=id2
-                                        >
-                                            <td class="mt-id"><code>{id}</code></td>
-                                            <td class="mt-description">{description}</td>
-                                            <td class="mt-command"><code>{command}</code></td>
-                                            <td class="mt-status">
-                                                <span class=status_class>{status}</span>
-                                            </td>
-                                            <td class="mt-started">{started_at}</td>
-                                            <td class="mt-fired">{fired_count}</td>
-                                            <td class="mt-stderr">
-                                                <Show when=move || !stderr.is_empty() fallback=|| ()>
-                                                    <pre class="mt-stderr-pre">{stderr2.clone()}</pre>
-                                                </Show>
-                                            </td>
-                                        </tr>
-                                    }
-                                }).collect::<Vec<_>>()
-                            })}
+                            {move || {
+                                let tz = store.agent_time_zone.get();
+                                store.roster.with(|roster| {
+                                    roster.iter().map(|m| {
+                                        let id = m.id.clone();
+                                        let id2 = id.clone();
+                                        let description = m.description.clone();
+                                        let command = m.command.clone();
+                                        let status = m.status.clone();
+                                        let iso = m.started_at.clone();
+                                        let display = format_time(&iso, &tz);
+                                        let fired_count = m.fired_count;
+                                        let stderr = m.stderr_tail.join("\n");
+                                        let stderr2 = stderr.clone();
+                                        let status_class = if status == "running" {
+                                            "mt-status-running"
+                                        } else {
+                                            "mt-status-stopped"
+                                        };
+                                        view! {
+                                            <tr
+                                                class="monitors-row"
+                                                data-testid="monitors-row"
+                                                data-monitor-id=id2
+                                            >
+                                                <td class="mt-id"><code>{id}</code></td>
+                                                <td class="mt-description">{description}</td>
+                                                <td class="mt-command"><code>{command}</code></td>
+                                                <td class="mt-status">
+                                                    <span class=status_class>{status}</span>
+                                                </td>
+                                                <td class="mt-started">
+                                                    <TimestampChip
+                                                        iso=iso
+                                                        display=display
+                                                        pill=true
+                                                    />
+                                                </td>
+                                                <td class="mt-fired">{fired_count}</td>
+                                                <td class="mt-stderr">
+                                                    <Show when=move || !stderr.is_empty() fallback=|| ()>
+                                                        <pre class="mt-stderr-pre">{stderr2.clone()}</pre>
+                                                    </Show>
+                                                </td>
+                                            </tr>
+                                        }
+                                    }).collect::<Vec<_>>()
+                                })
+                            }}
                         </tbody>
                     </table>
                 </Show>
