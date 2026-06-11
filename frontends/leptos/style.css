@@ -2350,23 +2350,22 @@ main > h1 {
   word-break: break-word;
 }
 
-/* Timestamp cell. */
+/* Timestamp cell — also hosts the absolutely-positioned delete button. */
 .queue-item-time {
   white-space: nowrap;
   color: var(--dim);
   font-size: 11px;
+  position: relative;
 }
 
-/* Actions cell — holds the delete button (human items only). */
-.queue-item-actions {
-  width: 1px; /* collapse to minimum */
-  padding: 0 4px;
-  text-align: center;
-  vertical-align: middle;
-}
-
-/* × delete button for human-sourced queue items — hidden until row hover. */
+/* × delete button — absolutely positioned at the right edge of the time cell,
+ * vertically centred, hidden until the row is hovered.  It sits on top of the
+ * chip when the cell is too narrow to fit both side-by-side. */
 .queue-item-delete-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   background: none;
   border: none;
   color: var(--ctp-subtext0);

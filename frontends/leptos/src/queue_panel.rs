@@ -174,7 +174,6 @@ pub fn QueuePanel() -> impl IntoView {
                                 <th>"Source"</th>
                                 <th>"Content"</th>
                                 <th>"Queued At"</th>
-                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -212,8 +211,6 @@ pub fn QueuePanel() -> impl IntoView {
                                                         display=display
                                                         pill=true
                                                     />
-                                                </td>
-                                                <td class="queue-item-actions">
                                                     {if is_human {
                                                         view! {
                                                             <button
