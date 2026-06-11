@@ -2015,14 +2015,15 @@ main > h1 {
 
 .ut-legend-btn {
   cursor: pointer;
-  opacity: 0.55;
   background: none;
-  border: none;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 3px;
   font: inherit;
-  color: inherit;
-  padding: 2px 4px;
+  color: var(--ctp-subtext0);
+  padding: 1px 6px;
+  transition: border-color 0.1s, color 0.1s;
 }
-.ut-legend-btn:hover { opacity: 0.9; }
+.ut-legend-btn:hover { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 
 /* ── Token-field legend overlay ─────────────────────────────────────────── */
 
@@ -2367,20 +2368,20 @@ main > h1 {
   top: 50%;
   transform: translateY(-50%);
   background: none;
-  border: none;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 3px;
   color: var(--ctp-subtext0);
   cursor: pointer;
   opacity: 0;
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1;
-  padding: 2px 5px;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s, opacity 0.1s;
+  padding: 2px 6px;
+  transition: border-color 0.15s, color 0.15s, opacity 0.1s;
 }
 .queue-item:hover .queue-item-delete-btn {
   opacity: 1;
 }
 .queue-item-delete-btn:hover {
+  border-color: var(--ctp-red);
   color: var(--ctp-red);
-  background: color-mix(in srgb, var(--ctp-red) 12%, transparent);
 }
