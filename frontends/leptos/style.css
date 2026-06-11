@@ -1989,11 +1989,6 @@ main > h1 {
   white-space: nowrap;
 }
 
-.ut-legend-cell {
-  padding-left: 12px;
-  vertical-align: middle;
-}
-
 .ut-legend-btn {
   cursor: pointer;
   opacity: 0.55;

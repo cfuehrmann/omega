@@ -7,8 +7,8 @@
 //!  ├── provide_context::<UsagePanelOpen>
 //!  └── UsagePanel           ← renders above Composer, visibility gated by
 //!       ├── usage-table      UsagePanelOpen
-//!       │    ├── header row: [turn | in (uncached) | in (cache write) |
-//!       │    │                       in (cache read) | out | ⓘ]
+//!       │    ├── header row: [ⓘ | in (uncached) | in (cache write) |
+//!       │    │                       in (cache read) | out]
 //!       │    ├── turn row    (last completed turn, or live accumulation)
 //!       │    └── session row (session-total, incl. live if streaming)
 //!       └── TokenLegend      ← fixed-position overlay toggled by ⓘ
@@ -201,12 +201,7 @@ pub fn UsagePanel() -> impl IntoView {
                 <table class="panel-table usage-table">
                     <thead>
                         <tr>
-                            <th class="ut-row-label ut-header"></th>
-                            <th class="ut-header">"in (uncached)"</th>
-                            <th class="ut-header">"in (cache write)"</th>
-                            <th class="ut-header">"in (cache read)"</th>
-                            <th class="ut-header ut-gap">"out"</th>
-                            <th class="ut-legend-cell ut-header">
+                            <th class="ut-row-label ut-header">
                                 <button
                                     class="ut-legend-btn"
                                     data-testid="usage-legend-btn"
@@ -214,6 +209,10 @@ pub fn UsagePanel() -> impl IntoView {
                                     on:click=move |_| legend_open.update(|v| *v = !*v)
                                 >"ⓘ"</button>
                             </th>
+                            <th class="ut-header">"in (uncached)"</th>
+                            <th class="ut-header">"in (cache write)"</th>
+                            <th class="ut-header">"in (cache read)"</th>
+                            <th class="ut-header ut-gap">"out"</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -225,7 +224,6 @@ pub fn UsagePanel() -> impl IntoView {
                                 <td class="ut-val">{c.cache_write_in}</td>
                                 <td class="ut-val">{c.cache_read_in}</td>
                                 <td class="ut-val ut-gap">{c.out}</td>
-                                <td />
                             </tr>
                         })}
                         // Session row — always present once panel is open.
@@ -238,7 +236,6 @@ pub fn UsagePanel() -> impl IntoView {
                                     <td class="ut-val">{c.cache_write_in}</td>
                                     <td class="ut-val">{c.cache_read_in}</td>
                                     <td class="ut-val ut-gap">{c.out}</td>
-                                    <td />
                                 </tr>
                             }
                         }}
