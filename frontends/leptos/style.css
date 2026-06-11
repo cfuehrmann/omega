@@ -2365,17 +2365,21 @@ main > h1 {
   vertical-align: middle;
 }
 
-/* × delete button for human-sourced queue items. */
+/* × delete button for human-sourced queue items — hidden until row hover. */
 .queue-item-delete-btn {
   background: none;
   border: none;
   color: var(--ctp-subtext0);
   cursor: pointer;
+  opacity: 0;
   font-size: 15px;
   line-height: 1;
   padding: 2px 5px;
   border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, opacity 0.1s;
+}
+.queue-item:hover .queue-item-delete-btn {
+  opacity: 1;
 }
 .queue-item-delete-btn:hover {
   color: var(--ctp-red);
