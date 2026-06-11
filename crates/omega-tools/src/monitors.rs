@@ -168,11 +168,11 @@ pub struct MonitorInfo {
 /// observed exit was the monitor's own (and therefore worth reporting) or a
 /// kill the agent/shutdown already accounted for (and therefore suppressed).
 enum NaturalStop {
-    /// The monitor was already `Stopped` (agent stop / shutdown got there
-    /// first); the waiter drops the redundant stop item.
+    /// The monitor was already removed from the roster (agent stop / shutdown
+    /// got there first); the waiter drops the redundant stop item.
     Suppress,
-    /// This call performed the `Running` → `Stopped` transition; `pgid` is the
-    /// group to reap for orphaned grandchildren.
+    /// This call removed the entry; `pgid` is the group to reap for orphaned
+    /// grandchildren.
     Transitioned { pgid: Option<u32> },
 }
 
@@ -277,13 +277,13 @@ impl MonitorManager {
     /// Number of monitors currently believed `Running`.  The loop parks iff
     /// this is non-zero (or the queue is non-empty); otherwise nothing can
     /// ever fire and it terminates.
+    ///
+    /// Stopped monitors are removed from the roster immediately, so every
+    /// entry in the map is by definition `Running` — the count is just the
+    /// map length.
     #[must_use]
     pub fn live_count(&self) -> usize {
-        self.lock()
-            .monitors
-            .values()
-            .filter(|e| e.status == MonitorStatus::Running)
-            .count()
+        self.lock().monitors.len()
     }
 
     /// Number of items currently waiting in the pending queue (non-destructive).
@@ -478,22 +478,18 @@ impl MonitorManager {
         }
     }
 
-    /// Mark a monitor Stopped **iff** it was still `Running`, reporting the
-    /// transition to the waiter.
+    /// Remove a monitor from the roster **iff** it is still present (i.e.
+    /// still `Running`), reporting the transition to the waiter.
     ///
-    /// Returns `Transitioned { pgid }` (the entry's process-group id, itself
-    /// optional) when this call performed the `Running` → `Stopped` transition
-    /// — i.e. a natural self-exit the waiter observed first.  Returns
-    /// `Suppress` when the monitor was unknown or already `Stopped` (agent stop
-    /// / shutdown got there first), so the waiter drops the redundant item.
+    /// Returns `Transitioned { pgid }` when this call removed the entry —
+    /// i.e. a natural self-exit the waiter observed first.  Returns `Suppress`
+    /// when the monitor is absent (already removed by `stop()` / `shutdown()`
+    /// before the waiter fired), so the waiter drops the redundant item.
     fn mark_stopped_natural(&self, id: &str) -> NaturalStop {
         let mut inner = self.lock();
-        match inner.monitors.get_mut(id) {
-            Some(entry) if entry.status == MonitorStatus::Running => {
-                entry.status = MonitorStatus::Stopped;
-                NaturalStop::Transitioned { pgid: entry.pgid }
-            }
-            _ => NaturalStop::Suppress,
+        match inner.monitors.remove(id) {
+            Some(entry) => NaturalStop::Transitioned { pgid: entry.pgid },
+            None => NaturalStop::Suppress,
         }
     }
 
@@ -517,20 +513,19 @@ impl MonitorManager {
         }
     }
 
-    /// Stop one monitor: kill its whole process tree and mark it Stopped.
+    /// Stop one monitor: kill its whole process tree and remove it from the
+    /// roster.
     ///
     /// Returns `true` if the monitor was **live** and was stopped (the caller
     /// should log a `MonitorStopped`).  Returns `false` — a no-op — if the id
-    /// is unknown or the monitor was already stopped.
+    /// is unknown or the monitor was already stopped (and therefore already
+    /// removed).
     pub fn stop(&self, id: &str) -> bool {
         let pgid = {
             let mut inner = self.lock();
-            match inner.monitors.get_mut(id) {
-                Some(entry) if entry.status == MonitorStatus::Running => {
-                    entry.status = MonitorStatus::Stopped;
-                    entry.pgid
-                }
-                _ => return false,
+            match inner.monitors.remove(id) {
+                Some(entry) => entry.pgid,
+                None => return false,
             }
         };
         if let Some(gid) = pgid {
@@ -543,20 +538,12 @@ impl MonitorManager {
         true
     }
 
-    /// Session-end reaping: kill every live monitor's process tree and mark
-    /// them Stopped.  Returns the ids that were live and got killed.
+    /// Session-end reaping: kill every live monitor's process tree and remove
+    /// them from the roster.  Returns the ids that were live and got killed.
     pub fn shutdown(&self) -> Vec<String> {
         let killed: Vec<(String, Option<u32>)> = {
             let mut inner = self.lock();
-            inner
-                .monitors
-                .iter_mut()
-                .filter(|(_, e)| e.status == MonitorStatus::Running)
-                .map(|(id, e)| {
-                    e.status = MonitorStatus::Stopped;
-                    (id.clone(), e.pgid)
-                })
-                .collect()
+            inner.monitors.drain().map(|(id, e)| (id, e.pgid)).collect()
         };
         for (_, pgid) in &killed {
             if let Some(gid) = pgid {
@@ -776,7 +763,7 @@ mod tests {
         let (_tmp, ctx, mgr) = ctx_with_manager();
         let r = execute_tool(
             "monitor",
-            json!({ "description": "d", "command": "printf 'a\\nb\\nc\\n'" }),
+            json!({ "description": "d", "command": "printf 'a\\nb\\nc\\n'; sleep 100" }),
             None,
             Some(&ctx),
         )
@@ -808,7 +795,7 @@ mod tests {
             "fired_count must reach 3, got roster {:?}",
             mgr.roster()
         );
-        mgr.shutdown();
+        mgr.shutdown(); // process still running; shutdown reaps it
     }
 
     /// Recording [`MonitorSink`] for the U2 routing test.
@@ -906,13 +893,19 @@ mod tests {
         );
         assert_eq!(stop.2, Some(0), "clean exit code");
 
-        // fired_count is still bumped on the manager even via the sink path.
-        assert!(
-            mgr.roster()
-                .iter()
-                .any(|m| m.id == id && m.fired_count == 2),
-            "fired_count must reach 2 via the sink path, roster {:?}",
-            mgr.roster()
+        // fired_count was bumped while running; after natural exit the entry is
+        // removed from the roster, so we verify via the sink's record count
+        // rather than the roster.
+        let delivered_count = sink
+            .stdout
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| *m == id)
+            .count();
+        assert_eq!(
+            delivered_count, 2,
+            "sink must have received exactly 2 lines"
         );
         // And nothing leaked into the pending queue (sink supersedes it).
         assert!(
@@ -935,7 +928,7 @@ mod tests {
 
         let r = execute_tool(
             "monitor",
-            json!({ "description": "d", "command": "printf 'e1\\ne2\\n' 1>&2" }),
+            json!({ "description": "d", "command": "printf 'e1\\ne2\\n' 1>&2; sleep 100" }),
             None,
             Some(&ctx),
         )
@@ -958,7 +951,8 @@ mod tests {
             .collect();
         assert_eq!(lines, vec!["e1", "e2"], "sink stderr in order");
 
-        // roster stderr_tail is still maintained on the sink path.
+        // roster stderr_tail is still maintained on the sink path (process
+        // is still running — kept alive by `; sleep 100`).
         assert!(
             poll_until(DL, || mgr.roster().iter().any(
                 |m| m.id == id && m.stderr_tail == vec!["e1".to_string(), "e2".to_string()]
@@ -974,7 +968,7 @@ mod tests {
                 .all(|i| !matches!(i, PendingItem::Stderr { .. })),
             "stderr must NOT land in the pending queue when a sink is attached"
         );
-        mgr.shutdown();
+        mgr.shutdown(); // reap the still-running sleep
     }
 
     #[tokio::test]
@@ -982,7 +976,7 @@ mod tests {
         let (_tmp, ctx, mgr) = ctx_with_manager();
         let r = execute_tool(
             "monitor",
-            json!({ "description": "d", "command": "printf 'x\\ny\\n' 1>&2" }),
+            json!({ "description": "d", "command": "printf 'x\\ny\\n' 1>&2; sleep 100" }),
             None,
             Some(&ctx),
         )
@@ -1005,14 +999,14 @@ mod tests {
             .roster()
             .into_iter()
             .find(|m| m.id == id)
-            .expect("roster")
+            .expect("roster — process kept alive by '; sleep 100'")
             .stderr_tail;
         assert_eq!(
             tail,
             vec!["x".to_string(), "y".to_string()],
             "roster stderr_tail"
         );
-        mgr.shutdown();
+        mgr.shutdown(); // reap the still-running sleep
     }
 
     #[tokio::test]
@@ -1021,7 +1015,7 @@ mod tests {
         let n = STDERR_TAIL_MAX + 5; // 25 lines
         let r = execute_tool(
             "monitor",
-            json!({ "description": "d", "command": format!("for i in $(seq 1 {n}); do echo line$i 1>&2; done") }),
+            json!({ "description": "d", "command": format!("for i in $(seq 1 {n}); do echo line$i 1>&2; done; sleep 100") }),
             None,
             Some(&ctx),
         )
@@ -1036,7 +1030,7 @@ mod tests {
             .roster()
             .into_iter()
             .find(|m| m.id == id)
-            .expect("roster")
+            .expect("roster — process kept alive by '; sleep 100'")
             .stderr_tail;
         assert_eq!(
             tail.len(),
@@ -1094,7 +1088,11 @@ mod tests {
             }
             other => panic!("expected one MonitorStopped, got {other:?}"),
         }
-        assert_eq!(mgr.status(&id), Some(MonitorStatus::Stopped));
+        assert_eq!(
+            mgr.status(&id),
+            None,
+            "stopped monitor must be removed from roster"
+        );
         assert!(
             poll_until(DL, || !process_alive(child_pid)).await,
             "sleep child {child_pid} should be killed (whole tree reaped)"
@@ -1156,7 +1154,11 @@ mod tests {
         assert_eq!(killed.len(), 2, "shutdown must report both live monitors");
         for id in &ids {
             assert!(killed.contains(id), "shutdown must include {id}");
-            assert_eq!(mgr.status(id), Some(MonitorStatus::Stopped));
+            assert_eq!(
+                mgr.status(id),
+                None,
+                "shutdown must remove {id} from roster"
+            );
         }
         for pid in pids {
             assert!(
@@ -1180,8 +1182,8 @@ mod tests {
         .await;
         let id = started_event(&r).id.clone();
         assert!(
-            poll_until(DL, || mgr.status(&id) == Some(MonitorStatus::Stopped)).await,
-            "monitor should be marked Stopped after natural exit"
+            poll_until(DL, || mgr.status(&id).is_none()).await,
+            "monitor should be removed from roster after natural exit"
         );
     }
 
@@ -1219,7 +1221,11 @@ mod tests {
         assert_eq!(stopped[0].0, &id);
         assert_eq!(stopped[0].1, MonitorStopReason::ProcessExited); // unchanged variant
         assert_eq!(stopped[0].2, Some(7), "normal exit carries its code");
-        assert_eq!(mgr.status(&id), Some(MonitorStatus::Stopped));
+        assert_eq!(
+            mgr.status(&id),
+            None,
+            "stopped monitor must be removed from roster"
+        );
     }
 
     #[tokio::test]
@@ -1279,8 +1285,8 @@ mod tests {
         assert!(poll_until(DL, || pidfile.exists()).await, "pidfile written");
         let grand = poll_read_pid(&pidfile).await.expect("grandchild pid");
         assert!(
-            poll_until(DL, || mgr.status(&id) == Some(MonitorStatus::Stopped)).await,
-            "leader should self-exit"
+            poll_until(DL, || mgr.status(&id).is_none()).await,
+            "leader should self-exit and be removed from roster"
         );
         assert!(
             poll_until(DL, || !process_alive(grand)).await,

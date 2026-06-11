@@ -98,7 +98,6 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use futures::StreamExt;
-use omega_tools::MonitorStatus;
 use tokio::time::timeout;
 
 // ---------------------------------------------------------------------------
@@ -2178,8 +2177,9 @@ async fn shutdown_reaps_live_monitors() {
     assert_eq!(reaped.len(), 2, "shutdown must report both reaped monitors");
     assert!(reaped.contains(&a.id) && reaped.contains(&b.id));
     assert_eq!(mgr.live_count(), 0, "no monitors may survive shutdown");
-    assert_eq!(mgr.status(&a.id), Some(MonitorStatus::Stopped));
-    assert_eq!(mgr.status(&b.id), Some(MonitorStatus::Stopped));
+    // Entries are removed from the roster on shutdown, so status() returns None.
+    assert_eq!(mgr.status(&a.id), None);
+    assert_eq!(mgr.status(&b.id), None);
 }
 
 // (g) Cutover: the monitor tools are now selectable — the model sees them in
@@ -2362,10 +2362,11 @@ async fn shutdown_and_log_monitors_does_not_double_log_already_stopped_monitor()
     let spawned = mgr.spawn("instant-exit", "true").expect("spawn");
     let monitor_id = spawned.id.clone();
 
-    // Wait until the manager CAS advances to Stopped.
+    // Wait until the naturally-exited monitor is removed from the roster
+    // (removal == stopped in the new design; status() returns None).
     poll_until(
-        || mgr.status(&monitor_id) == Some(MonitorStatus::Stopped),
-        "instant-exit monitor must reach Stopped status",
+        || mgr.status(&monitor_id).is_none(),
+        "instant-exit monitor must be removed from roster after natural exit",
     )
     .await;
 
