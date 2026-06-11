@@ -341,6 +341,12 @@ pub enum ClientFrame {
     DeleteSession {
         session_dir: String,
     },
+    /// Remove a specific pending queue item by its RFC 3339 `enqueued_at`
+    /// timestamp.  Mirrors `omega-server::router::ClientFrame::DeleteQueueItem`.
+    #[serde(rename_all = "camelCase")]
+    DeleteQueueItem {
+        enqueued_at: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -890,6 +896,18 @@ mod tests {
         assert_eq!(
             json,
             r#"{"type":"reset","toolSelection":["python_repl","web_search"]}"#
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn client_frame_delete_queue_item_serialises_with_camel_case_field() {
+        let frame = ClientFrame::DeleteQueueItem {
+            enqueued_at: "2025-01-01T00:00:00.000Z".into(),
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"delete_queue_item","enqueuedAt":"2025-01-01T00:00:00.000Z"}"#
         );
     }
 

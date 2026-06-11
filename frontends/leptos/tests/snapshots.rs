@@ -1189,6 +1189,10 @@ mod queue_panel_snapshots {
             html.contains("fix the bug please"),
             "content preview must appear; got: {html}"
         );
+        assert!(
+            html.contains("data-testid=\"queue-item-delete\""),
+            "delete button must be present for human items; got: {html}"
+        );
         insta::assert_snapshot!(html);
     }
 
@@ -1234,6 +1238,10 @@ mod queue_panel_snapshots {
         assert!(
             html.contains("build failed"),
             "monitor content preview must appear; got: {html}"
+        );
+        assert!(
+            !html.contains("data-testid=\"queue-item-delete\""),
+            "delete button must NOT be present for monitor items; got: {html}"
         );
         insta::assert_snapshot!(html);
     }

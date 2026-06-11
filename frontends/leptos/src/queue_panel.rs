@@ -35,8 +35,9 @@ use leptos::prelude::*;
 
 use crate::event_view::format_time;
 use crate::feed::TimestampChip;
-use crate::protocol::InputQueueItem;
+use crate::protocol::{ClientFrame, InputQueueItem};
 use crate::store::SessionStore;
+use crate::ws::WsClient;
 
 // ---------------------------------------------------------------------------
 // Context: panel open/close toggle
@@ -173,17 +174,21 @@ pub fn QueuePanel() -> impl IntoView {
                                 <th>"Source"</th>
                                 <th>"Content"</th>
                                 <th>"Queued At"</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
                             {move || {
                                 let tz = store.agent_time_zone.get();
+                                let ws = use_context::<WsClient>();
                                 store.input_queue.with(|items| {
                                     items.iter().map(|item| {
+                                        let is_human = item.source == "human";
                                         let source = format_source(&item.source);
                                         let preview = item.content_preview.clone();
                                         let iso = item.enqueued_at.clone();
                                         let display = format_time(&iso, &tz);
+                                        let iso_del = iso.clone();
                                         view! {
                                             <tr
                                                 class="queue-item"
@@ -207,6 +212,30 @@ pub fn QueuePanel() -> impl IntoView {
                                                         display=display
                                                         pill=true
                                                     />
+                                                </td>
+                                                <td class="queue-item-actions">
+                                                    {if is_human {
+                                                        view! {
+                                                            <button
+                                                                class="queue-item-delete-btn"
+                                                                title="Delete"
+                                                                data-testid="queue-item-delete"
+                                                                on:click=move |_| {
+                                                                    if let Some(ws) = ws {
+                                                                        let _ = ws.send(
+                                                                            &ClientFrame::DeleteQueueItem {
+                                                                                enqueued_at: iso_del.clone(),
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                }
+                                                            >
+                                                                "\u{00d7}"
+                                                            </button>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! { <></> }.into_any()
+                                                    }}
                                                 </td>
                                             </tr>
                                         }

@@ -508,6 +508,11 @@ enum ClientFrame {
     /// Mirrors the TS server's `delete_session` handler.
     #[serde(rename_all = "camelCase")]
     DeleteSession { session_dir: String },
+    /// Remove a specific pending queue item by its RFC 3339 `enqueued_at`
+    /// timestamp.  The server deletes the matching item (if still present),
+    /// then pushes a fresh `InputQueue` snapshot so the UI updates.
+    #[serde(rename_all = "camelCase")]
+    DeleteQueueItem { enqueued_at: String },
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -812,6 +817,9 @@ async fn dispatch_client_frame(
         ClientFrame::SetEffort { effort } => handle_set_effort(state, tx, effort).await,
         ClientFrame::DeleteSession { session_dir } => {
             handle_delete_session(state, tx, session_dir).await
+        }
+        ClientFrame::DeleteQueueItem { enqueued_at } => {
+            handle_delete_queue_item(enqueued_at, state, tx).await
         }
     }
 }
@@ -1140,6 +1148,23 @@ async fn handle_abort(state: &AppState) -> Result<(), String> {
     };
     if let Some(controls) = controls {
         controls.request_abort();
+    }
+    Ok(())
+}
+
+/// Remove one pending queue item by `enqueued_at` and push a fresh snapshot.
+async fn handle_delete_queue_item(
+    enqueued_at: String,
+    state: &AppState,
+    tx: &UnboundedSender<WsMessage>,
+) -> Result<(), String> {
+    let queue = {
+        let slot = state.active_session.lock().await;
+        slot.as_ref().map(|a| a.input_queue.clone())
+    };
+    if let Some(queue) = queue {
+        let snapshot = queue.delete(&enqueued_at);
+        let _ = tx.send(queue_snapshot_msg(snapshot));
     }
     Ok(())
 }

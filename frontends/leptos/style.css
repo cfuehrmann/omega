@@ -2356,3 +2356,28 @@ main > h1 {
   color: var(--dim);
   font-size: 11px;
 }
+
+/* Actions cell — holds the delete button (human items only). */
+.queue-item-actions {
+  width: 1px; /* collapse to minimum */
+  padding: 0 4px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* × delete button for human-sourced queue items. */
+.queue-item-delete-btn {
+  background: none;
+  border: none;
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.queue-item-delete-btn:hover {
+  color: var(--ctp-red);
+  background: color-mix(in srgb, var(--ctp-red) 12%, transparent);
+}

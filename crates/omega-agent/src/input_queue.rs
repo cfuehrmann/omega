@@ -157,6 +157,29 @@ impl InputQueue {
             .on_change = Some(cb);
     }
 
+    /// Remove the pending item whose `enqueued_at` timestamp matches
+    /// `enqueued_at` (if any).  Returns the post-deletion snapshot and fires
+    /// the `on_change` callback so the server can push a fresh queue frame.
+    /// If no item matches, the queue is unchanged and the current snapshot is
+    /// returned.
+    #[allow(clippy::must_use_candidate)]
+    pub fn delete(&self, enqueued_at: &str) -> Vec<QueuedItemView> {
+        let (snapshot, on_change) = {
+            let mut guard = self
+                .inner
+                .lock()
+                .expect("InputQueue lock poisoned in delete");
+            guard.queue.retain(|i| i.view.enqueued_at != enqueued_at);
+            let snapshot: Vec<QueuedItemView> =
+                guard.queue.iter().map(|i| i.view.clone()).collect();
+            (snapshot, guard.on_change.clone())
+        };
+        if let Some(cb) = on_change {
+            cb(snapshot.clone());
+        }
+        snapshot
+    }
+
     /// Drain **all** currently-pending items without parking (§15 U2 Seam
     /// drain).  Returns them in FIFO order; the queue is left empty.
     /// Complements [`pop`](Self::pop) (which parks and takes exactly one):
@@ -355,6 +378,67 @@ mod tests {
             monitor_id: id.to_owned(),
             lines: vec![line.to_owned()],
         }
+    }
+
+    // --- delete ---------------------------------------------------------------
+
+    #[test]
+    fn delete_removes_matching_item_by_enqueued_at() {
+        let q = InputQueue::new();
+        let snap = q.push(human("target"));
+        let ts = snap[0].enqueued_at.clone();
+        // Sleep >1 ms so the second push gets a distinct millisecond timestamp.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        q.push(human("other"));
+        let after = q.delete(&ts);
+        assert_eq!(after.len(), 1, "only the non-deleted item must remain");
+        assert!(after[0].content_preview.contains("other"));
+        assert_eq!(q.snapshot().len(), 1);
+    }
+
+    #[test]
+    fn delete_with_no_match_leaves_queue_unchanged() {
+        let q = InputQueue::new();
+        q.push(human("a"));
+        q.push(human("b"));
+        let after = q.delete("1970-01-01T00:00:00.000Z");
+        assert_eq!(after.len(), 2, "no-match delete must leave all items");
+    }
+
+    #[test]
+    fn delete_on_empty_queue_returns_empty_snapshot() {
+        let q = InputQueue::new();
+        let after = q.delete("1970-01-01T00:00:00.000Z");
+        assert!(after.is_empty());
+    }
+
+    #[test]
+    fn delete_fires_on_change_with_post_deletion_snapshot() {
+        use std::sync::Mutex as StdMutex;
+        let q = InputQueue::new();
+        let seen: Arc<StdMutex<Vec<Vec<QueuedItemView>>>> = Arc::new(StdMutex::new(Vec::new()));
+        let seen2 = Arc::clone(&seen);
+        q.set_on_change(Arc::new(move |snap| seen2.lock().unwrap().push(snap)));
+        let snap = q.push(human("to-delete"));
+        let ts = snap[0].enqueued_at.clone();
+        // Sleep >1 ms so the second push gets a distinct millisecond timestamp.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        q.push(human("keeper"));
+        seen.lock().unwrap().clear(); // ignore push callbacks
+        q.delete(&ts);
+        let calls = seen.lock().unwrap();
+        assert_eq!(calls.len(), 1, "on_change must fire exactly once on delete");
+        assert_eq!(calls[0].len(), 1, "post-deletion snapshot has one item");
+        assert!(calls[0][0].content_preview.contains("keeper"));
+    }
+
+    #[test]
+    fn delete_no_on_change_set_still_works() {
+        let q = InputQueue::new();
+        let snap = q.push(human("x"));
+        let ts = snap[0].enqueued_at.clone();
+        let after = q.delete(&ts); // must not panic
+        assert!(after.is_empty());
     }
 
     // --- drain_pending (§15 U2 Seam drain) ----------------------------------
