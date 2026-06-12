@@ -438,7 +438,9 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   wrapped = "exec &gt; {logFile} 2&gt;&amp;1\n" + cmd   # redirect the shell's own fds up front
   id = manager.spawn(description = cmd, command = wrapped)
   return { id, logFile }            # pid exposed as info; id is the handle</code></pre>
-<p>Result: one child process + the manager's usual three tasks. Because the shell's stdout/stderr are redirected
+<p>Result: one child process + the manager's usual three tasks &mdash; <strong>identical code</strong> to a normal
+  monitor's; they simply face a different pipe, so the manager cannot even tell it is running a &ldquo;job&rdquo;
+  rather than a &ldquo;monitor.&rdquo; Because the shell's stdout/stderr are redirected
   into the file, the two reader tasks see an <strong>empty pipe &rarr; zero <code>MonitorDelivery</code></strong>;
   the exit-waiter still fires <strong>one <code>MonitorStopped</code></strong> (the completion notification, carrying
   the exit code). The job lands in the roster and emits <code>MonitorStarted</code>/<code>MonitorStopped</code> like
@@ -465,7 +467,13 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <code>{ id, logFile }</code> (pid as an info field).</li>
   <li><strong>stdin = Option (a):</strong> the manager spawns with <code>stdin = piped</code> and gains a
     write-by-id method; <code>write_stdin</code> is repointed at the manager and now works for <strong>both</strong>
-    background jobs and monitors (handle changes pid &rarr; id). Preserves an existing capability and removes the
+    background jobs and monitors (handle changes pid &rarr; id). stdin is a <em>separate</em> pipe into the process &mdash;
+    the <code>exec &gt; LOG 2&gt;&amp;1</code> redirect touches stdout/stderr only, so stdin stays live and the wrapped
+    job can still be fed input.</li>
+  <li><strong>Both message kinds are synthetic.</strong> <code>MonitorDelivery</code> <em>and</em>
+    <code>MonitorStopped</code> are <code>role:user</code> injections delivered at a seam. A streaming monitor emits
+    many deliveries + one stop; a wrapped job emits zero deliveries + one stop. The only difference is the
+    stream-derived count; both always end with exactly one <code>MonitorStopped</code>. Preserves an existing capability and removes the
     last difference between the two old paths. Note: a monitor command that <em>reads</em> stdin now waits for
     input instead of getting immediate EOF (matches today's <code>run_background</code>).</li>
 </ul>
