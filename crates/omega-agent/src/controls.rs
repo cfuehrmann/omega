@@ -58,7 +58,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::event_sink::EventSink;
 use omega_types::OmegaEvent;
-use omega_types::events::HaltRequestedEvent;
+use omega_types::events::{HaltRequestedEvent, HaltUnrequestedEvent};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -135,6 +135,22 @@ impl ControlHandle {
             g.halt_requested = true;
         }
         let ev = OmegaEvent::HaltRequested(HaltRequestedEvent { time: now_iso() });
+        self.event_sink.emit(ev).await;
+    }
+
+    /// Cancel a pending halt request before the run loop reaches the seam.
+    /// Clears `halt_requested` so the agent continues running as if halt was
+    /// never requested. Emits a `HaltUnrequested` event to record the action.
+    /// No-op if no halt is pending or if the loop is already parked.
+    pub async fn unrequest_halt(&self) {
+        {
+            let mut g = self.lock_state();
+            if !g.halt_requested {
+                return;
+            }
+            g.halt_requested = false;
+        }
+        let ev = OmegaEvent::HaltUnrequested(HaltUnrequestedEvent { time: now_iso() });
         self.event_sink.emit(ev).await;
     }
 
@@ -427,6 +443,31 @@ mod tests {
         assert!(
             res.is_err(),
             "request_resume must not fire a wake when the loop is not parked"
+        );
+    }
+
+    #[tokio::test]
+    async fn unrequest_halt_clears_halt_requested_and_emits_event() {
+        let (h, _t) = make_handle();
+        h.request_halt().await;
+        assert!(h.lock_state().halt_requested);
+        h.unrequest_halt().await;
+        assert!(!h.lock_state().halt_requested, "flag must be cleared");
+        let events = h.event_sink.store().read_all().await.unwrap();
+        assert!(
+            events.iter().any(|e| e["type"] == "halt_unrequested"),
+            "must append a halt_unrequested event"
+        );
+    }
+
+    #[tokio::test]
+    async fn unrequest_halt_noop_when_no_halt_pending() {
+        let (h, _t) = make_handle();
+        h.unrequest_halt().await; // no halt requested — must be a no-op
+        let events = h.event_sink.store().read_all().await.unwrap();
+        assert!(
+            events.iter().all(|e| e["type"] != "halt_unrequested"),
+            "no event must be emitted when halt was not pending"
         );
     }
 

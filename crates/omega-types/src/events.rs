@@ -525,6 +525,14 @@ pub struct HaltRequestedEvent {
     pub time: ISOTimestamp,
 }
 
+/// The user has cancelled a pending halt request before the agent reached
+/// the seam. The agent continues running as if halt was never requested.
+/// Emitted when Resume is clicked while a halt request is in-flight.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HaltUnrequestedEvent {
+    pub time: ISOTimestamp,
+}
+
 /// The agent reached a clean seam after a halt request and parked there,
 /// waiting for the user to resume (with a queued steering message or an
 /// explicit `Resume`). Replaces the retired `TurnPaused` event.
@@ -741,6 +749,7 @@ pub enum OmegaEvent {
     ResumingSession(ResumingSessionEvent),
     SessionResumed(SessionResumedEvent),
     HaltRequested(HaltRequestedEvent),
+    HaltUnrequested(HaltUnrequestedEvent),
     TurnHalted(TurnHaltedEvent),
     TurnResumed(TurnResumedEvent),
 
@@ -822,6 +831,7 @@ impl OmegaEvent {
             Self::ResumingSession(e) => &e.time,
             Self::SessionResumed(e) => &e.time,
             Self::HaltRequested(e) => &e.time,
+            Self::HaltUnrequested(e) => &e.time,
             Self::TurnHalted(e) => &e.time,
             Self::TurnResumed(e) => &e.time,
             Self::LlmResponseStarted(e) => &e.time,

@@ -698,6 +698,7 @@ mod tests {
             OmegaEvent::ResumingSession(_) => "resuming_session",
             OmegaEvent::SessionResumed(_) => "session_resumed",
             OmegaEvent::HaltRequested(_) => "halt_requested",
+            OmegaEvent::HaltUnrequested(_) => "halt_unrequested",
             OmegaEvent::TurnHalted(_) => "turn_halted",
             OmegaEvent::TurnResumed(_) => "turn_resumed",
             OmegaEvent::LlmResponseStarted(_) => "llm_response_started",
@@ -739,6 +740,7 @@ mod tests {
             r#"{"type":"resuming_session","time":"t","resumedFrom":"r","basis":"b"}"#,
             r#"{"type":"session_resumed","time":"t","resumedFrom":"r","summary":"s"}"#,
             r#"{"type":"halt_requested","time":"t"}"#,
+            r#"{"type":"halt_unrequested","time":"t"}"#,
             r#"{"type":"turn_halted","time":"t"}"#,
             r#"{"type":"turn_resumed","time":"t"}"#,
             r#"{"type":"llm_response_started","time":"t"}"#,
@@ -768,7 +770,7 @@ mod tests {
         // guard; this count is the runtime reminder to add the sample too.
         assert_eq!(
             samples.len(),
-            33,
+            34,
             "add a drift-guard sample for the new OmegaEvent variant"
         );
         let mut seen = std::collections::BTreeSet::new();
@@ -792,7 +794,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(seen.len(), 33, "all 33 variant tags must be distinct");
+        assert_eq!(seen.len(), 34, "all 34 variant tags must be distinct");
     }
 
     // ---- ClientFrame --------------------------------------------------------

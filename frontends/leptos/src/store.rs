@@ -440,6 +440,7 @@ fn apply_event_side_effects(store: &SessionStore, ev: &OmegaEvent) {
         OmegaEvent::TurnResumed(_) => store.turn_state.set(TurnState::Running),
         OmegaEvent::TurnHalted(_) => store.turn_state.set(TurnState::Halted),
         OmegaEvent::HaltRequested(_) => store.turn_state.set(TurnState::HaltRequested),
+        OmegaEvent::HaltUnrequested(_) => store.turn_state.set(TurnState::Running),
         OmegaEvent::TurnEnd(_) | OmegaEvent::TurnInterrupted(_) => {
             store.turn_state.set(TurnState::Idle);
             store.streaming.set(false);
@@ -887,6 +888,22 @@ mod tests {
             s.apply(user_msg("hi"));
             s.apply(OmegaEvent::TurnHalted(TurnHaltedEvent { time: "t".into() }));
             assert_eq!(s.snapshot().turn_state, TurnState::Halted);
+        });
+    }
+
+    #[wasm_bindgen_test]
+    fn halt_unrequested_event_drives_running_state() {
+        with_owner(|| {
+            let s = SessionStore::new();
+            s.apply(user_msg("hi"));
+            s.apply(OmegaEvent::HaltRequested(HaltRequestedEvent {
+                time: "t".into(),
+            }));
+            assert_eq!(s.snapshot().turn_state, TurnState::HaltRequested);
+            s.apply(OmegaEvent::HaltUnrequested(
+                omega_types::events::HaltUnrequestedEvent { time: "t2".into() },
+            ));
+            assert_eq!(s.snapshot().turn_state, TurnState::Running);
         });
     }
 

@@ -798,7 +798,7 @@ async fn dispatch_client_frame(
     match frame {
         ClientFrame::UserMessage { content } => handle_user_message(content, state, tx).await,
         ClientFrame::Halt => handle_halt(state, tx).await,
-        ClientFrame::Resume => handle_resume(state).await,
+        ClientFrame::Resume => handle_resume(state, tx).await,
         ClientFrame::Abort => handle_abort(state).await,
         ClientFrame::Reset {
             model,
@@ -1119,25 +1119,54 @@ async fn handle_halt(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Resul
     Ok(())
 }
 
-/// Resume a halted turn with NO new input.  Gated on the live turn state
-/// being `"halted"` so a stray `resume` while running can't pre-arm the
-/// resume flag and auto-skip a later halt within the same turn.
-async fn handle_resume(state: &AppState) -> Result<(), String> {
-    let snapshot = {
+/// Handle a Resume frame: behaviour depends on the current turn state.
+///
+/// * `"halt_requested"` — a halt is pending but the agent hasn’t parked yet;
+///   cancel the request so the agent continues running.  Emits
+///   `HaltUnrequested` and updates `turn_state` back to `"running"`.
+/// * `"halted"` — the agent is parked at a halt seam; wake it with no new
+///   input so it emits `TurnResumed` and continues the block.
+///
+/// Any other state (including `"running"`) is a no-op: gating on the live
+/// state prevents stray frames from pre-arming the resume flag.
+async fn handle_resume(state: &AppState, tx: &UnboundedSender<WsMessage>) -> Result<(), String> {
+    type Snapshot = (
+        omega_agent::ControlHandle,
+        Arc<tokio::sync::Mutex<String>>,
+        Arc<tokio::sync::Mutex<crate::session::SessionInfoCache>>,
+    );
+    let snapshot: Option<Snapshot> = {
         let slot = state.active_session.lock().await;
-        slot.as_ref()
-            .map(|a| (a.controls.clone(), Arc::clone(&a.turn_state)))
+        slot.as_ref().map(|a| {
+            (
+                a.controls.clone(),
+                Arc::clone(&a.turn_state),
+                Arc::clone(&a.info_cache),
+            )
+        })
     };
-    let Some((controls, turn_state_arc)) = snapshot else {
+    let Some((controls, turn_state_arc, info_cache_arc)) = snapshot else {
         return Ok(());
     };
-    {
+    let ts_value = {
         let ts = turn_state_arc.lock().await;
-        if ts.as_str() != "halted" {
-            return Ok(());
+        ts.clone()
+    };
+    match ts_value.as_str() {
+        "halt_requested" => {
+            controls.unrequest_halt().await;
+            let mut ts = turn_state_arc.lock().await;
+            if turn_state_changed(ts.as_str(), "running") {
+                "running".clone_into(&mut ts);
+                let cache = info_cache_arc.lock().await.clone();
+                let _ = tx.send(cache_into_message(cache, "running".to_owned()));
+            }
         }
+        "halted" => {
+            controls.request_resume();
+        }
+        _ => {}
     }
-    controls.request_resume();
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-//! All-32-variants `OmegaEvent` reference snapshot.
+//! All-33-variants `OmegaEvent` reference snapshot.
 //!
 //! This file is the living wire-format reference for `events.jsonl`.  It
 //! contains exactly one example of every `OmegaEvent` variant, serialised
@@ -21,7 +21,8 @@
 //! adds variant 27: `ContextCompacted`.  Phase 0 Async Monitors adds
 //! variants 28–31: `MonitorStarted`, `MonitorDelivery`, `MonitorStderr`,
 //! `MonitorStopped`.  §15 (forensics gap close) adds variant 32:
-//! `HarnessRecovery`.
+//! `HarnessRecovery`.  Halt-unrequest UX adds variant 33:
+//! `HaltUnrequested`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -29,14 +30,15 @@ use omega_types::FeatureFlags;
 use omega_types::OmegaEvent;
 use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, HaltRequestedEvent,
-    HarnessRecoveryEvent, HarnessRecoveryKind, InterruptReason, LlmCallEvent, LlmErrorEvent,
-    LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent, LlmResponseUsage,
-    LlmRetryEvent, LlmRetryReason, ModelChangedEvent, MonitorDeliveryEvent, MonitorDeliveryItem,
-    MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason, MonitorStoppedEvent,
-    ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome, ServerStoppedEvent,
-    SessionResumedEvent, SessionStartedEvent, TextBlockEvent, ThinkingBlockEvent, ToolCallEvent,
-    ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent, TurnEndEvent, TurnHaltedEvent,
-    TurnInterruptedEvent, TurnMetrics, TurnResumedEvent, UsageIteration, UserMessageEvent,
+    HaltUnrequestedEvent, HarnessRecoveryEvent, HarnessRecoveryKind, InterruptReason, LlmCallEvent,
+    LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent,
+    LlmResponseUsage, LlmRetryEvent, LlmRetryReason, ModelChangedEvent, MonitorDeliveryEvent,
+    MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason,
+    MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome,
+    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
+    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent,
+    TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent, TurnMetrics, TurnResumedEvent,
+    UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use serde_json::json;
@@ -68,8 +70,8 @@ const TOOL_USE_ID: &str = "toolu_ref_01";
 ///
 /// The correlated pair (positions 6–7) uses the same `id` to demonstrate
 /// id propagation.  Every other value is illustrative but realistic.
-#[allow(clippy::too_many_lines)] // test fixture: 32 event variants, one per arm
-fn all_32_events() -> Vec<OmegaEvent> {
+#[allow(clippy::too_many_lines)] // test fixture: 33 event variants, one per arm
+fn all_33_events() -> Vec<OmegaEvent> {
     vec![
         // 1. SessionStarted
         OmegaEvent::SessionStarted(SessionStartedEvent {
@@ -212,7 +214,9 @@ fn all_32_events() -> Vec<OmegaEvent> {
         }),
         // 18. HaltRequested
         OmegaEvent::HaltRequested(HaltRequestedEvent { time: T.into() }),
-        // 19. TurnHalted
+        // 19. HaltUnrequested
+        OmegaEvent::HaltUnrequested(HaltUnrequestedEvent { time: T.into() }),
+        // 20. TurnHalted
         OmegaEvent::TurnHalted(TurnHaltedEvent { time: T.into() }),
         // 20. TurnResumed
         OmegaEvent::TurnResumed(TurnResumedEvent { time: T.into() }),
@@ -340,9 +344,9 @@ fn all_32_events() -> Vec<OmegaEvent> {
 ///     transcript field from the provider's `tool_use` block,
 ///     redacted to `[id_2]`.
 #[test]
-fn all_32_variants_reference() {
-    let events = all_32_events();
-    assert_eq!(events.len(), 32, "exactly 32 OmegaEvent variants");
+fn all_33_variants_reference() {
+    let events = all_33_events();
+    assert_eq!(events.len(), 33, "exactly 33 OmegaEvent variants");
 
     let r = common::id_redactor();
     insta::assert_json_snapshot!(events, {
