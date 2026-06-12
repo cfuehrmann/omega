@@ -82,7 +82,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <h4>Contents</h4>
   <ol>
     <li><a href="#invariants">Invariants &amp; locked-in decisions</a> <span class="meta">(do not revert)</span></li>
-    <li><a href="#active"><strong>Active investigation: blocking wait vs. streaming monitors</strong></a> <span class="meta">(promoted from future items 3 + 6)</span></li>
+    <li><a href="#active"><strong>Active investigation: blocking wait vs. streaming monitors</strong></a> <span class="meta">(promoted from future items 3 + 6; §2.7 = decided plan)</span></li>
     <li><a href="#future">Future work (sorted by attractivity)</a></li>
     <li><a href="#codefacts">Resume map (where things live)</a></li>
   </ol>
@@ -382,7 +382,10 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   real value of <code>wait_for_output</code>; the blocking is its cost. The decision is whether that
   convenience is worth keeping a blocking tool, or worth re-expressing as monitor ergonomics.</p>
 
-<h3>2.5 Open decisions</h3>
+<h3>2.5 Open decisions <span class="meta">&mdash; resolved, see §2.7</span></h3>
+<p class="meta">Kept as the record of what was weighed. The cluster was settled in <a href="#plan">§2.7</a>:
+  <code>wait_for_output</code> is removed (1, 3), the <code>monitor</code> <code>timeout_ms</code>/auto-stop
+  questions (2, 4) are deferred to evidence, and pull-on-demand (5) stays <code>read_file</code>.</p>
 <ol>
   <li><strong>Keep, demote, or retire <code>wait_for_output</code>?</strong> It is fully subsumed in capability
     by <code>monitor</code>+silent-loop, but more convenient and harder to misuse for a true one-shot wait.
@@ -416,6 +419,60 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 <p class="meta">Instrumentation question to resolve alongside: what do we record to tell whether the agent
   <em>chose well</em> (monitor vs. <code>wait_for_output</code> vs. blocking <code>run_command</code>)? The
   fired-count + commit-time/event-time skew already in the log is a start.</p>
+
+<h3 id="plan">2.7 Decided plan: fold <code>run_background</code> into the monitor manager</h3>
+<div class="box callout">
+  <p><strong>Status: decided, not yet built.</strong> Once implemented, the load-bearing points migrate to
+    §1 (invariants). This replaces <code>wait_for_output</code>'s blocking wait with Claude Code's
+    <code>run_in_background</code> contract &mdash; &ldquo;return now, you'll be notified on exit&rdquo; &mdash;
+    delivered through Omega's existing monitor machinery so background jobs become <em>observable</em>
+    (roster + event log), which they are not today.</p>
+</div>
+<p><strong>The mechanism.</strong> A background job <em>is</em> a monitor that streams nothing. There is no new
+  type, no delivery-mode flag, no schema change &mdash; the silence is a property of the <em>command</em>, not a
+  code path. <code>run_background</code> stops being its own path and calls the same
+  <code>MonitorManager::spawn</code> the <code>monitor</code> tool uses, with the command pre-wrapped to redirect
+  its output to a log file:</p>
+<pre><code>run_background(cmd):
+  logFile = &lt;session&gt;/cache/bg/&lt;ts&gt;-&lt;id&gt;.log
+  wrapped = "exec &gt; {logFile} 2&gt;&amp;1\n" + cmd   # redirect the shell's own fds up front
+  id = manager.spawn(description = cmd, command = wrapped)
+  return { id, logFile }            # pid exposed as info; id is the handle</code></pre>
+<p>Result: one child process + the manager's usual three tasks. Because the shell's stdout/stderr are redirected
+  into the file, the two reader tasks see an <strong>empty pipe &rarr; zero <code>MonitorDelivery</code></strong>;
+  the exit-waiter still fires <strong>one <code>MonitorStopped</code></strong> (the completion notification, carrying
+  the exit code). The job lands in the roster and emits <code>MonitorStarted</code>/<code>MonitorStopped</code> like
+  any monitor.</p>
+<p><strong>The log file is &ldquo;tee always&rdquo; applied to a live process.</strong> Every Omega tool already
+  preserves full output to a session-cache file and shows the LLM a bounded window (<code>cap_and_tee</code> &rarr;
+  <code>cache/{run,wait,fetch}/</code>). A background job's log is the <em>streaming</em> member of that family:
+  finite tools capture-then-tee; an unbounded process must tee <em>live</em> via fd redirection. It is the only
+  copy of a silent job's output (a streaming monitor needs none &mdash; its output is the delivery messages in
+  <code>events.jsonl</code>). Today's <code>run_background</code> writes to the system temp dir, outside the cache;
+  the plan moves it into <code>cache/bg/</code>, cross-referenced by tool-call id. This mirrors Claude's
+  <code>BashOutput</code> buffer, with <code>read_file</code> as the pull path.</p>
+<p><strong>Decisions locked.</strong></p>
+<ul>
+  <li><strong>No schema change.</strong> A background job reuses <code>MonitorStarted</code>/<code>MonitorStopped</code>
+    with zero deliveries in between. No <code>kind</code>/<code>delivery_mode</code> field, no rename &mdash; the
+    earlier over-engineered framing was dropped.</li>
+  <li><strong><code>wait_for_output</code> is deleted.</strong> &ldquo;Wait for ready&rdquo; becomes Claude's pattern:
+    <code>run_background</code> an <code>until grep -q '…'; do sleep; done</code> waiter whose exit <em>is</em> the
+    condition, or a streaming <code>monitor</code> for early/progressive signals. The tuned
+    <code>pattern</code>/<code>minBytes</code>/<code>timeoutMs</code> params become shell idioms inside the command.</li>
+  <li><strong>Unify on the manager id.</strong> The global <code>processes()</code> table is retired; jobs and
+    monitors share one registry. <code>stop_monitor</code> already keys off id; <code>run_background</code> returns
+    <code>{ id, logFile }</code> (pid as an info field).</li>
+  <li><strong>stdin = Option (a):</strong> the manager spawns with <code>stdin = piped</code> and gains a
+    write-by-id method; <code>write_stdin</code> is repointed at the manager and now works for <strong>both</strong>
+    background jobs and monitors (handle changes pid &rarr; id). Preserves an existing capability and removes the
+    last difference between the two old paths. Note: a monitor command that <em>reads</em> stdin now waits for
+    input instead of getting immediate EOF (matches today's <code>run_background</code>).</li>
+</ul>
+<p class="meta"><strong>Ripples:</strong> deleting <code>wait_for_output</code> touches <code>schemas.rs</code>,
+  <code>lib.rs</code> dispatch, <code>fetch_url.rs</code>'s tool-name match, <code>state.rs</code>, and the
+  <strong>system prompt</strong> (which documents it heavily). Out of scope for v1 (flag, don't build): per-job
+  <code>timeout</code>, auto-stop on volume &mdash; add on evidence (§2.5).</p>
 
 <h2 id="future">3. Future work (sorted by attractivity)</h2>
 <p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.
