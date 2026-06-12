@@ -221,15 +221,44 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   whether anything needs adding.</p>
 
 <h3>2.1 What Claude Code does (reverse-engineered)</h3>
-<p>Claude exposes <strong>three</strong> mechanisms and tells the model to choose by <em>how many
-  notifications it needs</em> — not by &ldquo;foreground vs background&rdquo;:</p>
+<p>First, the mechanic stated plainly. There is <strong>one tool</strong> &mdash; <code>Bash</code> &mdash;
+  with a <code>run_in_background:true</code> parameter. The LLM emits <strong>one tool call</strong> whose
+  <code>command</code> is an ordinary shell string; any <code>grep</code>/<code>until</code>/<code>sleep</code>
+  in it is <em>shell inside that one command</em>, not extra tools. The <strong>agent (the Omega-equivalent
+  runtime)</strong> then does two dumb things: spawn the process and return immediately, and &mdash; when that
+  process <em>exits</em> &mdash; inject one synthetic notification at the next seam. The runtime's trigger is
+  uniform: <em>process exit</em>. All the &ldquo;wait for the right moment&rdquo; intelligence lives in the
+  command string the LLM wrote. The LLM never polls (it is told not to); the runtime watches.</p>
+<p>So the decisive question is <strong>&ldquo;does the process exit at the exact moment you care about?&rdquo;</strong>
+  &mdash; it tells you directly whether you need <em>one</em> background command or <em>two</em>:</p>
+<table>
+  <thead><tr><th>Does it exit when you care?</th><th>Commands</th><th>Example</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Yes</strong> &mdash; a finite job that exits when done</td>
+      <td><strong>One</strong> background command; its own exit <em>is</em> the notification</td>
+      <td>the gate, a build, a test suite, <code>cargo mutants</code></td></tr>
+    <tr><td><strong>No</strong> &mdash; long-lived, your moment is mid-stream</td>
+      <td><strong>Two</strong>: the long-lived job + a short-lived <em>waiter</em> whose own exit encodes the
+        condition (<code>until grep -q 'Ready'; do sleep 0.5; done</code>). Or one <code>Monitor</code>
+        streaming the line.</td>
+      <td>a dev server printing &ldquo;Ready in&rdquo;; one specific log line</td></tr>
+  </tbody>
+</table>
+<p class="meta">The slow-gate case &mdash; the common one &mdash; is <strong>one</strong> command: the gate exits
+  on its own, so its exit <em>is</em> the signal; no waiter needed. A second moving part is only for an
+  <em>early</em> signal (e.g. notify on the first <code>FAILED</code> line before the gate finishes), which is
+  the streaming case below.</p>
+<p>Claude's own copy sorts the same split by <em>how many notifications you need</em> &mdash; not by
+  &ldquo;foreground vs background&rdquo;:</p>
 <table>
   <thead><tr><th>Need</th><th>Mechanism</th><th>Behaviour</th></tr></thead>
   <tbody>
     <tr>
-      <td><strong>One</strong> &mdash; &ldquo;tell me when the server is ready / the build finishes&rdquo;</td>
-      <td><code>Bash</code> with <code>run_in_background:true</code>, command written to <em>exit</em>
-        when the condition is true, e.g. <code>until grep -q "Ready in" dev.log; do sleep 0.5; done</code></td>
+      <td><strong>One</strong> &mdash; &ldquo;tell me when the build finishes / the gate passes&rdquo;</td>
+      <td><code>Bash</code> with <code>run_in_background:true</code>. For a finite job (gate/build) the
+        <code>command</code> is just the job &mdash; it exits on its own. For a long-lived job whose moment is
+        mid-stream, the <code>command</code> is a waiter written to <em>exit</em> on the condition
+        (<code>until grep -q "Ready in" dev.log; do sleep 0.5; done</code>).</td>
       <td>Silent while running; <strong>one</strong> completion notification on exit. Output pulled on
         demand via <code>BashOutput</code>. Explicit rule: &ldquo;you'll be notified when it completes
         &mdash; <em>do not poll</em>.&rdquo;</td>
@@ -288,8 +317,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   and without a natural end). Need&nbsp;1 (one silent notification) has <em>no clean home</em> &mdash; see below.</p>
 
 <h3>2.3 <code>run_background</code>+monitor vs. Claude's <code>run_in_background</code></h3>
-<p>This is the crux of the user's question. The difference is <strong>who owns the completion
-  notification</strong>:</p>
+<p>The difference is <strong>who owns the completion notification</strong> &mdash; and it is sharpest in the
+  one-command case (a finite job that exits when you care, like the gate):</p>
 <ul>
   <li><strong>Claude:</strong> one tool (<code>Bash</code>+flag) <em>both</em> starts the process and wires
     its completion notification. The notification fires on the <em>real process's</em> exit; output stays
