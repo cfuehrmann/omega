@@ -148,28 +148,28 @@ pub fn show_halt(turn_state: TurnState) -> bool {
     matches!(turn_state, TurnState::Running)
 }
 
-/// Returns `true` when the Resume button should be visible: only while a halt
-/// has been requested but the agent hasn’t parked yet (`HaltRequested`).
-/// Clicking Resume in this state cancels the pending halt so the agent
-/// continues running. Once the agent is fully parked (`Halted`), the user
-/// interacts via Send (with a steering message) or Abort; there is no
-/// Resume-from-halted UX.
-/// Whether the **Resume** control should render. Resume = "carry on with
-/// no new input" and is only meaningful once the loop has parked at a
+/// Whether the **Resume** control should render.
+///
+/// Resume = "carry on with no new input" and is meaningful in two states:
+/// - `HaltRequested`: a halt has been requested but the loop hasn’t parked
+///   yet; clicking Resume cancels the pending halt so the agent continues.
+/// - `Halted`: the loop is fully parked; clicking Resume wakes it with no
+///   new input and the agent carries on from where it stopped.
 #[must_use]
 pub fn show_resume(turn_state: TurnState) -> bool {
-    matches!(turn_state, TurnState::HaltRequested)
+    matches!(turn_state, TurnState::HaltRequested | TurnState::Halted)
 }
 
-/// Whether the **Abort** control should render. Abort forcefully cancels
-/// the in-flight (or parked-but-still-open) block, so it is available in
-/// Abort is only shown while a halt is in-flight (`HaltRequested`): that’s
-/// the moment when cancellation is meaningful alongside the Resume option.
-/// While `Running` (no halt pending) the sole control is Halt; while fully
-/// `Halted` or `Idle` there is nothing to abort.
+/// Whether the **Abort** control should render.
+///
+/// Abort forcefully cancels the in-flight or parked block and is shown
+/// alongside Resume whenever the loop is either mid-halt-flight
+/// (`HaltRequested`) or fully parked (`Halted`).  While `Running` (no halt
+/// pending) the sole secondary control is Halt; while `Idle` there is
+/// nothing to abort.
 #[must_use]
 pub fn show_abort(turn_state: TurnState) -> bool {
-    matches!(turn_state, TurnState::HaltRequested)
+    matches!(turn_state, TurnState::HaltRequested | TurnState::Halted)
 }
 
 // ---------------------------------------------------------------------------
@@ -909,19 +909,19 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn show_resume_only_while_halt_requested() {
+    fn show_resume_while_halt_requested_or_halted() {
         assert!(show_resume(TurnState::HaltRequested));
+        assert!(show_resume(TurnState::Halted));
         assert!(!show_resume(TurnState::Idle));
         assert!(!show_resume(TurnState::Running));
-        assert!(!show_resume(TurnState::Halted));
     }
 
     #[wasm_bindgen_test]
     #[test]
-    fn show_abort_only_while_halt_requested() {
+    fn show_abort_while_halt_requested_or_halted() {
         assert!(show_abort(TurnState::HaltRequested));
+        assert!(show_abort(TurnState::Halted));
         assert!(!show_abort(TurnState::Running));
-        assert!(!show_abort(TurnState::Halted));
         assert!(!show_abort(TurnState::Idle));
     }
 
