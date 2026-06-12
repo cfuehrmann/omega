@@ -82,7 +82,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <h4>Contents</h4>
   <ol>
     <li><a href="#invariants">Invariants &amp; locked-in decisions</a> <span class="meta">(do not revert)</span></li>
-    <li><a href="#future"><strong>Future work (sorted by attractivity)</strong></a></li>
+    <li><a href="#active"><strong>Active investigation: blocking wait vs. streaming monitors</strong></a> <span class="meta">(promoted from future items 3 + 6)</span></li>
+    <li><a href="#future">Future work (sorted by attractivity)</a></li>
     <li><a href="#codefacts">Resume map (where things live)</a></li>
   </ol>
   <p class="meta" style="margin:.6rem 0 0">A <span class="norevert">⛔</span> marks a decision whose
@@ -211,8 +212,160 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     Headless is benchmark-only, bounded externally + session-end cleanup.</li>
 </ul>
 
-<h2 id="future">2. Future work (sorted by attractivity)</h2>
-<p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.</p>
+<h2 id="active">2. Active investigation: blocking wait vs. streaming monitors</h2>
+<p class="meta">Promoted from former future items 3 (&ldquo;retire/reposition <code>wait_for_output</code>&rdquo;)
+  and 6 (&ldquo;one-shot vs streaming split&rdquo;). They are the same question seen from two ends, so
+  they live together here. <strong>Evidence is thin</strong> — this section collects findings and frames
+  the decisions; it does not settle them. The premise we already believe: <em>blocking is the smell</em>
+  (<code>wait_for_output</code> stalls the whole agent loop); the open question is what replaces it and
+  whether anything needs adding.</p>
+
+<h3>2.1 What Claude Code does (reverse-engineered)</h3>
+<p>Claude exposes <strong>three</strong> mechanisms and tells the model to choose by <em>how many
+  notifications it needs</em> — not by &ldquo;foreground vs background&rdquo;:</p>
+<table>
+  <thead><tr><th>Need</th><th>Mechanism</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>One</strong> &mdash; &ldquo;tell me when the server is ready / the build finishes&rdquo;</td>
+      <td><code>Bash</code> with <code>run_in_background:true</code>, command written to <em>exit</em>
+        when the condition is true, e.g. <code>until grep -q "Ready in" dev.log; do sleep 0.5; done</code></td>
+      <td>Silent while running; <strong>one</strong> completion notification on exit. Output pulled on
+        demand via <code>BashOutput</code>. Explicit rule: &ldquo;you'll be notified when it completes
+        &mdash; <em>do not poll</em>.&rdquo;</td>
+    </tr>
+    <tr>
+      <td><strong>One per occurrence, indefinitely</strong> &mdash; &ldquo;every time an ERROR line appears&rdquo;</td>
+      <td><code>Monitor</code> with an unbounded command (<code>tail -f</code>, <code>inotifywait -m</code>,
+        <code>while true</code>)</td>
+      <td>Each stdout line becomes a notification (interrupt). Runs until <em>timeout</em> or
+        <code>TaskStop</code>; <code>persistent:true</code> for session-length watches.</td>
+    </tr>
+    <tr>
+      <td><strong>One per occurrence, until a known end</strong> &mdash; &ldquo;emit each CI step, stop when the run completes&rdquo;</td>
+      <td><code>Monitor</code> with a command that emits lines and then exits</td>
+      <td>Push per line; the watch ends when the command exits.</td>
+    </tr>
+  </tbody>
+</table>
+<p>Supporting cast: <code>BashOutput(bash_id, regex?)</code> = pull output on demand (optional filter);
+  <code>KillShell</code> / <code>TaskStop</code> = kill/cancel; <code>ScheduleWakeup</code> = a fallback
+  heartbeat timer (1200&ndash;1800&nbsp;s) used <em>only</em> as a backstop when a Monitor is the real wake
+  signal. Monitor specifics worth pinning:</p>
+<ul>
+  <li><strong>Timeout is mandatory-ish.</strong> &ldquo;Timeout &rarr; killed.&rdquo; Unbounded commands stay
+    armed until timeout even after the event fired &mdash; hence the explicit steer to use
+    <code>run_in_background</code>+<code>until</code> for single notifications, not <code>tail -f | grep -m1</code>.</li>
+  <li><strong>Auto-stop on volume.</strong> &ldquo;Monitors that produce too many events are automatically
+    stopped; restart with a tighter filter.&rdquo; (Confirms the auto-stop prior art we dropped.)</li>
+  <li><strong>200&nbsp;ms batching</strong> of stdout lines into one notification; <strong>stdout-only</strong>
+    triggers (stderr goes to the output file, readable on demand).</li>
+  <li><strong>Heavy script-quality copy</strong>: per-line flushing (<code>grep --line-buffered</code>,
+    <code>awk … fflush()</code>, never <code>| head -N</code>), and &ldquo;silence is not success&rdquo; &mdash;
+    the filter must match <em>every</em> terminal state (crash/hang/OOM), not just the happy path.</li>
+</ul>
+<div class="box callout">
+  <h4>The load-bearing finding</h4>
+  <p><strong>Claude has no synchronous blocking wait at all.</strong> The &ldquo;wait for X&rdquo; use case
+  &mdash; the exact thing our <code>wait_for_output</code> exists for &mdash; is served by
+  <code>run_in_background</code> + an <code>until</code> loop that exits when the condition is true,
+  yielding <em>one</em> notification. That is a <em>non-blocking</em> <code>wait_for_output</code>: the
+  agent's turn is free to continue or end while the wait happens out-of-band.</p>
+</div>
+
+<h3>2.2 What Omega has today</h3>
+<table>
+  <thead><tr><th>Tool</th><th>Blocking?</th><th>Notifies on its own?</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>run_command</code></td><td>Yes (synchronous)</td><td>n/a</td><td>finite commands</td></tr>
+    <tr><td><code>run_background</code></td><td>No</td><td><strong>No</strong> &mdash; returns <code>{pid, logFile}</code>, then silent</td><td>start a long-lived process</td></tr>
+    <tr><td><code>wait_for_output</code></td><td><strong>Yes &mdash; stalls the loop</strong></td><td>n/a</td><td>poll a <code>run_background</code> log until first of {pattern, minBytes, exit, timeout}</td></tr>
+    <tr><td><code>monitor</code></td><td>No</td><td>Yes &mdash; each stdout line &rarr; <code>role:user</code> at next seam; <code>MonitorStopped</code> on exit</td><td>stream a long-lived process</td></tr>
+    <tr><td><code>write_stdin</code> / <code>stop_monitor</code></td><td>&mdash;</td><td>&mdash;</td><td>steer / cancel</td></tr>
+  </tbody>
+</table>
+<p>Mapping onto Claude's three needs: our <code>monitor</code> covers needs&nbsp;2 and 3 (streaming, with
+  and without a natural end). Need&nbsp;1 (one silent notification) has <em>no clean home</em> &mdash; see below.</p>
+
+<h3>2.3 <code>run_background</code>+monitor vs. Claude's <code>run_in_background</code></h3>
+<p>This is the crux of the user's question. The difference is <strong>who owns the completion
+  notification</strong>:</p>
+<ul>
+  <li><strong>Claude:</strong> one tool (<code>Bash</code>+flag) <em>both</em> starts the process and wires
+    its completion notification. The notification fires on the <em>real process's</em> exit; output stays
+    silent and is pulled via <code>BashOutput</code>.</li>
+  <li><strong>Omega:</strong> <code>run_background</code> fires <em>nothing</em> on exit. To get a
+    completion signal you must run the work <em>as</em> a <code>monitor</code> (so the monitor process
+    <em>is</em> the job) &mdash; but then every stdout line is injected (noisy) unless the command is written
+    to stay silent until done.</li>
+  <li><strong>The equivalent that already works today:</strong>
+    <code>monitor("ready", "until grep -q 'Ready' dev.log; do sleep 0.5; done; echo ready")</code>.
+    It stays silent until the condition fires, emits one line, exits &rarr; <code>MonitorStopped(ProcessExited)</code>
+    is projected. That is Claude's need-1 pattern, achieved with our existing <code>monitor</code>. So
+    <strong><code>monitor</code> already subsumes <code>wait_for_output</code>'s use case &mdash; without
+    blocking.</strong></li>
+</ul>
+<p>What Omega lacks is Claude's <em>ergonomic</em> need-1: a silent background job that notifies once on
+  completion <em>without</em> the operator hand-writing a silent-until-done loop, and without streaming
+  noise. Open question: is the hand-written loop good enough (explorative minimalism), or is the
+  ergonomic gap worth a dedicated affordance?</p>
+
+<h3>2.4 Where <code>wait_for_output</code>'s tuned parameters go</h3>
+<p>The parameters we fine-tuned were tuned for a <em>blocking poll</em>. In a monitor world each becomes a
+  shell idiom inside the command (or a new monitor param):</p>
+<table>
+  <thead><tr><th><code>wait_for_output</code> param</th><th>Why it was tuned</th><th>Monitor-world equivalent</th></tr></thead>
+  <tbody>
+    <tr><td><code>pattern</code> (JS regex)</td><td>return as soon as the ready/failure line appears</td><td><code>grep -qE 'PATTERN'</code> in the loop guard</td></tr>
+    <tr><td><code>minBytes</code></td><td>return once meaningful output exists, no known marker</td><td>byte-count check on the log</td></tr>
+    <tr><td><code>timeoutMs</code> (required)</td><td>never hang forever</td><td><strong>no monitor equivalent today</strong> &mdash; needs a <code>timeout N</code> wrapper or a new per-monitor timeout</td></tr>
+    <tr><td><code>pid</code> (early-exit)</td><td>stop waiting the instant the process dies</td><td>loop must also break on <code>kill -0 $pid || break</code></td></tr>
+    <tr><td>tail-biased 200&nbsp;KB cap</td><td>most-recent output is what matters</td><td>output retrieval via <code>read_file</code> on the log</td></tr>
+  </tbody>
+</table>
+<p>The convenience these gave &mdash; typed params, no shell-craft, a single clean return object &mdash; is the
+  real value of <code>wait_for_output</code>; the blocking is its cost. The decision is whether that
+  convenience is worth keeping a blocking tool, or worth re-expressing as monitor ergonomics.</p>
+
+<h3>2.5 Open decisions</h3>
+<ol>
+  <li><strong>Keep, demote, or retire <code>wait_for_output</code>?</strong> It is fully subsumed in capability
+    by <code>monitor</code>+silent-loop, but more convenient and harder to misuse for a true one-shot wait.
+    Options: (a) keep + document &ldquo;prefer monitor for anything you'd resume from&rdquo;; (b) drop from the
+    default tool selection but leave available; (c) remove. Evidence-driven.</li>
+  <li><strong>Give <code>monitor</code> a <code>timeout_ms</code> (and maybe <code>persistent</code>)?</strong> This
+    is the single missing piece that would let a monitor fully replace <code>wait_for_output</code> (bounded
+    wait) <em>and</em> bound runaway monitors &mdash; folding in the old auto-stop concern. Lowest-risk, highest-leverage
+    change in this cluster.</li>
+  <li><strong>Add a one-shot/silent-completion mode?</strong> i.e. close Claude's need-1 ergonomic gap with a
+    flag or a sibling tool, vs. relying on a hand-written silent-until-done command. Decide only after observing
+    whether the agent actually writes those loops correctly.</li>
+  <li><strong>Auto-stop on volume?</strong> Claude does it; we dropped it. Re-add iff we observe flooding.</li>
+  <li><strong>Pull-on-demand?</strong> Claude's <code>BashOutput(bash_id, regex?)</code> has no Omega analogue
+    beyond the agent <code>read_file</code>-ing the <code>logFile</code> &mdash; which is arguably already the
+    pull path. Probably no new tool needed.</li>
+</ol>
+
+<h3>2.6 Real opportunities to gather data</h3>
+<p>The blocker is evidence: we need a task the agent <em>wants</em> to wait on and has the <em>opportunity</em>
+  to. Omega's own workflow supplies several &mdash; these are where to look first:</p>
+<ul>
+  <li><strong>Mutation testing</strong> (<code>cargo mutants</code>) &mdash; minutes-to-tens-of-minutes; the agent
+    has a real incentive to react to the first survivor rather than block. The strongest candidate.</li>
+  <li><strong>The gate / full <code>cargo test</code></strong> &mdash; slow enough that blocking wastes a turn;
+    a monitor watching for the first failure line is the natural shape.</li>
+  <li><strong>Web-UI dev server</strong> (<code>trunk serve</code> / Leptos watch) &mdash; a classic
+    &ldquo;wait for <em>Ready in</em>, then keep tailing for errors&rdquo; case spanning needs 1 and 2.</li>
+  <li><strong>Long release builds</strong> &mdash; pure need-1 (&ldquo;tell me when done&rdquo;).</li>
+</ul>
+<p class="meta">Instrumentation question to resolve alongside: what do we record to tell whether the agent
+  <em>chose well</em> (monitor vs. <code>wait_for_output</code> vs. blocking <code>run_command</code>)? The
+  fired-count + commit-time/event-time skew already in the log is a start.</p>
+
+<h2 id="future">3. Future work (sorted by attractivity)</h2>
+<p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.
+  The <code>wait_for_output</code>/one-shot-vs-streaming pair has been promoted out of this list into
+  <a href="#active">§2</a>.</p>
 <ol>
   <li><span class="rank">Event sink — Phase B (full unification).</span> Make the sink the sole
     emission path: the loop emits via <code>sink.emit()</code> too; WS/tests observe the sink, not the
@@ -225,19 +378,13 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     live queue-viz but discarded at delivery; only <code>MonitorDeliveryEvent.time</code> (effect) is
     persisted. Inspection step: enumerate every <code>OmegaEvent</code> variant, classify action /
     effect / both, decide a documented rule. Low cost, high conceptual payoff.</li>
-  <li><span class="rank">Retire / reposition <code>wait_for_output</code>.</span> Once monitors are
-    proven the better path: remove it, drop it from the default selection, or keep + note monitors are
-    preferred. Evidence-driven.</li>
   <li><span class="rank">Reconsider auto-stop of chatty monitors.</span> Dropped by explorative
-    minimalism; kept by Claude Code. Re-add on evidence of the agent leaking/flooding, or keep
-    observing.</li>
+    minimalism; kept by Claude Code (confirmed: &ldquo;monitors that produce too many events are
+    automatically stopped&rdquo;). Re-add on evidence of the agent leaking/flooding, or keep observing.
+    See <a href="#active">§2.5</a>.</li>
   <li><span class="rank">Per-tool toggle for non-UI sessions.</span> A <code>--tool</code> /
     <code>--no-tool</code> CLI flag (or config) so headless/scripted sessions toggle individual tools
     without a custom preset; today only coarse <code>--preset</code> exists server-side.</li>
-  <li><span class="rank">One-shot vs streaming tool split (design discussion).</span> Claude routes
-    &ldquo;notify me once&rdquo; to a background job and reserves Monitor for streaming; Omega collapses
-    both into one <code>monitor</code>. Revisit splitting them + a default <code>timeout_ms</code> /
-    <code>persistent</code> opt-out. Observe first.</li>
   <li><span class="rank">Live queue/badge polish.</span> Sub-seam real-time queue streaming + per-line
     badge updates. Seam-aligned already suffices — low-value polish.</li>
   <li><span class="rank">Monitors controllable inside the Python REPL.</span> Expose the monitor queue
@@ -245,7 +392,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     the right abstraction for now.</li>
 </ol>
 
-<h2 id="codefacts">3. Resume map (where things live)</h2>
+<h2 id="codefacts">4. Resume map (where things live)</h2>
 <ul>
   <li>Canonical events: <small class="path">crates/omega-types/src/events.rs</small>. Event sink:
     <small class="path">crates/omega-agent/src/event_sink.rs</small>. Agent loop (split into modules):
