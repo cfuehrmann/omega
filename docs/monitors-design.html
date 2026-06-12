@@ -72,8 +72,9 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <p>An agent can <code>monitor(description, command)</code> to run a background shell command
   whose stdout lines are injected as <code>role:user</code> at the next seam (no preemption),
   watch/steer it from the Web UI, and <code>stop_monitor(id)</code>. Input (human + monitor)
-  flows through one queue; controls are <strong>Queue</strong> / <strong>Halt</strong> /
-  <strong>Abort</strong>. A first-class event sink lets out-of-band events (stderr, control
+  flows through one queue; loop controls are <strong>Queue</strong> / <strong>Halt</strong> /
+  <strong>Abort</strong>, and the UI can delete an individual pending queued prompt before it is
+  delivered. A first-class event sink lets out-of-band events (stderr, control
   actions) reach <small class="path">events.jsonl</small> + UI when they happen.</p>
 </div>
 
@@ -111,8 +112,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     (Generalised by the event sink for non-context events — see below.)</li>
   <li><strong>Park/terminate is defined.</strong> Park iff a live monitor or queued item exists, else
     terminate; never hang when nothing can fire. Parked, the loop selects over {queue item,
-    roster-changed}; roster-changed fires when the live set shrinks without a drainable item (e.g. a
-    UI kill while parked).</li>
+    roster-changed}; roster-changed fires when the live set shrinks without a drainable item (e.g. the
+    last live monitor going away without enqueuing a drainable item while parked).</li>
   <li><strong>Process-tree reaping</strong> on <code>stop()</code> and session end (process-group
     kill); no orphans.</li>
 </ul>
@@ -158,6 +159,13 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     next seam), <strong>Halt</strong> (stop at next seam and wait), <strong>Abort</strong> (cancel the
     in-flight block). The retired pause/continue-for-injection machinery is guarded by a source-scan
     test so it can't grow back.</li>
+  <li><strong>UI kill targets queued prompts only, not live monitors.</strong> The UI exposes
+    <code>DeleteQueueItem{enqueued_at}</code> to drop a single <em>pending</em> prompt before it is
+    delivered; there is deliberately <em>no</em> UI kill for a running monitor. Monitors are stopped
+    by the agent (<code>stop_monitor</code>), on natural process exit, or at session end &mdash;
+    consistent with the no-auto-stop / visibility-over-control stance. <code>StoppedByUser</code>
+    remains in the schema (and projects when present) but is currently unreachable at runtime;
+    re-add a monitor kill control only on evidence.</li>
 </ul>
 
 <h3>Event sink — event-time vs commit-time</h3>
@@ -206,12 +214,6 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 <h2 id="future">2. Future work (sorted by attractivity)</h2>
 <p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.</p>
 <ol>
-  <li><span class="rank">Kill button / <code>KillMonitor</code> control frame.</span> Completes the UI
-    control triad (today you can start + observe but not stop from the UI). Low-risk, well specified: a
-    <code>MonitorManager</code> method that CASes Running→Stopped, kills the tree, enqueues
-    <code>PendingItem::Stopped{reason: StoppedByUser}</code> (single-writer preserved), fires
-    roster-changed; a <code>ClientFrame::KillMonitor{id}</code> dispatch mirroring
-    <code>handle_abort</code>. <code>StoppedByUser</code> already exists, unused.</li>
   <li><span class="rank">Event sink — Phase B (full unification).</span> Make the sink the sole
     emission path: the loop emits via <code>sink.emit()</code> too; WS/tests observe the sink, not the
     run-stream. Cures the &ldquo;emission coupled to the loop&rdquo; smell. Main cost = migrating how
@@ -257,9 +259,11 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <small class="path">crates/omega-types/src/tools.rs</small>.</li>
   <li>Server: <small class="path">crates/omega-server/src/router.rs</small>
     (<code>handle_resume_session</code>; <code>should_replay</code> /
-    <code>REPLAY_EXCLUDE = ["ready","text"]</code>; <code>request_abort()</code>); WS transport
+    <code>REPLAY_EXCLUDE = ["ready","text"]</code>; <code>request_abort()</code>;
+    <code>handle_delete_queue_item</code> + <code>ClientFrame::DeleteQueueItem</code>); WS transport
     <small class="path">crates/omega-server/src/ws_message.rs</small>. Frontend monitor UI:
-    <small class="path">frontends/leptos/src/monitors_panel.rs</small>; protocol
+    <small class="path">frontends/leptos/src/monitors_panel.rs</small>; queued-prompt list + delete
+    button <small class="path">frontends/leptos/src/queue_panel.rs</small>; protocol
     <small class="path">frontends/leptos/src/protocol.rs</small>.</li>
   <li>AGENTS.md essentials: branch <code>develop</code>; finish with
     <code>git add -A &amp;&amp; git commit</code> (pre-commit hook runs the gate; never
