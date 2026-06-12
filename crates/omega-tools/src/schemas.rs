@@ -23,20 +23,17 @@ pub use omega_types::tools::{ALL_TOOL_NAMES, DEFAULT_TOOL_NAMES, PRESETS, Preset
 /// `fetch_url` keeps its current shell-aware schema variant: when no
 /// shell-execution tool is present in the selection, `fetch_url` switches
 /// to a postprocess-free schema (so it cannot be used as a shell
-/// loophole).  When any of `run_command`, `run_background`,
-/// `wait_for_output`, or `write_stdin` is selected, the full schema with
-/// a required `postprocess` argument is used.
+/// loophole).  When any of `run_command`, `run_background`, or
+/// `write_stdin` is selected, the full schema with a required
+/// `postprocess` argument is used.
 ///
 /// Order in the returned `Vec` matches `ALL_TOOL_NAMES`, not the order of
 /// `tool_selection`.
 #[must_use]
 pub fn tool_definitions(tool_selection: &[String]) -> Vec<ToolDefinition> {
-    let shell_tools_present = tool_selection.iter().any(|n| {
-        matches!(
-            n.as_str(),
-            "run_command" | "run_background" | "wait_for_output" | "write_stdin"
-        )
-    });
+    let shell_tools_present = tool_selection
+        .iter()
+        .any(|n| matches!(n.as_str(), "run_command" | "run_background" | "write_stdin"));
     let mut out = Vec::new();
     for &name in ALL_TOOL_NAMES {
         if !tool_selection.iter().any(|n| n == name) {
@@ -53,7 +50,6 @@ pub fn tool_definitions(tool_selection: &[String]) -> Vec<ToolDefinition> {
             "grep_files" => grep_files(),
             "find_files" => find_files(),
             "run_background" => run_background(),
-            "wait_for_output" => wait_for_output(),
             "write_stdin" => write_stdin(),
             "python_repl" => python_repl(),
             "monitor" => monitor(),
@@ -319,14 +315,18 @@ fn find_files() -> ToolDefinition {
 fn run_background() -> ToolDefinition {
     ToolDefinition {
         name: "run_background".into(),
-        description: "Start a long-running process in the background and return immediately. \
-                      stdout and stderr are redirected to a temporary log file. \
-                      Returns { pid, logFile }. \
-                      Use read_file on logFile (with offset/limit for large output) and grep_files to inspect output. \
-                      Use run_command(\"kill <pid>\") to stop the process early. \
-                      Reserve this for processes that must stay alive indefinitely \
-                      (dev servers, file watchers, interactive processes that need write_stdin). \
-                      For finite commands (builds, test suites, commits), prefer run_command with a sufficient timeout."
+        description: "Start a long-running process as a background job and return IMMEDIATELY \
+                      — you do NOT wait for it. Returns { id, logFile, pid }. \
+                      The job's stdout and stderr are redirected into logFile; read it with \
+                      read_file (offset/limit for large output) and grep_files to inspect output. \
+                      DO NOT POLL: when the job exits you are notified automatically by a \
+                      `<monitor-stopped id=\"<id>\"/>` completion message carrying the exit code. \
+                      The job also appears in the monitor roster while it runs. \
+                      Use write_stdin(id, …) to feed interactive prompts, and stop_monitor(id) to \
+                      stop it early. \
+                      Reserve this for processes that must stay alive (dev servers, file watchers, \
+                      interactive processes). For finite commands (builds, test suites, commits), \
+                      prefer run_command with a sufficient timeout."
             .into(),
         input_schema: json!({
             "type": "object",
@@ -335,38 +335,6 @@ fn run_background() -> ToolDefinition {
                 "cwd":     { "type": "string", "description": "Working directory for the process (optional, defaults to cwd)" },
             },
             "required": ["command"],
-        }),
-    }
-}
-
-fn wait_for_output() -> ToolDefinition {
-    ToolDefinition {
-        name: "wait_for_output".into(),
-        description: "Poll a background-process log file until a condition is met, then return the log contents. \
-                      Returns when the FIRST of these occurs: (1) pattern appears in the log, \
-                      (2) log reaches minBytes in size, (3) the process exits, or (4) timeoutMs elapses. \
-                      If neither pattern nor minBytes is given, returns as soon as any output appears. \
-                      Returns { output, matched, minBytesReached, timedOut, processExited?, exitCode? }. \
-                      Pass the pid returned by run_background so that an early process exit is detected immediately \
-                      instead of waiting for the full timeout. \
-                      Use this after run_background instead of sleep + tail to wait for a server or process to become ready. \
-                      The pattern is interpreted as a JavaScript regex (e.g. 'ready|started|Error' for alternation). \
-                      The polled output is also tee\u{2019}d to a session-cache snapshot; the cache path is surfaced \
-                      in the `output` field\u{2019}s footer (`[full output: <path>]` or `[truncated; \u{2026}]`). \
-                      When the output is **truncated**, use `read_file` / `grep_files` on the cache path \
-                      to recover what didn\u{2019}t fit inline; when bytes are already inline and recent, \
-                      read them directly."
-            .into(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "logFile":   { "type": "string", "description": "Path to the log file to monitor \u{2014} the logFile value returned by run_background." },
-                "pid":       { "type": "number", "description": "The pid returned by run_background. Used to detect process exit: if the process dies before the pattern matches, wait_for_output returns immediately with processExited=true and the exit code, rather than waiting for the full timeout." },
-                "timeoutMs": { "type": "number", "description": "Maximum milliseconds to wait before giving up and returning whatever the log contains." },
-                "pattern":   { "type": "string", "description": "Return as soon as this pattern matches anywhere in the log. Interpreted as a JavaScript regex, so use '|' for alternation (e.g. 'ready|started|Error'). Simple strings like 'ready' also work as-is." },
-                "minBytes":  { "type": "number", "description": "Return as soon as the log reaches this many bytes. Useful when you don't know the ready signal but want to wait for meaningful output." },
-            },
-            "required": ["logFile", "pid", "timeoutMs"],
         }),
     }
 }
@@ -400,21 +368,22 @@ fn python_repl() -> ToolDefinition {
 fn write_stdin() -> ToolDefinition {
     ToolDefinition {
         name: "write_stdin".into(),
-        description: "Write text to the stdin of a background process started with run_background. \
+        description: "Write text to the stdin of a background job (run_background) or a streaming \
+                      monitor, addressed by its id. \
                       Use this to answer interactive prompts (e.g. y/n confirmations, passwords, menu choices). \
                       Include a newline ('\\n') at the end of text to submit a line-based prompt. \
                       Set end_stdin=true to close stdin after writing, signalling EOF to the process \
                       (required for programs like cat that read until end of input). \
-                      Returns an error if the pid is not a tracked background process or stdin is already closed."
+                      Returns an error if the id is not a live monitor/job or stdin is already closed."
             .into(),
         input_schema: json!({
             "type": "object",
             "properties": {
-                "pid":       { "type": "number",  "description": "Process ID returned by run_background." },
+                "id":        { "type": "string",  "description": "Monitor/job id returned by run_background or monitor (also shown in the roster)." },
                 "text":      { "type": "string",  "description": "Text to write to the process stdin. Include a newline ('\\n') to submit a line-based prompt." },
                 "end_stdin": { "type": "boolean", "description": "If true, close stdin after writing, signalling EOF to the process. Required for programs that read until end-of-input (e.g. cat). Default false." },
             },
-            "required": ["pid", "text"],
+            "required": ["id", "text"],
         }),
     }
 }
@@ -442,9 +411,9 @@ fn monitor() -> ToolDefinition {
                       Deliveries land only at safe seams (never mid-tool-call). \
                       Use a monitor when you want to observe a long-running \
                       process while staying available — a dev server's logs, a \
-                      file watcher, a long test run. Prefer synchronous \
-                      `wait_for_output` when you need to BLOCK for a specific \
-                      line before the next step."
+                      file watcher, a long test run. Use `run_background` \
+                      instead when you want the job to run silently (output \
+                      redirected to a log file) and only be notified on exit."
             .into(),
         input_schema: json!({
             "type": "object",
@@ -502,7 +471,6 @@ mod tests {
         sel(&[
             "run_command",
             "run_background",
-            "wait_for_output",
             "write_stdin",
             "web_search",
             "fetch_url",
@@ -559,17 +527,17 @@ mod tests {
     }
 
     #[test]
-    fn fourteen_tools_for_default_selection() {
+    fn thirteen_tools_for_default_selection() {
         let names: Vec<String> = tool_definitions(&sel_default())
             .into_iter()
             .map(|d| d.name)
             .collect();
         assert_eq!(names, sel_default());
-        assert_eq!(names.len(), 14);
+        assert_eq!(names.len(), 13);
     }
 
     #[test]
-    fn fifteen_tools_for_default_plus_python_repl() {
+    fn fourteen_tools_for_default_plus_python_repl() {
         let names: Vec<String> = tool_definitions(&sel_default_plus_repl())
             .into_iter()
             .map(|d| d.name)
@@ -577,7 +545,7 @@ mod tests {
         let mut expected = sel_default();
         expected.push("python_repl".into());
         assert_eq!(names, expected);
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 14);
     }
 
     #[test]
@@ -607,7 +575,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn no_file_tools_selection_emits_seven_tools() {
+    fn no_file_tools_selection_emits_six_tools() {
         // Output order follows ALL_TOOL_NAMES (canonical), not selection
         // order: run_command → web_search/fetch_url → run_background → … →
         // python_repl.
@@ -622,7 +590,6 @@ mod tests {
                 "web_search",
                 "fetch_url",
                 "run_background",
-                "wait_for_output",
                 "write_stdin",
                 "python_repl",
             ],
@@ -674,17 +641,12 @@ mod tests {
     }
 
     #[test]
-    fn no_shell_tools_selection_excludes_all_four_shell_tools() {
+    fn no_shell_tools_selection_excludes_all_three_shell_tools() {
         let names: Vec<String> = tool_definitions(&sel_no_shell_tools())
             .into_iter()
             .map(|d| d.name)
             .collect();
-        for removed in &[
-            "run_command",
-            "run_background",
-            "wait_for_output",
-            "write_stdin",
-        ] {
+        for removed in &["run_command", "run_background", "write_stdin"] {
             assert!(!names.contains(&(*removed).to_string()));
         }
     }
@@ -703,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn minimal_selection_excludes_all_ten_other_tools() {
+    fn minimal_selection_excludes_all_nine_other_tools() {
         let names: Vec<String> = tool_definitions(&sel_minimal())
             .into_iter()
             .map(|d| d.name)
@@ -717,7 +679,6 @@ mod tests {
             "list_files",
             "run_command",
             "run_background",
-            "wait_for_output",
             "write_stdin",
         ] {
             assert!(!names.contains(&(*removed).to_string()));

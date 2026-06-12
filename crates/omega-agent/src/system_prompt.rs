@@ -194,7 +194,7 @@ fn read_existing(path: &Path) -> Option<String> {
 /// membership test:
 ///
 /// * `has_file_tools` — any of the six file-op tools is present.
-/// * `has_shell_tools` — any of the four shell-execution tools is present.
+/// * `has_shell_tools` — any of the three shell-execution tools is present.
 /// * `has_python_repl` — `python_repl` is present.
 ///
 /// These drive the prompt assembly:
@@ -225,12 +225,9 @@ pub fn build_system_blocks(
             "read_file" | "write_file" | "edit_file" | "find_files" | "grep_files" | "list_files"
         )
     });
-    let has_shell_tools = tool_selection.iter().any(|n| {
-        matches!(
-            n.as_str(),
-            "run_command" | "run_background" | "wait_for_output" | "write_stdin"
-        )
-    });
+    let has_shell_tools = tool_selection
+        .iter()
+        .any(|n| matches!(n.as_str(), "run_command" | "run_background" | "write_stdin"));
     let has_python_repl = tool_selection.iter().any(|n| n == "python_repl");
     let has_monitor_tools = tool_selection.iter().any(|n| n == "monitor");
 
@@ -358,7 +355,7 @@ pub fn repl_addendum() -> String {
 /// The heading is always `## Reduced toolset`.  Then:
 /// - If the six file-op tools are absent (`!has_file_tools`): a paragraph
 ///   explains the removed file-op tools and how to replace them.
-/// - If the four shell-execution tools are absent (`!has_shell_tools`):
+/// - If the three shell-execution tools are absent (`!has_shell_tools`):
 ///   a paragraph explains the removed shell-execution tools and shows the
 ///   `subprocess` pattern.
 ///
@@ -398,7 +395,7 @@ Choose whichever is cleaner for the situation."
     if !has_shell_tools {
         sections.push(
             "This session does not expose `run_command`, `run_background`, \
-`wait_for_output`, or `write_stdin`.  To run shell commands, use the \
+or `write_stdin`.  To run shell commands, use the \
 pre-imported `sh()` helper inside `python_repl`:
 
     out, err, rc = sh(\"7z e secrets.7z\")
@@ -444,9 +441,10 @@ pub fn monitor_addendum() -> String {
        right after a tool result — never mid-reply, never between a tool \
        call and its result.\n\n\
      When to use which:\n\
-     - Use `wait_for_output` (synchronous) when you need a specific result \
-       NOW and have nothing useful to do until it appears.\n\
-     - Use a `monitor` when a process should keep producing output over \
+     - Use `run_background` when you want a job to run silently (its output \
+       redirected to a log file) and only be notified when it exits — read \
+       the logFile for output; do not poll.\n\
+     - Use a `monitor` when a process should keep streaming output over \
        time while you stay available for other work.\n\n\
      Stop discipline: call `stop_monitor` as soon as a monitor has served \
      its purpose. Monitors are reaped automatically at session end, but \
@@ -513,8 +511,8 @@ existing files: always prefer `edit_file` over a full rewrite.",
 /// the toolset so that the model receives consistent instructions that
 /// match the actual toolset.
 ///
-/// `shell_tools` controls whether guidance referencing the four
-/// shell-execution tools (`run_command`, `run_background`, `wait_for_output`,
+/// `shell_tools` controls whether guidance referencing the three
+/// shell-execution tools (`run_command`, `run_background`,
 /// `write_stdin`) is included.  Pass `false` when those tools are absent
 /// from the toolset.
 #[allow(clippy::too_many_lines)]
@@ -574,7 +572,7 @@ path — don't brute-force with repeated `list_files` calls.\n",
 The default timeout is 120 s; pass a higher `timeout` (e.g. 300) for commands\n\
 you expect to take longer. Reserve `run_background` for processes that must\n\
 stay alive indefinitely (dev servers, file watchers).\n\
-All `run_command` and `wait_for_output` results are tee'd to a session-cache\n\
+All `run_command` results are tee'd to a session-cache\n\
 log and the path is surfaced in a footer:\n\
 - `[full output: <path>]` when the output fit within the cap.\n\
 - `[truncated; showed last 100 KB of 487 KB. Full output: <path>]` when capped.\n",
@@ -599,21 +597,28 @@ recent, read them directly rather than calling another tool over the same\n\
 bytes.\n",
     );
 
-    // truncation_bias, wait_for_output, write_stdin — only when shell tools are present.
+    // truncation_bias, run_background contract, write_stdin — only when shell tools are present.
     if shell_tools {
         s.push_str(
             "Pass `truncation_bias: \"tail\"` (default on failure), `\"head\"` (default on\n\
 success), or `\"middle\"` to control which portion is returned when the\n\
 output is truncated.\n\
-To wait for a background process to become ready (e.g. a dev server), use\n\
-`wait_for_output(logFile, pid, timeoutMs, pattern?)` instead of `sleep` + `tail`.\n\
-Always pass the `pid` from `run_background` — if the process exits before the pattern matches,\n\
-`wait_for_output` returns immediately with `processExited: true` and the exit code instead of\n\
-waiting for the full timeout.\n\
-The `pattern` is a **JavaScript regex** — use `|` for alternation (e.g. `\"ready|Error|done\"`).\n\
-If a background process prompts for interactive input, use\n\
-`write_stdin(pid, text)` to respond (include \\n to submit a line). Pass\n\
-`end_stdin=true` to signal EOF after writing.\n",
+`run_background` starts a job and returns IMMEDIATELY with `{ id, logFile, pid }`;\n\
+it does NOT block. The job's output is redirected to `logFile` — ",
+        );
+        // Reading the logFile back needs a file tool; only name it when present.
+        if file_tools {
+            s.push_str("read it with `read_file`/`grep_files` once you need it");
+        } else {
+            s.push_str("read it once you need it");
+        }
+        s.push_str(
+            "; do NOT poll in a loop. When the job\n\
+exits you are notified automatically by a `<monitor-stopped id=\"…\"/>` completion\n\
+message carrying the exit code, and the job appears in the monitor roster while\n\
+it runs. If a background job prompts for interactive input, use\n\
+`write_stdin(id, text)` to respond (include \\n to submit a line); pass\n\
+`end_stdin=true` to signal EOF. Use `stop_monitor(id)` to stop a job early.\n",
         );
     }
 
@@ -853,21 +858,20 @@ mod tests {
             "grep_files",
             "find_files",
             "run_background",
-            "wait_for_output",
             "write_stdin",
             "monitor",
             "stop_monitor",
         ])
     }
 
-    /// Default 14 + `python_repl` (= the `all` preset).
+    /// Default 13 + `python_repl` (= the `all` preset).
     fn selection_default_plus_repl() -> Vec<String> {
         let mut v = selection_default();
         v.push("python_repl".to_owned());
         v
     }
 
-    /// Explicit 12-tool selection without monitor tools — for tests that
+    /// Explicit 11-tool selection without monitor tools — for tests that
     /// verify the monitors block is absent when the tools are not selected.
     fn selection_no_monitors() -> Vec<String> {
         names(&[
@@ -881,7 +885,6 @@ mod tests {
             "grep_files",
             "find_files",
             "run_background",
-            "wait_for_output",
             "write_stdin",
         ])
     }
@@ -893,7 +896,6 @@ mod tests {
             "web_search",
             "fetch_url",
             "run_background",
-            "wait_for_output",
             "write_stdin",
             "python_repl",
         ])
@@ -1076,7 +1078,7 @@ mod tests {
     fn monitor_block_teaches_the_async_channel_concept() {
         // §5 teaching-copy prerequisite: the block must convey the async,
         // out-of-band nature, the seam/no-preemption guarantee, the
-        // wait_for_output contrast, and stop discipline.  Asserting the
+        // run_background contrast, and stop discipline.  Asserting the
         // concrete phrases also closes body-replacement mutations on the
         // addendum string.
         let m = monitor_addendum();
@@ -1091,8 +1093,8 @@ mod tests {
             "must explain the no-preemption seam guarantee"
         );
         assert!(
-            m.contains("wait_for_output"),
-            "must contrast with the synchronous wait_for_output"
+            m.contains("run_background"),
+            "must contrast with the silent run_background job"
         );
         assert!(
             m.contains("backstop"),
@@ -1444,20 +1446,15 @@ mod tests {
     // ---- Shell-tool guidance gating (no_shell_tools) ----------------
     //
     // Contract: when shell tools absent, the assembled prompt must
-    // contain zero bare-backtick references to the four removed shell tools
+    // contain zero bare-backtick references to the three removed shell tools
     // outside the "Reduced toolset" block (which legitimately lists them as
     // absent).  When shell tools present, the assembled prompt must
     // still contain the existing shell-tool guidance.
 
-    const SHELL_TOOLS: [&str; 4] = [
-        "run_command",
-        "run_background",
-        "wait_for_output",
-        "write_stdin",
-    ];
+    const SHELL_TOOLS: [&str; 3] = ["run_command", "run_background", "write_stdin"];
 
     /// When `shell tools absent`: strip the "Reduced toolset" block, then
-    /// verify no bare-backtick references remain for any of the four removed
+    /// verify no bare-backtick references remain for any of the three removed
     /// shell tools.
     #[test]
     fn no_shell_tools_assembled_prompt_has_no_shell_tool_refs_outside_reduced_toolset_block() {
@@ -1528,11 +1525,7 @@ mod tests {
             full_prompt.contains("`run_background`"),
             "normal mode must contain run_background guidance"
         );
-        assert!(
-            full_prompt.contains("`wait_for_output`"),
-            "normal mode must contain wait_for_output guidance"
-        );
-        // `write_stdin` is always referenced as `write_stdin(pid, text)` in the core
+        // `write_stdin` is always referenced as `write_stdin(id, text)` in the core
         // prompt, so check for the name without requiring the standalone backtick form.
         assert!(
             full_prompt.contains("write_stdin"),
@@ -1625,9 +1618,9 @@ mod tests {
         assert_eq!(labels, vec!["core", "runtime", "repl", "reduced-toolset"]);
     }
 
-    /// the shell-tools-absent flag reduced-toolset block names all four removed tools.
+    /// the shell-tools-absent flag reduced-toolset block names all three removed tools.
     #[test]
-    fn no_shell_tools_block_names_all_four_removed_shell_tools() {
+    fn no_shell_tools_block_names_all_three_removed_shell_tools() {
         let content = reduced_toolset_addendum(true, false);
         for tool in &SHELL_TOOLS {
             assert!(

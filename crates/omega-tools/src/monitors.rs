@@ -187,6 +187,14 @@ struct MonitorEntry {
     /// Process-group id (== the spawned `bash` pid because we spawn with
     /// `process_group(0)`).  `None` only if the OS failed to report a pid.
     pgid: Option<u32>,
+    /// Writable stdin pipe of the spawned process, behind its own async
+    /// mutex so `write_stdin` / `close_stdin` can borrow it across `.await`
+    /// without holding the manager's outer lock.  `None` inside the inner
+    /// `Option` once stdin has been closed (EOF signalled).  Every monitor
+    /// (streaming monitor OR background job) is spawned with a piped stdin
+    /// (⛔ reverting to `Stdio::null()` would make `write_stdin` silently
+    /// impossible for jobs that read stdin, e.g. `cat`).
+    stdin: Arc<tokio::sync::Mutex<Option<tokio::process::ChildStdin>>>,
 }
 
 /// Mutable manager state behind a single lock.
@@ -210,6 +218,10 @@ pub struct SpawnedMonitor {
     pub id: String,
     /// The roster start timestamp (RFC3339).
     pub started_at: String,
+    /// OS pid of the spawned process-group leader (`bash`), or `None` if the
+    /// OS failed to report one.  Surfaced by `run_background` as an
+    /// informational field; the `id` is the durable handle.
+    pub pid: Option<u32>,
 }
 
 /// Owns the pending queue and the live-monitor roster for one session.
@@ -316,13 +328,21 @@ impl MonitorManager {
         self: &Arc<Self>,
         description: &str,
         command: &str,
+        cwd: Option<&str>,
     ) -> Result<SpawnedMonitor, String> {
         let mut cmd = Command::new("bash");
         cmd.args(["-c", command])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::null())
+            // Piped (not null) stdin so both streaming monitors and
+            // background jobs can receive `write_stdin`.  A background job
+            // that redirects its own fds (`exec > log`) simply never reads
+            // this pipe; one that reads stdin (e.g. `cat`) can be fed.
+            .stdin(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
         #[cfg(unix)]
         cmd.process_group(0);
 
@@ -333,6 +353,7 @@ impl MonitorManager {
         let pgid = child.id();
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
+        let stdin = child.stdin.take();
         let started_at = now_iso();
 
         let id = {
@@ -349,6 +370,7 @@ impl MonitorManager {
                     fired_count: 0,
                     stderr_tail: VecDeque::new(),
                     pgid,
+                    stdin: Arc::new(tokio::sync::Mutex::new(stdin)),
                 },
             );
             id
@@ -415,7 +437,69 @@ impl MonitorManager {
             });
         }
 
-        Ok(SpawnedMonitor { id, started_at })
+        Ok(SpawnedMonitor {
+            id,
+            started_at,
+            pid: pgid,
+        })
+    }
+
+    /// Clone the shared stdin handle for monitor/job `id`, if it is still in
+    /// the roster.  The returned `Arc` lets the caller lock the inner async
+    /// mutex without holding the manager's outer lock across `.await`.
+    fn stdin_handle(
+        &self,
+        id: &str,
+    ) -> Option<Arc<tokio::sync::Mutex<Option<tokio::process::ChildStdin>>>> {
+        self.lock().monitors.get(id).map(|e| Arc::clone(&e.stdin))
+    }
+
+    /// Write `bytes` to the stdin of monitor/job `id`.
+    ///
+    /// Works for both streaming monitors and background jobs (the unified
+    /// stdin path — ⛔ they must not diverge).
+    ///
+    /// # Errors
+    /// * the id is unknown (no live monitor/job with that id), or
+    /// * stdin has already been closed (EOF signalled).
+    pub async fn write_stdin(&self, id: &str, bytes: &[u8]) -> Result<(), String> {
+        use tokio::io::AsyncWriteExt as _;
+        let handle = self.stdin_handle(id).ok_or_else(|| {
+            format!("No live monitor or background job with id `{id}` to receive stdin.")
+        })?;
+        let mut guard = handle.lock().await;
+        let stdin = guard
+            .as_mut()
+            .ok_or_else(|| format!("stdin for `{id}` is already closed."))?;
+        stdin
+            .write_all(bytes)
+            .await
+            .map_err(|e| format!("write_stdin: write failed for `{id}`: {e}"))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("write_stdin: flush failed for `{id}`: {e}"))?;
+        Ok(())
+    }
+
+    /// Close the stdin of monitor/job `id`, signalling EOF to the process by
+    /// dropping the write end of the pipe.
+    ///
+    /// # Errors
+    /// * the id is unknown, or
+    /// * stdin was already closed.
+    pub async fn close_stdin(&self, id: &str) -> Result<(), String> {
+        let handle = self.stdin_handle(id).ok_or_else(|| {
+            format!("No live monitor or background job with id `{id}` to close stdin.")
+        })?;
+        let mut guard = handle.lock().await;
+        if guard.is_none() {
+            return Err(format!("stdin for `{id}` is already closed."));
+        }
+        // Dropping the ChildStdin closes the pipe's write end -> the process
+        // reading stdin observes EOF.
+        *guard = None;
+        Ok(())
     }
 
     fn push_stdout(&self, id: &str, line: String) {
@@ -596,6 +680,7 @@ impl MonitorManager {
     clippy::expect_used, // test assertions
     clippy::unwrap_used, // test assertions
     clippy::panic, // test assertions
+    clippy::cast_possible_truncation, // pid values fit in u32 by construction on Linux
 )]
 mod tests {
     //! End-to-end tests: the two tools are exercised through
@@ -1373,6 +1458,287 @@ mod tests {
             woke,
             "shutdown that reaps a monitor must fire roster_notify"
         );
+    }
+
+    // -------------------------------------------------------------------
+    // Background jobs (run_background / write_stdin / stop_monitor on a job)
+    //
+    // A background job IS a monitor whose wrapped command redirects its own
+    // stdout/stderr into a log file, so it must stream ZERO MonitorDelivery
+    // (Stdout/Stderr) items and emit exactly ONE Stopped item on exit.
+    // -------------------------------------------------------------------
+
+    /// Start a background job through the tool; return (id, logFile, pid).
+    async fn start_job(ctx: &ToolCtx, command: &str) -> (String, String, Option<u32>) {
+        let r = execute_tool(
+            "run_background",
+            json!({ "command": command }),
+            None,
+            Some(ctx),
+        )
+        .await;
+        assert!(!r.is_error, "run_background failed: {}", r.content);
+        // A job is recorded in the event log exactly like a monitor.
+        let id = started_event(&r).id.clone();
+        let v: serde_json::Value = serde_json::from_str(&r.content).expect("json result");
+        let log = v["logFile"].as_str().expect("logFile").to_owned();
+        let pid = v["pid"].as_u64().map(|p| p as u32);
+        assert_eq!(v["id"].as_str(), Some(id.as_str()), "id matches event");
+        (id, log, pid)
+    }
+
+    #[tokio::test]
+    async fn background_job_streams_zero_deliveries_and_one_stopped() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        // Emit on BOTH stdout and stderr: neither may surface as a queue item,
+        // because the wrapped command redirects them into the log file.
+        let (id, _log, _pid) = start_job(&ctx, "echo to_out; echo to_err >&2; exit 0").await;
+        let items = accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
+
+        let deliveries = items
+            .iter()
+            .filter(|i| matches!(i, PendingItem::Stdout { .. } | PendingItem::Stderr { .. }))
+            .count();
+        assert_eq!(
+            deliveries, 0,
+            "a background job must stream ZERO deliveries, got {items:?}"
+        );
+
+        let stopped: Vec<_> = items
+            .iter()
+            .filter_map(|i| match i {
+                PendingItem::Stopped {
+                    monitor_id,
+                    exit_code,
+                    ..
+                } => Some((monitor_id.clone(), *exit_code)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stopped.len(), 1, "exactly ONE Stopped item, got {items:?}");
+        assert_eq!(stopped[0].0, id, "Stopped item carries the job id");
+        assert_eq!(stopped[0].1, Some(0), "clean exit reports exitCode 0");
+        assert_eq!(mgr.status(&id), None, "job removed from roster after exit");
+    }
+
+    #[tokio::test]
+    async fn background_job_exit_code_propagates() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let (id, _log, _pid) = start_job(&ctx, "exit 13").await;
+        let items = accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
+        let code = items.iter().find_map(|i| match i {
+            PendingItem::Stopped {
+                monitor_id,
+                exit_code,
+                ..
+            } if *monitor_id == id => Some(*exit_code),
+            _ => None,
+        });
+        assert_eq!(
+            code,
+            Some(Some(13)),
+            "job exit code must reach the Stopped item"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_job_output_lands_in_logfile_readable_via_read_file() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let (_id, log, _pid) = start_job(&ctx, "echo HELLO_FROM_JOB").await;
+        // Wait for the job to finish so the log is fully flushed.
+        accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
+        // The output must be readable through the real read_file tool.
+        let r = execute_tool("read_file", json!({ "path": log }), None, Some(&ctx)).await;
+        assert!(!r.is_error, "read_file failed: {}", r.content);
+        assert!(
+            r.content.contains("HELLO_FROM_JOB"),
+            "job stdout must land in the logFile, got: {}",
+            r.content
+        );
+    }
+
+    #[tokio::test]
+    async fn background_job_honours_cwd() {
+        let (tmp, ctx, mgr) = ctx_with_manager();
+        let sub = tmp.path().join("work");
+        std::fs::create_dir_all(&sub).unwrap();
+        // `pwd` inside the job must equal the requested cwd.
+        let r = execute_tool(
+            "run_background",
+            json!({ "command": "pwd", "cwd": sub.to_str().unwrap() }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        assert!(!r.is_error, "run_background failed: {}", r.content);
+        let v: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+        let log = v["logFile"].as_str().unwrap().to_owned();
+        accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
+        let canon = std::fs::canonicalize(&sub).unwrap();
+        let out = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            out.contains(canon.to_str().unwrap()),
+            "job must run in the requested cwd ({}), log: {out}",
+            canon.display()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_background_produces_unique_log_files() {
+        // Two jobs from the SAME ctx (same tool_call_id) within the same
+        // millisecond must still get distinct log files — the LOG_SEQ counter
+        // is the differentiator.  Kills `fetch_add(1,…) → 0` constant mutations.
+        let (_tmp, ctx, _mgr) = ctx_with_manager();
+        let (r1, r2) = tokio::join!(
+            execute_tool(
+                "run_background",
+                json!({ "command": "true" }),
+                None,
+                Some(&ctx)
+            ),
+            execute_tool(
+                "run_background",
+                json!({ "command": "true" }),
+                None,
+                Some(&ctx)
+            ),
+        );
+        let v1: serde_json::Value = serde_json::from_str(&r1.content).unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&r2.content).unwrap();
+        assert_ne!(
+            v1["logFile"].as_str().unwrap(),
+            v2["logFile"].as_str().unwrap(),
+            "concurrent jobs must get unique log files"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_background_without_context_errors() {
+        let r = execute_tool("run_background", json!({ "command": "true" }), None, None).await;
+        assert!(
+            r.is_error,
+            "run_background must error without a session context"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_stdin_reaches_a_background_job() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        // `cat` echoes stdin to stdout (→ the log file) and exits on EOF.
+        let (id, log, _pid) = start_job(&ctx, "cat").await;
+        let w = execute_tool(
+            "write_stdin",
+            json!({ "id": id, "text": "PING_TO_JOB\n", "end_stdin": true }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        assert!(!w.is_error, "write_stdin failed: {}", w.content);
+        assert!(
+            w.content.contains("closed"),
+            "end_stdin must report EOF: {}",
+            w.content
+        );
+        // After EOF, cat exits → one Stopped item, and its echo is in the log.
+        accumulate(&mgr, DL, 1, |i| matches!(i, PendingItem::Stopped { .. })).await;
+        let out = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            out.contains("PING_TO_JOB"),
+            "stdin must reach the job, log: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_stdin_reaches_a_streaming_monitor() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        // A STREAMING monitor (not a job): its stdout flows to the pending
+        // queue, so the echoed line must appear as a Stdout delivery.
+        let id = spawn_mon(&ctx, "cat").await;
+        let w = execute_tool(
+            "write_stdin",
+            json!({ "id": id, "text": "PONG_TO_MON\n" }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        assert!(!w.is_error, "write_stdin failed: {}", w.content);
+        let items = accumulate(
+            &mgr,
+            DL,
+            1,
+            |i| matches!(i, PendingItem::Stdout { line, .. } if line.contains("PONG_TO_MON")),
+        )
+        .await;
+        assert!(
+            items.iter().any(
+                |i| matches!(i, PendingItem::Stdout { line, .. } if line.contains("PONG_TO_MON"))
+            ),
+            "stdin must reach the monitor and echo to its stdout, got {items:?}"
+        );
+        mgr.stop(&id);
+    }
+
+    #[tokio::test]
+    async fn write_stdin_after_close_errors() {
+        let (_tmp, ctx, _mgr) = ctx_with_manager();
+        let (id, _log, _pid) = start_job(&ctx, "cat").await;
+        execute_tool(
+            "write_stdin",
+            json!({ "id": id, "text": "", "end_stdin": true }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        let r = execute_tool(
+            "write_stdin",
+            json!({ "id": id, "text": "oops" }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        assert!(r.is_error, "writing after close must error");
+        assert!(
+            r.content.contains("closed"),
+            "error must mention closed stdin: {}",
+            r.content
+        );
+    }
+
+    #[tokio::test]
+    async fn write_stdin_unknown_id_errors() {
+        let (_tmp, ctx, _mgr) = ctx_with_manager();
+        let r = execute_tool(
+            "write_stdin",
+            json!({ "id": "no-such-id", "text": "x" }),
+            None,
+            Some(&ctx),
+        )
+        .await;
+        assert!(r.is_error, "unknown id must error");
+        assert!(
+            r.content.contains("no-such-id"),
+            "error must name the id: {}",
+            r.content
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_monitor_stops_a_background_job() {
+        let (_tmp, ctx, mgr) = ctx_with_manager();
+        let (id, _log, pid) = start_job(&ctx, "sleep 100").await;
+        assert!(
+            poll_until(DL, || mgr.live_count() == 1).await,
+            "job should be live"
+        );
+        let r = execute_tool("stop_monitor", json!({ "id": id }), None, Some(&ctx)).await;
+        assert!(!r.is_error, "stop_monitor failed: {}", r.content);
+        assert_eq!(mgr.status(&id), None, "job must be removed from roster");
+        if let Some(pid) = pid {
+            assert!(
+                poll_until(DL, || !process_alive(pid)).await,
+                "stopped job process {pid} must die"
+            );
+        }
     }
 
     /// Poll until the pidfile parses to a u32.

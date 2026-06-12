@@ -89,33 +89,13 @@ pub fn format_tool_call(name: &str, input: &Value) -> String {
             s
         }
         "run_background" => format!("run_background: {}", string_field(input, "command")),
-        "wait_for_output" => {
-            let timeout = num_field(input, "timeoutMs").unwrap_or(0.0);
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let ms = timeout as u64;
-            let mut s = format!(
-                "wait_for_output: {} (timeout {ms}ms)",
-                string_field(input, "logFile"),
-            );
-            if let Some(p) = input.get("pattern").and_then(Value::as_str) {
-                let _ = write!(s, " pattern=\"{p}\"");
-            }
-            if let Some(b) = num_field(input, "minBytes") {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let bb = b as u64;
-                let _ = write!(s, " minBytes={bb}");
-            }
-            s
-        }
         "write_stdin" => {
-            let pid = num_field(input, "pid").unwrap_or(0.0);
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let pid_u = pid as u64;
+            let id = string_field(input, "id");
             let chars = input
                 .get("text")
                 .and_then(Value::as_str)
                 .map_or(0, |s| s.chars().count());
-            let mut s = format!("write_stdin: pid {pid_u} ({chars} chars)");
+            let mut s = format!("write_stdin: {id} ({chars} chars)");
             if input
                 .get("end_stdin")
                 .and_then(Value::as_bool)
@@ -209,17 +189,17 @@ mod tests {
     #[test]
     fn write_stdin_chars_count_unicode() {
         // chars(), not bytes — "café" is 4 chars / 5 bytes.
-        let out = format_tool_call("write_stdin", &json!({"pid": 42, "text": "café"}));
-        assert_eq!(out, "write_stdin: pid 42 (4 chars)");
+        let out = format_tool_call("write_stdin", &json!({"id": "mon-1", "text": "café"}));
+        assert_eq!(out, "write_stdin: mon-1 (4 chars)");
     }
 
     #[test]
     fn write_stdin_with_close() {
         let out = format_tool_call(
             "write_stdin",
-            &json!({"pid": 7, "text": "x", "end_stdin": true}),
+            &json!({"id": "mon-7", "text": "x", "end_stdin": true}),
         );
-        assert_eq!(out, "write_stdin: pid 7 (1 chars) [close stdin]");
+        assert_eq!(out, "write_stdin: mon-7 (1 chars) [close stdin]");
     }
 
     #[test]

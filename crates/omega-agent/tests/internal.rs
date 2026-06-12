@@ -2169,8 +2169,8 @@ fn any_message_contains(req: &LlmRequest, needle: &str) -> bool {
 async fn shutdown_reaps_live_monitors() {
     let (agent, _provider, _tmp) = make_test_agent();
     let mgr = agent.monitor_manager();
-    let a = mgr.spawn("a", "sleep 100").expect("spawn a");
-    let b = mgr.spawn("b", "sleep 100").expect("spawn b");
+    let a = mgr.spawn("a", "sleep 100", None).expect("spawn a");
+    let b = mgr.spawn("b", "sleep 100", None).expect("spawn b");
     poll_until(|| mgr.live_count() == 2, "both monitors live").await;
 
     let reaped = agent.shutdown_monitors();
@@ -2262,7 +2262,7 @@ async fn dropping_the_agent_reaps_live_monitors() {
     let (agent, _provider, _tmp) = make_test_agent();
     let mgr = agent.monitor_manager();
     let cmd = format!("echo $$ > {}; sleep 100", pidfile.display());
-    mgr.spawn("reaped", &cmd).expect("spawn monitor");
+    mgr.spawn("reaped", &cmd, None).expect("spawn monitor");
 
     let pid = read_pid(&pidfile).await.expect("monitor pid");
     assert!(proc_dir_exists(pid), "monitor should be running, pid {pid}");
@@ -2302,7 +2302,7 @@ async fn shutdown_and_log_monitors_kills_process_and_persists_session_end_stop()
     // Spawn a long-lived monitor so it is still running at teardown.
     let cmd = format!("echo $$ > {}; sleep 300", pidfile.display());
     let mgr = agent.monitor_manager();
-    let spawned = mgr.spawn("teardown-mon", &cmd).expect("spawn");
+    let spawned = mgr.spawn("teardown-mon", &cmd, None).expect("spawn");
     let monitor_id = spawned.id.clone();
     drop(mgr); // release the Arc clone; agent owns the canonical one
 
@@ -2359,7 +2359,7 @@ async fn shutdown_and_log_monitors_does_not_double_log_already_stopped_monitor()
 
     // Spawn a monitor that exits immediately.
     let mgr = agent.monitor_manager();
-    let spawned = mgr.spawn("instant-exit", "true").expect("spawn");
+    let spawned = mgr.spawn("instant-exit", "true", None).expect("spawn");
     let monitor_id = spawned.id.clone();
 
     // Wait until the naturally-exited monitor is removed from the roster
@@ -3925,7 +3925,8 @@ async fn u2_headless_parks_while_a_monitor_is_live() {
     let mut stream = agent.run(queue, run_cancel.clone());
 
     // A long-lived monitor keeps the session alive even when idle.
-    mgr.spawn("sleeper", "sleep 30").expect("spawn sleeper");
+    mgr.spawn("sleeper", "sleep 30", None)
+        .expect("spawn sleeper");
     push_handle.push(InputItem::Human {
         content: "go".to_owned(),
     });
@@ -3957,7 +3958,7 @@ async fn u2_real_monitor_stdout_delivered_through_inbox() {
 
     // Real monitor: prints one line then exits. stdout + stop both flow
     // through the manager → MonitorSink → inbox.
-    mgr.spawn("ticker", "printf 'real-tick\\n'")
+    mgr.spawn("ticker", "printf 'real-tick\\n'", None)
         .expect("spawn ticker");
 
     let seen = pull_to_turn_end(&mut stream).await;

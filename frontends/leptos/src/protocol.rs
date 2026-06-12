@@ -924,10 +924,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn presets_standard_has_fourteen_tools_without_python_repl() {
+    fn presets_standard_has_thirteen_tools_without_python_repl() {
         let p = &PRESETS[0];
         assert_eq!(p.id, "standard");
-        assert_eq!(p.tools.len(), 14);
+        assert_eq!(p.tools.len(), 13);
         assert!(!p.tools.contains(&"python_repl"));
         // monitors are now in the standard/default set
         assert!(p.tools.contains(&"monitor"));
@@ -936,10 +936,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn presets_all_has_fifteen_tools_with_python_repl() {
+    fn presets_all_has_fourteen_tools_with_python_repl() {
         let p = &PRESETS[1];
         assert_eq!(p.id, "all");
-        assert_eq!(p.tools.len(), 15);
+        assert_eq!(p.tools.len(), 14);
         assert!(p.tools.contains(&"python_repl"));
         assert!(p.tools.contains(&"monitor"));
     }
@@ -982,7 +982,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn resolve_preset_finds_all_fifteen() {
+    fn resolve_preset_finds_all_fourteen() {
         let sel: Vec<String> = PRESETS[1].tools.iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(resolve_preset(&sel), Some("all"));
     }

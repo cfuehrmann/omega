@@ -25,7 +25,6 @@ mod output_cleaner;
 mod process_util;
 pub mod python_repl;
 mod schemas;
-mod state;
 mod tool_ctx;
 mod tools;
 
@@ -136,12 +135,12 @@ pub async fn execute_tool(
         "run_command" => tools::run_command::execute(input, cancel, ctx).await,
         "grep_files" => tools::grep_files::execute(input, cancel).await,
         "find_files" => tools::find_files::execute(input, cancel).await,
-        "run_background" => tools::run_background::execute(input, cancel).await,
-        "wait_for_output" => tools::wait_for_output::execute(input, cancel, ctx).await,
-        "write_stdin" => tools::write_stdin::execute(input, cancel).await,
+        "write_stdin" => tools::write_stdin::execute(&input, ctx).await,
         "web_search" => tools::web_search::execute(input, cancel).await,
         "fetch_url" => tools::fetch_url::execute(input, cancel, ctx).await,
         // Monitor tools early-return a `ToolResult` (sync; populate `extra_events`).
+        // `run_background` is a monitor whose command redirects to a log file.
+        "run_background" => return tools::run_background::execute(&input, ctx),
         "monitor" => return tools::monitor::execute(&input, ctx),
         "stop_monitor" => return tools::stop_monitor::execute(&input, ctx),
         "python_repl" => {

@@ -236,16 +236,16 @@ fn run_preset_and_collect_tools(preset: &str) -> Vec<String> {
 
 /// Kills: `replace preset.map(...) with None` in `omega-cli` — would drop the
 /// explicit `tool_selection` and fall back to the server default, which happens
-/// to also be 14 tools, BUT in a different identity sense (None vs Some).
+/// to also be 13 tools, BUT in a different identity sense (None vs Some).
 /// The `session_started` event carries the materialised list either way, so we
 /// pin the exact contents.
 #[tokio::test(flavor = "multi_thread")]
-async fn preset_standard_yields_fourteen_tools() {
+async fn preset_standard_yields_thirteen_tools() {
     let tools = run_preset_and_collect_tools("standard");
     assert_eq!(
         tools.len(),
-        14,
-        "standard preset should give 14 tools, got: {tools:?}"
+        13,
+        "standard preset should give 13 tools, got: {tools:?}"
     );
     assert!(
         !tools.contains(&"python_repl".to_owned()),
@@ -256,14 +256,14 @@ async fn preset_standard_yields_fourteen_tools() {
 }
 
 /// Kills: swapping `all` with `standard` in the PRESETS const — `all` adds
-/// `python_repl` on top of the standard 14 (which already includes monitors).
+/// `python_repl` on top of the standard 13 (which already includes monitors).
 #[tokio::test(flavor = "multi_thread")]
-async fn preset_all_yields_fifteen_tools_including_repl_and_monitors() {
+async fn preset_all_yields_fourteen_tools_including_repl_and_monitors() {
     let tools = run_preset_and_collect_tools("all");
     assert_eq!(
         tools.len(),
-        15,
-        "all preset should give 15 tools, got: {tools:?}"
+        14,
+        "all preset should give 14 tools, got: {tools:?}"
     );
     assert!(
         tools.contains(&"python_repl".to_owned()),

@@ -98,7 +98,6 @@ fn all_33_events() -> Vec<OmegaEvent> {
                 "grep_files".into(),
                 "find_files".into(),
                 "run_background".into(),
-                "wait_for_output".into(),
                 "write_stdin".into(),
             ],
         }),

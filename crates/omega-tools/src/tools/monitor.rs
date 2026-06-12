@@ -31,7 +31,7 @@ pub fn execute(input: &Value, ctx: Option<&ToolCtx>) -> ToolResult {
         return ToolResult::err("monitor: missing 'command' field");
     };
 
-    match manager.spawn(description, command) {
+    match manager.spawn(description, command, None) {
         Ok(spawned) => {
             let mut result = ToolResult::ok(format!("Monitor `{id}` started.", id = spawned.id));
             result

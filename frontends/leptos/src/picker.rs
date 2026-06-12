@@ -95,12 +95,7 @@ const TOOL_CATEGORIES: &[ToolCategory] = &[
     },
     ToolCategory {
         label: "Shell",
-        tools: &[
-            "run_command",
-            "run_background",
-            "wait_for_output",
-            "write_stdin",
-        ],
+        tools: &["run_command", "run_background", "write_stdin"],
     },
     ToolCategory {
         label: "Web",

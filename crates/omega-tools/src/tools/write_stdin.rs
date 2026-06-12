@@ -1,55 +1,39 @@
-//! `write_stdin` — write text to the stdin of a tracked background process.
+//! `write_stdin` — write text to the stdin of a monitor or background job.
+//!
+//! The handle is the monitor/job **id** (the same id returned by
+//! `run_background` and `monitor`, and shown in the roster), not an OS pid.
+//! Both streaming monitors and background jobs are spawned with a piped
+//! stdin, so this tool feeds either kind through the same
+//! [`MonitorManager`](crate::monitors::MonitorManager) path.
 
 use serde_json::Value;
-use tokio::io::AsyncWriteExt as _;
-use tokio_util::sync::CancellationToken;
 
-use crate::state::processes;
+use crate::tool_ctx::ToolCtx;
 
-pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
-    let raw_pid = input["pid"]
-        .as_u64()
-        .ok_or("write_stdin: pid is required")?;
-    let pid =
-        u32::try_from(raw_pid).map_err(|_| format!("write_stdin: pid {raw_pid} out of range"))?;
+pub async fn execute(input: &Value, ctx: Option<&ToolCtx>) -> Result<String, String> {
+    let ctx = ctx.ok_or("write_stdin: no session context — monitors are not available")?;
+    let manager = ctx
+        .monitors
+        .as_ref()
+        .ok_or("write_stdin: monitors are not enabled for this session")?;
+    let id = input["id"]
+        .as_str()
+        .ok_or("write_stdin: 'id' is required")?;
     let text = input["text"]
         .as_str()
-        .ok_or("write_stdin: text is required")?;
+        .ok_or("write_stdin: 'text' is required")?;
     let end_stdin = input["end_stdin"].as_bool().unwrap_or(false);
 
     let char_count = text.chars().count();
-    let text_bytes = text.as_bytes().to_vec();
 
-    let mut procs = processes().lock().await;
-    let entry = procs.get_mut(&pid).ok_or_else(|| {
-        format!(
-            "No tracked process with pid {pid}. \
-             Only processes started with run_background can receive stdin."
-        )
-    })?;
-
-    if entry.stdin_closed {
-        return Err(format!("stdin for pid {pid} is already closed."));
-    }
-
-    {
-        let stdin = entry
-            .stdin
-            .as_mut()
-            .ok_or_else(|| format!("Process {pid} has no writable stdin handle."))?;
-        stdin
-            .write_all(&text_bytes)
-            .await
-            .map_err(|e| format!("write_stdin: write failed for pid {pid}: {e}"))?;
-    }
+    manager.write_stdin(id, text.as_bytes()).await?;
 
     if end_stdin {
-        entry.stdin_closed = true;
-        let _ = entry.stdin.take();
+        manager.close_stdin(id).await?;
         return Ok(format!(
-            "Wrote {char_count} chars to stdin of pid {pid} and closed stdin (EOF)"
+            "Wrote {char_count} chars to stdin of `{id}` and closed stdin (EOF)"
         ));
     }
 
-    Ok(format!("Wrote {char_count} chars to stdin of pid {pid}"))
+    Ok(format!("Wrote {char_count} chars to stdin of `{id}`"))
 }

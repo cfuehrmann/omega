@@ -212,6 +212,45 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     Headless is benchmark-only, bounded externally + session-end cleanup.</li>
 </ul>
 
+<h3>Background jobs are silent monitors <span class="meta">(built — see <a href="#plan">§2.7</a>)</span></h3>
+<ul>
+  <li><span class="norevert">⛔</span> <strong>A background job <em>is</em> a monitor whose command
+    redirects its own output to a log file.</strong> <code>run_background</code> does not spawn directly;
+    it calls the same <code>MonitorManager::spawn</code> the <code>monitor</code> tool uses, with the command
+    pre-wrapped <code>exec &gt; {logFile} 2&gt;&amp;1\n{cmd}</code>. There is <em>no</em> new type, delivery-mode
+    flag, or schema change — the silence is a property of the <em>command</em> (the redirect empties the
+    stdout/stderr pipes), not a separate code path. Reverting to a bespoke spawn path would make jobs
+    unobservable again (no roster entry, no event-log trail).</li>
+  <li><span class="norevert">⛔</span> <strong>No schema change: a job reuses
+    <code>MonitorStarted</code>/<code>MonitorStopped</code> with <em>zero</em> <code>MonitorDelivery</code>
+    in between.</strong> The <code>logFile</code> is recorded implicitly in the wrapped command string; do
+    <em>not</em> add a <code>logFile</code>/<code>kind</code>/<code>delivery_mode</code> field. A wrapped job
+    emits exactly one <code>MonitorStopped</code> (the completion notification, carrying the exit code);
+    a streaming monitor emits many deliveries + one stop. Both always end with exactly one stop — the
+    only difference is the stream-derived delivery count.</li>
+  <li><span class="norevert">⛔</span> <strong><code>wait_for_output</code> is deleted; do not reintroduce a
+    blocking wait.</strong> &ldquo;Return now, notified on exit&rdquo; is the whole point (a blocking wait
+    holds Seam B shut → starvation). &ldquo;Wait for ready&rdquo; is a shell idiom inside the command
+    (<code>until grep -q '…' LOG; do sleep; done</code> whose exit <em>is</em> the condition) or a streaming
+    <code>monitor</code> for progressive signals; the old <code>pattern</code>/<code>minBytes</code>/<code>timeoutMs</code>
+    params become shell idioms. The system prompt and tool descriptions teach: returns immediately, read the
+    <code>logFile</code> for output, do <em>not</em> poll.</li>
+  <li><span class="norevert">⛔</span> <strong>One registry, keyed by monitor id.</strong> The global
+    <code>processes()</code> table (<code>state.rs</code>) is retired; jobs and monitors share the manager's
+    roster. <code>run_background</code> returns <code>{ id, logFile }</code> (pid as an info field);
+    <code>stop_monitor(id)</code> stops a job for free. Do not resurrect a second process table.</li>
+  <li><span class="norevert">⛔</span> <strong>The manager spawns with <code>stdin = piped</code>;
+    <code>write_stdin</code> is keyed by id and serves both jobs and monitors.</strong> stdin is a separate
+    pipe — the <code>exec &gt; LOG 2&gt;&amp;1</code> redirect touches stdout/stderr only, so the wrapped job can
+    still be fed input. The <code>write_stdin</code> handle is the monitor <strong>id</strong>, not a pid.
+    Consequence (intended): a monitor command that <em>reads</em> stdin now blocks for input instead of
+    getting immediate EOF (matches today's <code>run_background</code>).</li>
+  <li><strong>The log file is &ldquo;tee always&rdquo; applied to a live process.</strong> Finite tools
+    capture-then-tee into <code>cache/{run,fetch}/</code>; an unbounded job tees <em>live</em> via fd
+    redirection into <code>cache/bg/&lt;ts&gt;-&lt;id&gt;.log</code>. It is the only copy of a silent job's output;
+    <code>read_file</code> is the pull path (mirrors Claude's <code>BashOutput</code> buffer).</li>
+</ul>
+
 <h2 id="active">2. Active investigation: blocking wait vs. streaming monitors</h2>
 <p class="meta">Promoted from former future items 3 (&ldquo;retire/reposition <code>wait_for_output</code>&rdquo;)
   and 6 (&ldquo;one-shot vs streaming split&rdquo;). They are the same question seen from two ends, so
@@ -365,9 +404,9 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   noise. Open question: is the hand-written loop good enough (explorative minimalism), or is the
   ergonomic gap worth a dedicated affordance?</p>
 
-<h3>2.4 Where <code>wait_for_output</code>'s tuned parameters go</h3>
-<p>The parameters we fine-tuned were tuned for a <em>blocking poll</em>. In a monitor world each becomes a
-  shell idiom inside the command (or a new monitor param):</p>
+<h3>2.4 Where <code>wait_for_output</code>'s tuned parameters went <span class="meta">&mdash; built; <code>wait_for_output</code> is now deleted</span></h3>
+<p>The parameters we had fine-tuned were tuned for a <em>blocking poll</em>. With <code>wait_for_output</code>
+  removed, each is now a shell idiom inside the command (or a deferred future monitor param):</p>
 <table>
   <thead><tr><th><code>wait_for_output</code> param</th><th>Why it was tuned</th><th>Monitor-world equivalent</th></tr></thead>
   <tbody>
@@ -378,14 +417,17 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <tr><td>tail-biased 200&nbsp;KB cap</td><td>most-recent output is what matters</td><td>output retrieval via <code>read_file</code> on the log</td></tr>
   </tbody>
 </table>
-<p>The convenience these gave &mdash; typed params, no shell-craft, a single clean return object &mdash; is the
-  real value of <code>wait_for_output</code>; the blocking is its cost. The decision is whether that
-  convenience is worth keeping a blocking tool, or worth re-expressing as monitor ergonomics.</p>
+<p>The convenience these gave &mdash; typed params, no shell-craft, a single clean return object &mdash; was the
+  real value of <code>wait_for_output</code>; the blocking was its cost. That convenience was judged not worth a
+  blocking tool (it holds Seam B shut); it was re-expressed as monitor ergonomics + shell idioms. Re-adding a
+  bounded wait, if evidence warrants, would be a per-monitor <code>timeout</code> param (§2.5 item 2), never a
+  blocking <code>wait_for_output</code>.</p>
 
-<h3>2.5 Open decisions <span class="meta">&mdash; resolved, see §2.7</span></h3>
-<p class="meta">Kept as the record of what was weighed. The cluster was settled in <a href="#plan">§2.7</a>:
-  <code>wait_for_output</code> is removed (1, 3), the <code>monitor</code> <code>timeout_ms</code>/auto-stop
-  questions (2, 4) are deferred to evidence, and pull-on-demand (5) stays <code>read_file</code>.</p>
+<h3>2.5 Open decisions <span class="meta">&mdash; resolved &amp; ✅ built, see §2.7 / §1</span></h3>
+<p class="meta">Kept as the record of what was weighed. The cluster was settled in <a href="#plan">§2.7</a> and is now
+  built: <code>wait_for_output</code> is <strong>removed</strong> (1, 3 — option (c)), the <code>monitor</code>
+  <code>timeout_ms</code>/auto-stop questions (2, 4) remain deferred to evidence, and pull-on-demand (5) stays
+  <code>read_file</code>.</p>
 <ol>
   <li><strong>Keep, demote, or retire <code>wait_for_output</code>?</strong> It is fully subsumed in capability
     by <code>monitor</code>+silent-loop, but more convenient and harder to misuse for a true one-shot wait.
@@ -422,8 +464,9 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h3 id="plan">2.7 Decided plan: fold <code>run_background</code> into the monitor manager</h3>
 <div class="box callout">
-  <p><strong>Status: decided, not yet built.</strong> Once implemented, the load-bearing points migrate to
-    §1 (invariants). This replaces <code>wait_for_output</code>'s blocking wait with Claude Code's
+  <p><strong>Status: ✅ built.</strong> The load-bearing points now live in <a href="#invariants">§1
+    (&ldquo;Background jobs are silent monitors&rdquo;)</a> as ⛔ invariants; this section is kept as the
+    design record. This replaces <code>wait_for_output</code>'s blocking wait with Claude Code's
     <code>run_in_background</code> contract &mdash; &ldquo;return now, you'll be notified on exit&rdquo; &mdash;
     delivered through Omega's existing monitor machinery so background jobs become <em>observable</em>
     (roster + event log), which they are not today.</p>

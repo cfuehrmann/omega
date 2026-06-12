@@ -86,12 +86,9 @@ pub async fn execute(
     // tool is in this session's tool_selection, the postprocess pipeline is
     // disabled to close the shell-loophole.
     let shell_gated = ctx.is_some_and(|c| {
-        !c.tool_selection.iter().any(|n| {
-            matches!(
-                n.as_str(),
-                "run_command" | "run_background" | "wait_for_output" | "write_stdin"
-            )
-        })
+        !c.tool_selection
+            .iter()
+            .any(|n| matches!(n.as_str(), "run_command" | "run_background" | "write_stdin"))
     });
 
     let url_str = input["url"]

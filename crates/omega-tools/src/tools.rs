@@ -13,7 +13,6 @@ pub mod read_file;
 pub mod run_background;
 pub mod run_command;
 pub mod stop_monitor;
-pub mod wait_for_output;
 pub mod web_search;
 pub mod write_file;
 pub mod write_stdin;

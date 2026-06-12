@@ -303,6 +303,28 @@ mutants-monitor-tools:
         --file "crates/omega-tools/src/tools/monitor.rs" \
         --file "crates/omega-tools/src/tools/stop_monitor.rs"
 
+# Run cargo-mutants targeted at run_background.rs (background-job -> monitor folding).
+# A background job IS a monitor whose command redirects output to a logFile, so it
+# streams zero deliveries and emits exactly one MonitorStopped on exit. Covers the
+# logFile path construction, the `exec > logFile 2>&1` wrapped command, cwd
+# passthrough, the atomic seq counter (log-file uniqueness), the MonitorStarted
+# extra_event, and the { id, logFile, pid } return. Exercised via execute_tool in
+# the background-job E2E tests in monitors.rs. Template: mutants-process-util.
+mutants-bg-run-background:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/tools/run_background.rs"
+
+# Run cargo-mutants targeted at write_stdin.rs (manager-routed stdin writes).
+# The handle is now an `id` (not a pid); write_stdin reaches both background jobs
+# and streaming monitors. Covers id-arg parsing, write vs close (end_stdin)
+# branching, and error propagation. Exercised via execute_tool against both a
+# background job and a streaming monitor. Template: mutants-process-util.
+mutants-bg-write-stdin:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/tools/write_stdin.rs"
+
 # Run cargo-mutants targeted at the python3 bootstrap logic in python_repl.rs.
 # Covers is_not_found(), start_inner() branching (AptNotFound / AptFailed /
 # Succeeded), retry logic, and the BootstrapInfo return path.

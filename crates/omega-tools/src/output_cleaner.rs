@@ -1,8 +1,8 @@
 //! `output_cleaner` — remove terminal noise from process output before it
 //! reaches the LLM.
 //!
-//! Applied to the combined stdout+stderr buffer of `run_command` and
-//! `wait_for_output` **before** the buffer is passed to `cap_and_tee`.
+//! Applied to the combined stdout+stderr buffer of `run_command`
+//! **before** the buffer is passed to `cap_and_tee`.
 //! The tee log on disk therefore receives the already-cleaned output;
 //! the raw bytes are not preserved.  This is intentional: a log full of
 //! carriage-return overwrite frames is as useless on disk as it is to the

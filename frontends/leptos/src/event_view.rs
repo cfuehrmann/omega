@@ -646,32 +646,15 @@ pub fn tool_call_preview(name: &str, input: &serde_json::Value) -> String {
         }
 
         // ── background process I/O ─────────────────────────────────────────
-        "wait_for_output" => {
-            let pid = u(input, "pid");
-            let timeout_ms = u(input, "timeoutMs");
-            let pattern = s(input, "pattern");
-            let log_file = s(input, "logFile");
-            let mut parts: Vec<String> = Vec::new();
-            if let Some(p) = pid {
-                parts.push(format!("pid={p}"));
-            }
-            if let Some(t) = timeout_ms {
-                parts.push(format!("timeout={t}ms"));
-            }
-            if !pattern.is_empty() {
-                parts.push(format!("pattern={pattern:?}"));
-            }
-            if !log_file.is_empty() {
-                parts.push(log_file.to_owned());
-            }
-            parts.join("  ")
-        }
-
         "write_stdin" => {
-            let pid = u(input, "pid");
+            let id = s(input, "id");
             let text = s(input, "text");
             let end_stdin = b(input, "end_stdin");
-            let prefix = pid.map_or_else(String::new, |p| format!("pid={p}  "));
+            let prefix = if id.is_empty() {
+                String::new()
+            } else {
+                format!("{id}  ")
+            };
             if end_stdin {
                 format!("{prefix}{text}  [EOF]")
             } else {
@@ -2139,47 +2122,18 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn preview_wait_for_output_all_fields() {
-        let input = serde_json::json!({
-            "pid": 42,
-            "logFile": "/tmp/out.log",
-            "timeoutMs": 5000,
-            "pattern": "ready"
-        });
-        assert_eq!(
-            tool_call_preview("wait_for_output", &input),
-            r#"pid=42  timeout=5000ms  pattern="ready"  /tmp/out.log"#,
-        );
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
-    fn preview_wait_for_output_no_pattern() {
-        let input = serde_json::json!({
-            "pid": 7,
-            "logFile": "/tmp/x.log",
-            "timeoutMs": 2000
-        });
-        assert_eq!(
-            tool_call_preview("wait_for_output", &input),
-            "pid=7  timeout=2000ms  /tmp/x.log",
-        );
-    }
-
-    #[wasm_bindgen_test]
-    #[test]
     fn preview_write_stdin_basic() {
-        let input = serde_json::json!({ "pid": 12, "text": "yes\n" });
-        assert_eq!(tool_call_preview("write_stdin", &input), "pid=12  yes\n",);
+        let input = serde_json::json!({ "id": "mon-7", "text": "yes\n" });
+        assert_eq!(tool_call_preview("write_stdin", &input), "mon-7  yes\n",);
     }
 
     #[wasm_bindgen_test]
     #[test]
     fn preview_write_stdin_eof() {
-        let input = serde_json::json!({ "pid": 12, "text": "data", "end_stdin": true });
+        let input = serde_json::json!({ "id": "mon-7", "text": "data", "end_stdin": true });
         assert_eq!(
             tool_call_preview("write_stdin", &input),
-            "pid=12  data  [EOF]",
+            "mon-7  data  [EOF]",
         );
     }
 

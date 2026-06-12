@@ -32,7 +32,7 @@ pub struct ToolCtx {
     ///
     /// Tools join sub-directories off this path:
     /// * `cache_dir/run/`   — `run_command` tee logs
-    /// * `cache_dir/wait/`  — `wait_for_output` snapshots
+    /// * `cache_dir/bg/`    — `run_background` job log files
     /// * `cache_dir/fetch/` — `fetch_url` downloaded files
     pub cache_dir: PathBuf,
 

@@ -116,11 +116,6 @@ fn primary_tool_arg(name: &str, input: &serde_json::Value) -> String {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("")
             .to_owned(),
-        "wait_for_output" => input
-            .get("logFile")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
         "write_stdin" => input
             .get("text")
             .and_then(serde_json::Value::as_str)
@@ -652,14 +647,8 @@ mod tests {
     }
 
     #[test]
-    fn pta_wait_for_output_returns_log_file() {
-        let inp = serde_json::json!({"logFile": "/tmp/bg.log", "timeoutMs": 5000});
-        assert_eq!(primary_tool_arg("wait_for_output", &inp), "/tmp/bg.log");
-    }
-
-    #[test]
     fn pta_write_stdin_returns_text() {
-        let inp = serde_json::json!({"pid": 123, "text": "yes\n"});
+        let inp = serde_json::json!({"id": "mon-1", "text": "yes\n"});
         assert_eq!(primary_tool_arg("write_stdin", &inp), "yes\n");
     }
 

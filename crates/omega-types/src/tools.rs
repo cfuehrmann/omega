@@ -26,7 +26,7 @@ use serde_json;
 // Tool-name constants
 // ---------------------------------------------------------------------------
 
-/// The default toolset — 14 tools (file ops + shell + web + monitors).
+/// The default toolset — 13 tools (file ops + shell + web + monitors).
 ///
 /// Used when [`AgentConfig::tool_selection`] is `None`.  Order is canonical
 /// and matches the order `tool_definitions` emits.  `python_repl` is opt-in
@@ -45,7 +45,6 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
     "grep_files",
     "find_files",
     "run_background",
-    "wait_for_output",
     "write_stdin",
     "monitor",
     "stop_monitor",
@@ -71,7 +70,6 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "grep_files",
     "find_files",
     "run_background",
-    "wait_for_output",
     "write_stdin",
     "monitor",
     "stop_monitor",
@@ -118,13 +116,13 @@ pub const PRESETS: &[Preset] = &[
         id: "standard",
         label: "Standard",
         tools: DEFAULT_TOOL_NAMES,
-        description: "14 tools — file ops, shell, web, monitors (no Python REPL)",
+        description: "13 tools — file ops, shell, web, monitors (no Python REPL)",
     },
     Preset {
         id: "all",
         label: "+ Python REPL & monitors",
         tools: ALL_TOOL_NAMES,
-        description: "All 15 tools — standard plus python_repl",
+        description: "All 14 tools — standard plus python_repl",
     },
     Preset {
         id: "repl-centric",
@@ -298,8 +296,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn default_tool_names_are_fourteen_in_canonical_order() {
-        assert_eq!(DEFAULT_TOOL_NAMES.len(), 14);
+    fn default_tool_names_are_thirteen_in_canonical_order() {
+        assert_eq!(DEFAULT_TOOL_NAMES.len(), 13);
         assert_eq!(
             DEFAULT_TOOL_NAMES,
             &[
@@ -313,7 +311,6 @@ mod tests {
                 "grep_files",
                 "find_files",
                 "run_background",
-                "wait_for_output",
                 "write_stdin",
                 "monitor",
                 "stop_monitor",
@@ -338,8 +335,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn all_tool_names_are_fifteen() {
-        assert_eq!(ALL_TOOL_NAMES.len(), 15);
+    fn all_tool_names_are_fourteen() {
+        assert_eq!(ALL_TOOL_NAMES.len(), 14);
     }
 
     #[test]
@@ -369,7 +366,7 @@ mod tests {
         let p = preset_by_id("standard").expect("standard exists");
         assert_eq!(p.tools, DEFAULT_TOOL_NAMES);
         assert_eq!(p.label, "Standard");
-        assert_eq!(p.tools.len(), 14);
+        assert_eq!(p.tools.len(), 13);
         assert!(!p.tools.contains(&"python_repl"));
         assert!(p.tools.contains(&"monitor"));
         assert!(p.tools.contains(&"stop_monitor"));
@@ -379,7 +376,7 @@ mod tests {
     fn all_preset_matches_all_tool_names() {
         let p = preset_by_id("all").expect("all exists");
         assert_eq!(p.tools, ALL_TOOL_NAMES);
-        assert_eq!(p.tools.len(), 15);
+        assert_eq!(p.tools.len(), 14);
         assert!(p.tools.contains(&"python_repl"));
         assert!(p.tools.contains(&"monitor"));
     }
@@ -419,8 +416,8 @@ mod tests {
     }
 
     #[test]
-    fn default_tool_selection_has_fourteen_tools() {
-        assert_eq!(default_tool_selection().len(), 14);
+    fn default_tool_selection_has_thirteen_tools() {
+        assert_eq!(default_tool_selection().len(), 13);
     }
 
     // -----------------------------------------------------------------------
@@ -442,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_preset_finds_all_fifteen() {
+    fn resolve_preset_finds_all_fourteen() {
         let sel: Vec<String> = PRESETS[1].tools.iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(resolve_preset(&sel), Some("all"));
     }
@@ -488,7 +485,7 @@ mod tests {
     /// selection as a preset match.  This test guards that path.
     #[test]
     fn resolve_preset_requires_exact_tool_membership() {
-        // Build a 14-tool selection that is the right *size* for standard
+        // Build a 13-tool selection that is the right *size* for standard
         // but has python_repl in place of monitor.
         let sel: Vec<String> = DEFAULT_TOOL_NAMES
             .iter()
@@ -498,7 +495,7 @@ mod tests {
             .collect();
         assert_eq!(
             sel.len(),
-            14,
+            13,
             "selection must be same size as standard preset"
         );
         assert_eq!(

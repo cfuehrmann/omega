@@ -35,8 +35,6 @@ use std::path::{Path, PathBuf};
 /// The default bias for each tool:
 /// * `run_command` — [`Tail`](TruncationBias::Tail) on non-zero exit (errors
 ///   are usually at the end), [`Head`](TruncationBias::Head) on exit 0.
-/// * `wait_for_output` — [`Tail`](TruncationBias::Tail) (most-recent output
-///   is the interesting part).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TruncationBias {
     /// Return the first `cap` bytes.
