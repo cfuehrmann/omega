@@ -1023,8 +1023,14 @@ main > h1 {
 /* Primary is always Send (blue). */
 .leptos-composer-primary[data-action="send"]:hover:not(:disabled)        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
 
+/* Symbol buttons are slightly larger than the text Send button. */
+.leptos-composer-halt,
+.leptos-composer-resume,
+.leptos-composer-abort { font-size: 17px; }
+
 /* Halt — "stop advancing" (yellow), shown while Running. */
-.leptos-composer-halt          { color: var(--yellow); }
+/* Negative letter-spacing pulls ▮▮ together into a compact pause icon. */
+.leptos-composer-halt          { color: var(--yellow); letter-spacing: -0.2em; }
 .leptos-composer-halt:hover:not(:disabled)   { border-color: var(--yellow); }
 
 /* Resume — "carry on" (green), shown while Halted. */
