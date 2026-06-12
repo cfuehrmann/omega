@@ -1815,6 +1815,8 @@ main > h1 {
 }
 .status-chip[data-status="ready"]                 { color: var(--ctp-teal); }
 .status-chip[data-status="streaming"]             { color: var(--llm); animation: pulse 1s infinite; }
+.status-chip[data-status="halting"]               { color: var(--mauve); animation: pulse 1s infinite; }
+.status-chip[data-status="halted"]                { color: var(--mauve); }
 .status-chip[data-status="pausing"]               { color: var(--ctp-yellow); animation: pulse 1s infinite; }
 .status-chip[data-status="pausing-will-continue"] { color: var(--ctp-green); animation: pulse 1s infinite; }
 .status-chip[data-status="paused"]                { color: var(--ctp-yellow); }
