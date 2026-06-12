@@ -315,6 +315,32 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 </table>
 <p>Mapping onto Claude's three needs: our <code>monitor</code> covers needs&nbsp;2 and 3 (streaming, with
   and without a natural end). Need&nbsp;1 (one silent notification) has <em>no clean home</em> &mdash; see below.</p>
+<div class="box callout">
+  <h4>What monitors are actually for &mdash; and the double-duty we've imposed</h4>
+  <p>The recurring confusion is &ldquo;isn't a monitor how you wait for a slow command?&rdquo; The honest
+    answer differs by harness, and the difference is the whole point:</p>
+  <ul>
+    <li><strong>A monitor's real job is events that are <em>not</em> &ldquo;the process exited.&rdquo;</strong>
+      It earns its keep only when exit is the wrong signal: (a) the process <em>never exits</em> (dev server,
+      <code>tail -f</code>, file watcher); (b) you want to react <em>before</em> exit (the first
+      <code>FAILED</code> line, live progress); or (c) there are <em>many</em> events of interest over its
+      lifetime (every <code>ERROR</code>, every CI step). If the only thing you want is &ldquo;tell me once,
+      when this finite job is done,&rdquo; a monitor is overkill &mdash; that is a one-shot
+      <em>completion</em> signal, not a stream.</li>
+    <li><strong>Claude Code splits these into two tools;</strong> Omega has not. There, completion-of-a-slow-job
+      is <code>Bash(run_in_background)</code> (silent, one exit notification) and <code>Monitor</code> is
+      <em>strictly</em> for streaming intermediate events. Monitor is <em>not</em> Claude's slow-command-wait
+      mechanism.</li>
+    <li><strong>In Omega, <code>monitor</code> double-duties</strong> as both the streamer <em>and</em> the only
+      async exit notifier &mdash; because <code>run_background</code> fires nothing on exit, so
+      <code>monitor</code> (via <code>MonitorStopped</code>) is the <em>only</em> tool that injects anything
+      asynchronously, including completion. That is why, while exploring Omega, a monitor genuinely
+      <em>was</em> how you waited for a slow command: we have nothing else. The conflation is an artifact of a
+      missing affordance, not a design choice &mdash; and it is exactly the open question in
+      <a href="#active">§2.3 / §2.5</a>: add a silent &ldquo;notify once on exit&rdquo; mode so
+      <code>monitor</code> can mean only &ldquo;stream&rdquo; again.</li>
+  </ul>
+</div>
 
 <h3>2.3 <code>run_background</code>+monitor vs. Claude's <code>run_in_background</code></h3>
 <p>The difference is <strong>who owns the completion notification</strong> &mdash; and it is sharpest in the
