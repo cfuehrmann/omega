@@ -486,7 +486,7 @@ pub fn Composer() -> impl IntoView {
                     data-testid="leptos-composer-halt"
                     on:click=on_halt_click
                 >
-                    "Halt"
+                    "▮▮"
                 </button>
             </Show>
             <Show when=move || show_resume(store.turn_state.get()) fallback=|| ().into_any()>
@@ -495,7 +495,7 @@ pub fn Composer() -> impl IntoView {
                     data-testid="leptos-composer-resume"
                     on:click=on_resume_click
                 >
-                    "Resume ▶"
+                    "▶"
                 </button>
             </Show>
             <Show when=move || show_abort(store.turn_state.get()) fallback=|| ().into_any()>
@@ -504,7 +504,7 @@ pub fn Composer() -> impl IntoView {
                     data-testid="leptos-composer-abort"
                     on:click=on_abort_click
                 >
-                    "Abort"
+                    "■"
                 </button>
             </Show>
             <button
