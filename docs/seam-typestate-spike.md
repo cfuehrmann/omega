@@ -171,6 +171,78 @@ Illegal moves (must be unrepresentable / hard error): appending an assistant
 record or draining the queue while `pending` non-empty; a tool_result whose id
 is not in `pending`.
 
+## REFINED DESIGN (most elegant) — state as a VIEW of history, not a stored field
+`ConvState` is a PURE FUNCTION of the history tail (total mapping):
+- empty OR last = assistant WITHOUT tool_use      -> Idle
+- last = any role:user record                     -> AwaitingAssistant
+- last = assistant WITH tool_use blocks            -> AwaitingToolResults{ pending = those ids }
+So DERIVE it (`fn conv_state(&[Message]) -> ConvState`); do NOT store a field.
+Benefits: no desync; resume falls out free (`conv_state(loaded_history)`);
+dangling-repair becomes COMPELLED by the guard (user_input illegal from
+AwaitingToolResults) rather than a proactive Step 1.
+
+Transition function δ (the WHOLE invariant in one place):
+```
+δ(Idle,                user_input)        -> AwaitingAssistant
+δ(AwaitingAssistant,   user_input)        -> AwaitingAssistant   // Seam-B / batch merge
+δ(AwaitingToolResults, user_input)        -> ERROR               // no injection mid-pair
+δ(AwaitingAssistant,   assistant_plain)   -> Idle                // TurnEnd
+δ(AwaitingAssistant,   assistant_tooluse) -> AwaitingToolResults{ids}
+δ(AwaitingToolResults, tool_results{R})   -> require R == pending EXACTLY -> AwaitingAssistant
+(else)                                    -> ERROR
+```
+The move is itself derivable from (role, blocks): role==User & all blocks
+ToolResult -> tool_results{ids}; role==User else -> user_input; role==Assistant
+& has ToolUse -> assistant_tooluse{ids}; role==Assistant else -> assistant_plain.
+So the chokepoint signature is just `append_record(role, blocks) -> Result<ContextHash>`.
+
+## CONFIRMED: the live append-triple (identical across inject.rs)
+Every inject.rs helper ends with the SAME triple (only role + the pre-emitted
+event differ):
+```
+let hash = self.context_store.append(Role::User, blocks.clone()).await?;
+self.history.push(Message { role: Role::User, content: blocks });
+self.context_hashes.push(hash);
+```
+Verified sites (inject.rs): inject_monitor_delivery (~84-94), inject_harness_recovery
+(~124-133), inject_monitor_stopped (~169-178), inject_user_message (~201-210),
+inject_dangling_tool_results (~265-272, role:User batch), inject_tool_results_batch
+(~289-296). run_loop.rs:877 = assistant variant (Role::Assistant), returns
+assistant_hash used for lr.context_hash + ToolCall events -> so append_record
+MUST RETURN the hash.
+STEP 1 = extract `async fn append_record(&mut self, role, blocks) -> Result<ContextHash>`
+doing exactly the triple; replace all the above call sites with it. Pure
+refactor, no behaviour change. Each helper still emits its OmegaEvent FIRST
+(A1 invariant) and only the triple moves into append_record.
+lifecycle.rs:399/413 = `seed_*` (compaction seed): synthetic User preamble +
+Assistant ack, each does the SAME triple (append User blocks, then Assistant
+blocks). resume.rs:433 = replay of a persisted assistant record (append
+Assistant blocks, no history.push/context_hashes here actually — it pushes hash
+via assistant_hash path; note resume builds blocks from slots). These are
+SPECIAL: they write a fixed valid User->Assistant pair (lifecycle) or replay a
+trusted record (resume). DECISION: they MAY route through `append_record` too
+(the moves are legal: Idle->user_input->AwaitingAssistant->assistant_plain->Idle
+for the seed pair), which is even cleaner — but verify the seed pair's role
+sequence is legal under δ before forcing it through. Safest for STEP 1: route
+ONLY the inject.rs helpers + run_loop.rs:877 through append_record (pure
+refactor); leave lifecycle/resume as-is for now and revisit when the guard lands.
+
+## STATUS / RESUME-HERE (as of commit after 92f85fb)
+- Spike COMPLETE and committed (92f85fb). This file is the durable record.
+- Refined design agreed in discussion: state-as-view-of-history + single δ
+  inside a guarded `append_record(role, blocks) -> Result<ContextHash>`.
+- User endorsed runtime-checked field/view (compile-time impossible for the id
+  bijection — needs dependent types) and asked for the most elegant overall
+  solution; the view-of-history design above is that.
+- NEXT ACTION = implement STEP 1: extract `append_record` chokepoint, funnel
+  the inject.rs helpers + run_loop.rs:877 through it. Pure refactor, gate green,
+  commit. THEN STEP 2: add `conv_state` + δ + bijection check + pure-fn tests +
+  `cargo mutants -p omega-agent --cap-lints=true --file <changed>` + Justfile recipe.
+- Test approach (AGENTS.md): agent-level via Agent::send_message + MockProvider
+  for legal sequences; pure-fn unit tests for `conv_state` + δ legality are a
+  justified carve-out (agent-level setup for every illegal transition is
+  disproportionate — add a comment saying so).
+
 ## Open questions for implementation
 - Resume path (resume.rs:433) and lifecycle.rs rebuild history from disk — the
   typestate must be RECONSTRUCTED from the loaded tail (last record kind), not
