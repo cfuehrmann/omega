@@ -71,7 +71,11 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <h4>What exists</h4>
   <p>An agent can <code>monitor(description, command)</code> to run a background shell command
   whose stdout lines are injected as <code>role:user</code> at the next seam (no preemption),
-  watch/steer it from the Web UI, and <code>stop_monitor(id)</code>. Input (human + monitor)
+  watch/steer it from the Web UI, and <code>stop_monitor(id)</code>. As of <a href="#plan">§2.7</a>,
+  <code>run_background(command)</code> is a <em>silent</em> monitor &mdash; it returns immediately with
+  <code>{ id, logFile, pid }</code>, redirects output to <code>logFile</code> (zero deliveries), and fires one
+  <code>MonitorStopped</code> on exit; <code>write_stdin</code>/<code>stop_monitor</code> work on jobs and
+  monitors alike, keyed by id. Input (human + monitor)
   flows through one queue; loop controls are <strong>Queue</strong> / <strong>Halt</strong> /
   <strong>Abort</strong>, and the UI can delete an individual pending queued prompt before it is
   delivered. A first-class event sink lets out-of-band events (stderr, control
@@ -82,7 +86,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <h4>Contents</h4>
   <ol>
     <li><a href="#invariants">Invariants &amp; locked-in decisions</a> <span class="meta">(do not revert)</span></li>
-    <li><a href="#active"><strong>Active investigation: blocking wait vs. streaming monitors</strong></a> <span class="meta">(promoted from future items 3 + 6; §2.7 = decided plan)</span></li>
+    <li><a href="#active"><strong>Investigation record: blocking wait vs. streaming monitors</strong></a> <span class="meta">(concluded &amp; ✅ built; §2.7 shipped)</span></li>
     <li><a href="#future">Future work (sorted by attractivity)</a></li>
     <li><a href="#codefacts">Resume map (where things live)</a></li>
   </ol>
@@ -107,8 +111,8 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     The only pre-boundary action is <strong>Abort</strong> (transport-level), kept as a separate
     explicit interrupt.</li>
   <li><span class="norevert">⛔</span> <strong>Monitors are out-of-band, never a blocking tool.</strong>
-    A long/blocking tool holds Seam B shut → starvation (the <code>wait_for_output</code> problem this
-    feature exists to fix).</li>
+    A long/blocking tool holds Seam B shut → starvation (the former <code>wait_for_output</code> problem this
+    feature exists to prevent — <code>wait_for_output</code> was deleted, see <a href="#plan">§2.7</a>).</li>
   <li><strong>Single writer for context-bound events</strong> — the loop appends; monitors enqueue.
     (Generalised by the event sink for non-context events — see below.)</li>
   <li><strong>Park/terminate is defined.</strong> Park iff a live monitor or queued item exists, else
@@ -251,13 +255,21 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <code>read_file</code> is the pull path (mirrors Claude's <code>BashOutput</code> buffer).</li>
 </ul>
 
-<h2 id="active">2. Active investigation: blocking wait vs. streaming monitors</h2>
+<h2 id="active">2. Investigation record: blocking wait vs. streaming monitors <span class="meta">(concluded &amp; ✅ built &mdash; see <a href="#plan">§2.7</a> / <a href="#invariants">§1</a>)</span></h2>
+<div class="box callout">
+  <p><strong>This section is now a historical record.</strong> The investigation it frames was settled in
+    <a href="#plan">§2.7</a> and <strong>shipped</strong>: <code>wait_for_output</code> is deleted and
+    <code>run_background</code> is now a silent monitor that notifies once on exit. The current truth lives in
+    <a href="#invariants">§1 (&ldquo;Background jobs are silent monitors&rdquo;)</a>; §2.2&ndash;§2.6 are kept
+    as the reasoning trail. Where a sub-section described the <em>pre-build</em> world, it now carries a
+    &ldquo;then vs. now&rdquo; note. Still-open follow-ups (per-monitor <code>timeout_ms</code>, auto-stop on
+    volume) are deferred to evidence and tracked in <a href="#future">§3</a>.</p>
+</div>
 <p class="meta">Promoted from former future items 3 (&ldquo;retire/reposition <code>wait_for_output</code>&rdquo;)
-  and 6 (&ldquo;one-shot vs streaming split&rdquo;). They are the same question seen from two ends, so
-  they live together here. <strong>Evidence is thin</strong> — this section collects findings and frames
-  the decisions; it does not settle them. The premise we already believe: <em>blocking is the smell</em>
-  (<code>wait_for_output</code> stalls the whole agent loop); the open question is what replaces it and
-  whether anything needs adding.</p>
+  and 6 (&ldquo;one-shot vs streaming split&rdquo;). They were the same question seen from two ends. The premise
+  that drove the outcome: <em>blocking is the smell</em> (<code>wait_for_output</code> stalled the whole agent
+  loop); the resolution was to replace it with a non-blocking, observable background job rather than tune the
+  blocking tool.</p>
 
 <h3>2.1 What Claude Code does (reverse-engineered)</h3>
 <p>First, the mechanic stated plainly. There is <strong>one tool</strong> &mdash; <code>Bash</code> &mdash;
@@ -341,22 +353,30 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   agent's turn is free to continue or end while the wait happens out-of-band.</p>
 </div>
 
-<h3>2.2 What Omega has today</h3>
+<h3>2.2 What Omega has today <span class="meta">(post-§2.7)</span></h3>
 <table>
   <thead><tr><th>Tool</th><th>Blocking?</th><th>Notifies on its own?</th><th>Role</th></tr></thead>
   <tbody>
     <tr><td><code>run_command</code></td><td>Yes (synchronous)</td><td>n/a</td><td>finite commands</td></tr>
-    <tr><td><code>run_background</code></td><td>No</td><td><strong>No</strong> &mdash; returns <code>{pid, logFile}</code>, then silent</td><td>start a long-lived process</td></tr>
-    <tr><td><code>wait_for_output</code></td><td><strong>Yes &mdash; stalls the loop</strong></td><td>n/a</td><td>poll a <code>run_background</code> log until first of {pattern, minBytes, exit, timeout}</td></tr>
+    <tr><td><code>run_background</code></td><td>No &mdash; returns immediately</td><td><strong>Yes</strong> &mdash; one <code>MonitorStopped</code> on exit (via the manager); output redirected to <code>logFile</code>, zero deliveries; observable in roster + event log</td><td>start a silent background job</td></tr>
     <tr><td><code>monitor</code></td><td>No</td><td>Yes &mdash; each stdout line &rarr; <code>role:user</code> at next seam; <code>MonitorStopped</code> on exit</td><td>stream a long-lived process</td></tr>
-    <tr><td><code>write_stdin</code> / <code>stop_monitor</code></td><td>&mdash;</td><td>&mdash;</td><td>steer / cancel</td></tr>
+    <tr><td><code>write_stdin</code> / <code>stop_monitor</code></td><td>&mdash;</td><td>&mdash;</td><td>steer / cancel (by id; both work on jobs <em>and</em> monitors)</td></tr>
   </tbody>
 </table>
-<p>Mapping onto Claude's three needs: our <code>monitor</code> covers needs&nbsp;2 and 3 (streaming, with
-  and without a natural end). Need&nbsp;1 (one silent notification) has <em>no clean home</em> &mdash; see below.</p>
+<p class="meta"><strong>Changed by §2.7:</strong> <code>wait_for_output</code> (the blocking poll) is gone, and
+  <code>run_background</code> is no longer a silent dead-end &mdash; it is a monitor whose output is redirected
+  to a file, so it streams zero <code>MonitorDelivery</code> and fires exactly one <code>MonitorStopped</code> on
+  exit. It returns <code>{ id, logFile, pid }</code>; <code>read_file</code> on <code>logFile</code> is the pull
+  path for its output.</p>
+<p>Mapping onto Claude's three needs: <code>monitor</code> covers needs&nbsp;2 and 3 (streaming, with and without
+  a natural end); <code>run_background</code> now covers need&nbsp;1 (one silent notification on completion). All
+  three have a clean home.</p>
 <div class="box callout">
-  <h4>What monitors are actually for &mdash; and the double-duty we've imposed</h4>
-  <p>The recurring confusion is &ldquo;isn't a monitor how you wait for a slow command?&rdquo; The honest
+  <h4>What monitors are actually for &mdash; and the double-duty we used to impose <span class="meta">(now resolved)</span></h4>
+  <p class="meta"><strong>Resolved by §2.7:</strong> Omega now splits the two roles the way Claude Code does &mdash;
+    <code>run_background</code> is the silent one-shot-completion path, <code>monitor</code> is strictly for
+    streaming. The analysis below is kept because it explains <em>why</em> the split was the right call.</p>
+  <p>The recurring confusion was &ldquo;isn't a monitor how you wait for a slow command?&rdquo; The honest
     answer differs by harness, and the difference is the whole point:</p>
   <ul>
     <li><strong>A monitor's real job is events that are <em>not</em> &ldquo;the process exited.&rdquo;</strong>
@@ -366,32 +386,38 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
       lifetime (every <code>ERROR</code>, every CI step). If the only thing you want is &ldquo;tell me once,
       when this finite job is done,&rdquo; a monitor is overkill &mdash; that is a one-shot
       <em>completion</em> signal, not a stream.</li>
-    <li><strong>Claude Code splits these into two tools;</strong> Omega has not. There, completion-of-a-slow-job
-      is <code>Bash(run_in_background)</code> (silent, one exit notification) and <code>Monitor</code> is
-      <em>strictly</em> for streaming intermediate events. Monitor is <em>not</em> Claude's slow-command-wait
-      mechanism.</li>
-    <li><strong>In Omega, <code>monitor</code> double-duties</strong> as both the streamer <em>and</em> the only
-      async exit notifier &mdash; because <code>run_background</code> fires nothing on exit, so
-      <code>monitor</code> (via <code>MonitorStopped</code>) is the <em>only</em> tool that injects anything
-      asynchronously, including completion. That is why, while exploring Omega, a monitor genuinely
-      <em>was</em> how you waited for a slow command: we have nothing else. The conflation is an artifact of a
-      missing affordance, not a design choice &mdash; and it is exactly the open question in
-      <a href="#active">§2.3 / §2.5</a>: add a silent &ldquo;notify once on exit&rdquo; mode so
-      <code>monitor</code> can mean only &ldquo;stream&rdquo; again.</li>
+    <li><strong>Claude Code splits these into two tools;</strong> Omega now does too. There &mdash; and here, as
+      of §2.7 &mdash; completion-of-a-slow-job is <code>run_background</code> (silent, one exit notification) and
+      <code>monitor</code> is <em>strictly</em> for streaming intermediate events. Monitor is <em>not</em> the
+      slow-command-wait mechanism.</li>
+    <li><strong>Before §2.7, <code>monitor</code> double-dutied</strong> as both the streamer <em>and</em> the only
+      async exit notifier &mdash; because <code>run_background</code> fired nothing on exit, so
+      <code>monitor</code> (via <code>MonitorStopped</code>) was the <em>only</em> tool that injected anything
+      asynchronously, including completion. That is why, while exploring early Omega, a monitor genuinely
+      <em>was</em> how you waited for a slow command: there was nothing else. The conflation was an artifact of a
+      missing affordance, not a design choice &mdash; and §2.7 supplied the affordance: <code>run_background</code>
+      now emits the silent &ldquo;notify once on exit&rdquo; signal, so <code>monitor</code> means only
+      &ldquo;stream&rdquo; again.</li>
   </ul>
 </div>
 
-<h3>2.3 <code>run_background</code>+monitor vs. Claude's <code>run_in_background</code></h3>
-<p>The difference is <strong>who owns the completion notification</strong> &mdash; and it is sharpest in the
-  one-command case (a finite job that exits when you care, like the gate):</p>
+<h3>2.3 <code>run_background</code>+monitor vs. Claude's <code>run_in_background</code> <span class="meta">(the gap §2.7 closed)</span></h3>
+<p>The difference was <strong>who owns the completion notification</strong> &mdash; sharpest in the
+  one-command case (a finite job that exits when you care, like the gate). §2.7 closed the gap by adopting
+  Claude's ownership model; the <em>before</em> picture:</p>
 <ul>
   <li><strong>Claude:</strong> one tool (<code>Bash</code>+flag) <em>both</em> starts the process and wires
     its completion notification. The notification fires on the <em>real process's</em> exit; output stays
     silent and is pulled via <code>BashOutput</code>.</li>
-  <li><strong>Omega:</strong> <code>run_background</code> fires <em>nothing</em> on exit. To get a
-    completion signal you must run the work <em>as</em> a <code>monitor</code> (so the monitor process
-    <em>is</em> the job) &mdash; but then every stdout line is injected (noisy) unless the command is written
+  <li><strong>Omega (before §2.7):</strong> <code>run_background</code> fired <em>nothing</em> on exit. To get a
+    completion signal you had to run the work <em>as</em> a <code>monitor</code> (so the monitor process
+    <em>was</em> the job) &mdash; but then every stdout line was injected (noisy) unless the command was written
     to stay silent until done.</li>
+  <li><strong>Omega (after §2.7):</strong> <code>run_background</code> now <em>is</em> Claude's model &mdash; it
+    wraps the command to redirect output to <code>logFile</code> and runs it through the monitor manager, so it
+    fires one <code>MonitorStopped</code> on the real process's exit, streams nothing, and output is pulled via
+    <code>read_file</code> on <code>logFile</code>. One tool starts the job <em>and</em> owns its completion
+    notification.</li>
   <li><strong>The equivalent that already works today:</strong>
     <code>monitor("ready", "until grep -q 'Ready' dev.log; do sleep 0.5; done; echo ready")</code>.
     It stays silent until the condition fires, emits one line, exits &rarr; <code>MonitorStopped(ProcessExited)</code>
@@ -399,10 +425,13 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <strong><code>monitor</code> already subsumes <code>wait_for_output</code>'s use case &mdash; without
     blocking.</strong></li>
 </ul>
-<p>What Omega lacks is Claude's <em>ergonomic</em> need-1: a silent background job that notifies once on
-  completion <em>without</em> the operator hand-writing a silent-until-done loop, and without streaming
-  noise. Open question: is the hand-written loop good enough (explorative minimalism), or is the
-  ergonomic gap worth a dedicated affordance?</p>
+<p class="meta"><strong>Resolved (§2.7):</strong> what Omega lacked was Claude's <em>ergonomic</em> need-1 &mdash; a
+  silent background job that notifies once on completion <em>without</em> a hand-written silent-until-done loop and
+  without streaming noise. <code>run_background</code> now <em>is</em> that affordance: it wraps the command to
+  redirect output to a log file, so it streams nothing and fires one <code>MonitorStopped</code> on exit. The
+  hand-written <code>until</code>-loop remains available for &ldquo;wait until a condition&rdquo; (a finite job whose
+  <em>exit</em> is the condition); a streaming <code>monitor</code> remains the choice for early/progressive
+  signals.</p>
 
 <h3>2.4 Where <code>wait_for_output</code>'s tuned parameters went <span class="meta">&mdash; built; <code>wait_for_output</code> is now deleted</span></h3>
 <p>The parameters we had fine-tuned were tuned for a <em>blocking poll</em>. With <code>wait_for_output</code>
@@ -425,9 +454,10 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h3>2.5 Open decisions <span class="meta">&mdash; resolved &amp; ✅ built, see §2.7 / §1</span></h3>
 <p class="meta">Kept as the record of what was weighed. The cluster was settled in <a href="#plan">§2.7</a> and is now
-  built: <code>wait_for_output</code> is <strong>removed</strong> (1, 3 — option (c)), the <code>monitor</code>
-  <code>timeout_ms</code>/auto-stop questions (2, 4) remain deferred to evidence, and pull-on-demand (5) stays
-  <code>read_file</code>.</p>
+  built: <code>wait_for_output</code> is <strong>removed</strong> (1 &mdash; option (c)), the silent one-shot
+  completion mode is <strong>built as <code>run_background</code></strong> (3 &mdash; a sibling tool, not a flag),
+  the <code>monitor</code> <code>timeout_ms</code>/auto-stop questions (2, 4) remain deferred to evidence
+  (tracked in <a href="#future">§3</a>), and pull-on-demand (5) stays <code>read_file</code>.</p>
 <ol>
   <li><strong>Keep, demote, or retire <code>wait_for_output</code>?</strong> It is fully subsumed in capability
     by <code>monitor</code>+silent-loop, but more convenient and harder to misuse for a true one-shot wait.
@@ -438,8 +468,9 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     wait) <em>and</em> bound runaway monitors &mdash; folding in the old auto-stop concern. Lowest-risk, highest-leverage
     change in this cluster.</li>
   <li><strong>Add a one-shot/silent-completion mode?</strong> i.e. close Claude's need-1 ergonomic gap with a
-    flag or a sibling tool, vs. relying on a hand-written silent-until-done command. Decide only after observing
-    whether the agent actually writes those loops correctly.</li>
+    flag or a sibling tool, vs. relying on a hand-written silent-until-done command. <strong>✅ Built (§2.7):</strong>
+    resolved as a sibling path &mdash; <code>run_background</code> became the silent one-shot job (no flag, no new
+    schema), so the agent no longer has to hand-write a silent-until-done loop just to be told &ldquo;done.&rdquo;</li>
   <li><strong>Auto-stop on volume?</strong> Claude does it; we dropped it. Re-add iff we observe flooding.</li>
   <li><strong>Pull-on-demand?</strong> Claude's <code>BashOutput(bash_id, regex?)</code> has no Omega analogue
     beyond the agent <code>read_file</code>-ing the <code>logFile</code> &mdash; which is arguably already the
@@ -459,8 +490,9 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <li><strong>Long release builds</strong> &mdash; pure need-1 (&ldquo;tell me when done&rdquo;).</li>
 </ul>
 <p class="meta">Instrumentation question to resolve alongside: what do we record to tell whether the agent
-  <em>chose well</em> (monitor vs. <code>wait_for_output</code> vs. blocking <code>run_command</code>)? The
-  fired-count + commit-time/event-time skew already in the log is a start.</p>
+  <em>chose well</em> among the post-§2.7 options &mdash; streaming <code>monitor</code> vs. silent
+  <code>run_background</code> vs. blocking <code>run_command</code>? The fired-count + commit-time/event-time skew
+  already in the log is a start.</p>
 
 <h3 id="plan">2.7 Decided plan: fold <code>run_background</code> into the monitor manager</h3>
 <div class="box callout">
@@ -527,9 +559,16 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h2 id="future">3. Future work (sorted by attractivity)</h2>
 <p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.
-  The <code>wait_for_output</code>/one-shot-vs-streaming pair has been promoted out of this list into
-  <a href="#active">§2</a>.</p>
+  The <code>wait_for_output</code>/one-shot-vs-streaming pair that used to head this list was settled and
+  <strong>shipped</strong> (see <a href="#active">§2</a> / <a href="#invariants">§1</a>); what remains below
+  includes the two follow-ups that build deliberately deferred to evidence.</p>
 <ol>
+  <li><span class="rank">Per-monitor <code>timeout_ms</code> (bounded wait / runaway guard).</span>
+    Deferred from <a href="#active">§2.5 item 2</a>. A per-monitor deadline that auto-stops a job/monitor after N
+    ms &mdash; the one piece that would give back <code>wait_for_output</code>'s <code>timeoutMs</code> safety
+    (&ldquo;never hang forever&rdquo;) <em>without</em> a blocking tool, and simultaneously bounds runaway monitors.
+    Today the equivalent is a <code>timeout N …</code> wrapper inside the command. Lowest-risk, highest-leverage of
+    the deferred cluster &mdash; add on first evidence of an unbounded wait or a stuck job.</li>
   <li><span class="rank">Event sink — Phase B (full unification).</span> Make the sink the sole
     emission path: the loop emits via <code>sink.emit()</code> too; WS/tests observe the sink, not the
     run-stream. Cures the &ldquo;emission coupled to the loop&rdquo; smell. Main cost = migrating how
