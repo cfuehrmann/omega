@@ -410,6 +410,10 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     A third drain point would not compile; the dangling-tool_use bug class is prevented at the source instead
     of repaired next turn. Lighter variant: a <em>seam-capability token</em> (<code>SeamGuard</code> produced
     only at a real seam, consumed by <code>drain_queue</code>) &mdash; less invasive, captures most of the value.
+    <strong>Expressiveness guardrail:</strong> the pending ids must be carried as <em>unbounded data</em>
+    (a <code>Set&lt;ToolUseId&gt;</code> field), never flattened into finitely many named states &mdash; that
+    keeps the mechanism a register/EFSM (the class the grammar actually needs: id-completeness over an
+    unbounded id domain), not a mere finite automaton.
     <strong>Spike first:</strong> enumerate the states <code>drive_turn</code> actually moves through &mdash; the
     loop holds <code>&amp;mut self</code> for the whole session, so the typestate is likely a field-enum tag
     rather than a consumed <code>self</code>; confirm it maps cleanly before committing. Highest-value polish
