@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use async_stream::stream;
 use futures::stream::{FuturesUnordered, Stream, StreamExt};
-use omega_core::{AgentItem, ContentBlock, LlmError, LlmRequest, Message, ModelConfig, Role};
+use omega_core::{AgentItem, ContentBlock, LlmError, LlmRequest, ModelConfig, Role};
 use omega_tools::{ToolCtx, execute_tool, tool_definitions};
 use omega_types::events::{
     AgentErrorEvent, ContextCompactedEvent, HarnessRecoveryKind, LlmCallEvent, LlmErrorEvent,
@@ -859,8 +859,7 @@ impl Agent {
                 }
 
                 let assistant_hash = match self
-                    .context_store
-                    .append(Role::Assistant, assistant_blocks.clone())
+                    .append_record(Role::Assistant, assistant_blocks)
                     .await
                 {
                     Ok(h) => h,
@@ -874,11 +873,6 @@ impl Agent {
                         return;
                     }
                 };
-                self.history.push(Message {
-                    role: Role::Assistant,
-                    content: assistant_blocks,
-                });
-                self.context_hashes.push(assistant_hash.clone());
 
                 // --- Emit LlmResponse with hash + accumulate metrics ------
                 lr.context_hash = assistant_hash.as_ref().to_owned();

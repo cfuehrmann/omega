@@ -234,10 +234,23 @@ refactor); leave lifecycle/resume as-is for now and revisit when the guard lands
 - User endorsed runtime-checked field/view (compile-time impossible for the id
   bijection — needs dependent types) and asked for the most elegant overall
   solution; the view-of-history design above is that.
-- NEXT ACTION = implement STEP 1: extract `append_record` chokepoint, funnel
-  the inject.rs helpers + run_loop.rs:877 through it. Pure refactor, gate green,
-  commit. THEN STEP 2: add `conv_state` + δ + bijection check + pure-fn tests +
-  `cargo mutants -p omega-agent --cap-lints=true --file <changed>` + Justfile recipe.
+- STEP 1 DONE (pure refactor, no behaviour change): added
+  `Agent::append_record(role, blocks) -> Result<ContextHash>` (pub(crate),
+  defined in inject.rs) doing the context_store-append + history-push +
+  context_hashes-push triple. Funnelled all 6 inject.rs helpers
+  (monitor_delivery, harness_recovery, monitor_stopped, user_message,
+  dangling_tool_results, tool_results_batch) + run_loop.rs assistant append
+  through it. Removed now-unused `Message` import from run_loop.rs. cargo check
+  -p omega-agent: clean. lifecycle.rs seed + resume.rs replay deliberately
+  LEFT untouched (reconstruction paths).
+- NEXT ACTION = STEP 2: add `conv_state(&[Message]) -> ConvState` (pure, derive
+  from history tail) + δ transition guard INSIDE `append_record` (classify move
+  from (role, blocks); enforce legality + exact id bijection for tool_results;
+  return Err on illegal move). Then pure-fn tests for conv_state + δ, agent-level
+  tests via MockProvider, `cargo mutants -p omega-agent --cap-lints=true --file
+  crates/omega-agent/src/agent/inject.rs` + Justfile recipe. NOTE: making
+  append_record fail on illegal moves changes its error type/signature — decide
+  whether illegal-move is a panic (programmer error) or a propagated Result.
 - Test approach (AGENTS.md): agent-level via Agent::send_message + MockProvider
   for legal sequences; pure-fn unit tests for `conv_state` + δ legality are a
   justified carve-out (agent-level setup for every illegal transition is

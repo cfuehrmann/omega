@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use omega_core::{ContentBlock, Message, Role};
+use omega_store::ContextHash;
 use omega_tools::MonitorManager;
 use omega_types::OmegaEvent;
 use omega_types::events::{
@@ -25,6 +26,34 @@ impl Agent {
     // -----------------------------------------------------------------------
     // Phase 0 — Async Monitors: event-log injection + context projection
     // -----------------------------------------------------------------------
+
+    /// Single chokepoint for appending one record to the model-facing context.
+    ///
+    /// Funnels the triple that every injection path shares — context-store
+    /// append, in-memory `history` push, and `context_hashes` push — into one
+    /// place, and returns the resulting [`ContextHash`].
+    ///
+    /// Step 1 of the seam-typestate work (see `docs/seam-typestate-spike.md`):
+    /// this is the future home of the conversation-shape transition guard
+    /// (δ over `Idle` / `AwaitingAssistant` / `AwaitingToolResults`), so every
+    /// model-facing record passes a single validated seam.  This commit is a
+    /// pure refactor — no guard yet, behaviour unchanged.
+    ///
+    /// # Errors
+    /// Returns an error if the context store write fails.
+    pub(crate) async fn append_record(
+        &mut self,
+        role: Role,
+        blocks: Vec<ContentBlock>,
+    ) -> omega_store::Result<ContextHash> {
+        let hash = self.context_store.append(role, blocks.clone()).await?;
+        self.history.push(Message {
+            role,
+            content: blocks,
+        });
+        self.context_hashes.push(hash.clone());
+        Ok(hash)
+    }
 
     /// Append a `MonitorStarted` event to `events.jsonl`.
     ///
@@ -81,15 +110,7 @@ impl Agent {
         // message.  project_messages() merges consecutive role:user entries
         // when building the LlmRequest so the API always receives a
         // well-formed alternating-role conversation.
-        let hash = self
-            .context_store
-            .append(Role::User, new_blocks.clone())
-            .await?;
-        self.history.push(Message {
-            role: Role::User,
-            content: new_blocks,
-        });
-        self.context_hashes.push(hash);
+        self.append_record(Role::User, new_blocks).await?;
         Ok(ev)
     }
 
@@ -122,15 +143,7 @@ impl Agent {
         let blocks = vec![ContentBlock::Text {
             text: content.to_owned(),
         }];
-        let hash = self
-            .context_store
-            .append(Role::User, blocks.clone())
-            .await?;
-        self.history.push(Message {
-            role: Role::User,
-            content: blocks,
-        });
-        self.context_hashes.push(hash);
+        self.append_record(Role::User, blocks).await?;
         Ok(ev)
     }
 
@@ -167,15 +180,7 @@ impl Agent {
         // Project unexpected stop into context as a role:user notification.
         let text = format_monitor_stopped(&id, &reason, exit_code);
         let blocks = vec![ContentBlock::Text { text }];
-        let hash = self
-            .context_store
-            .append(Role::User, blocks.clone())
-            .await?;
-        self.history.push(Message {
-            role: Role::User,
-            content: blocks,
-        });
-        self.context_hashes.push(hash);
+        self.append_record(Role::User, blocks).await?;
 
         Ok(ev)
     }
@@ -199,15 +204,7 @@ impl Agent {
         let blocks = vec![ContentBlock::Text {
             text: content.to_owned(),
         }];
-        let hash = self
-            .context_store
-            .append(Role::User, blocks.clone())
-            .await?;
-        self.history.push(Message {
-            role: Role::User,
-            content: blocks,
-        });
-        self.context_hashes.push(hash);
+        self.append_record(Role::User, blocks).await?;
         Ok(ev)
     }
 
@@ -260,15 +257,7 @@ impl Agent {
         }
 
         // Append the batch as a single role:user context record.
-        let hash = self
-            .context_store
-            .append(Role::User, synthetic.clone())
-            .await?;
-        self.history.push(Message {
-            role: Role::User,
-            content: synthetic,
-        });
-        self.context_hashes.push(hash);
+        self.append_record(Role::User, synthetic).await?;
         Ok(events)
     }
 
@@ -286,15 +275,7 @@ impl Agent {
         &mut self,
         result_blocks: Vec<ContentBlock>,
     ) -> omega_store::Result<()> {
-        let hash = self
-            .context_store
-            .append(Role::User, result_blocks.clone())
-            .await?;
-        self.history.push(Message {
-            role: Role::User,
-            content: result_blocks,
-        });
-        self.context_hashes.push(hash);
+        self.append_record(Role::User, result_blocks).await?;
         Ok(())
     }
 
