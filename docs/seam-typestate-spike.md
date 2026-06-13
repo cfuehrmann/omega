@@ -7,6 +7,38 @@ pending tool-call ids as an unbounded `Set<ToolUseId>` *data* field (never
 flattened into finite state labels). Decision recorded in
 `docs/monitors-design.html` §3 to-do 1.
 
+## DECISION: violation handling = forensics-first, then hard fail (Step 2)
+Agreed with user: a δ violation is ALWAYS an Omega software bug, never caused
+by "the world" (the world can enqueue inputs but cannot force an illegal append
+ORDER). Therefore NO in-session recovery. The ONLY requirement is that
+forensics be possible — the violation must be DURABLY recorded with enough
+structured detail to diagnose the bug post-mortem, BEFORE the session dies.
+
+Implementation plan for the guard inside `append_record`:
+1. On illegal move, FIRST `await` a durable forensic write to events.jsonl
+   (so it is on disk before the process unwinds), THEN fail hard (panic).
+   The awaited append completes the write before the panic, guaranteeing
+   the evidence survives.
+2. Forensic payload must capture: current ConvState (incl. `pending` set),
+   the classified attempted move (incl. its ids), and for a bijection
+   violation the symmetric difference (missing ids / extra ids), plus the
+   history tail (>= last record's role + block kinds; ideally last N records).
+   A stable discriminator identifying WHICH δ arm was violated.
+3. OPEN: dedicated `OmegaEvent` variant (e.g. ConversationInvariantViolated)
+   vs reuse `AgentError(rich string)`. Dedicated variant = best forensics
+   (typed, queryable) and honors Contract Authority "new meaning = new syntax",
+   but is a schema change (serde + WsMessage projection + fold invariants).
+   LEAN: start by confirming with user; a dedicated typed variant is the
+   forensically-correct choice given user stressed forensics is "absolutely
+   crucial". MVP fallback = AgentError rich string, upgrade later.
+4. NOT threaded through Result as a recoverable error — conflating "disk write
+   failed" (recoverable, already handled) with "conversation invariant
+   violated" (a bug) is exactly the silent-masking AGENTS.md warns against.
+5. Panic vs graceful-terminal-shutdown: both satisfy forensics if the
+   forensic event is pre-written. Panic is simpler (append_record is deep in
+   the loop; callers don't thread a terminal path). Confirm with user whether
+   a clean terminal shutdown surfaced to the UI is preferred over raw panic.
+
 ## Key constraints (model-facing protocol correctness)
 - Three `role:user` sources: tool-results, human `UserMessage`, monitor `MonitorDelivery`.
 - Anthropic rules: roles alternate (consecutive user records merged by
