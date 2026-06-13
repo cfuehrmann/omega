@@ -381,20 +381,60 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 
 <h2 id="future">3. Future work (sorted by attractivity)</h2>
 <p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.
-  The blocking-wait / one-shot-vs-streaming question that used to head this list shipped (now
-  <a href="#invariants">§1</a> invariants); the two follow-ups it deferred to evidence lead the list below.</p>
+  <strong>Model-facing protocol correctness (item 1) now leads</strong>: lifting the seam discipline into
+  the type system. The event-sink / observability question (item 2, formerly the head of this list) is
+  <em>orthogonal</em> — it concerns what the <em>human</em> watches, not what the <em>model</em> sees — and
+  is parked pending a fuller grasp of its mechanics. The evidence-deferred cluster (per-monitor timeout,
+  auto-stop) follows. The blocking-wait / one-shot-vs-streaming question that used to head this list
+  shipped (now <a href="#invariants">§1</a> invariants).</p>
 <ol>
+  <li><span class="rank">Lift the seam discipline into the type system (model-facing protocol correctness).</span>
+    The context the model sees (<code>context.jsonl</code> &rarr; <code>project_messages()</code> &rarr; the
+    API <code>messages[]</code>) must always be a <em>valid</em> Anthropic conversation: roles alternate, and
+    a <code>tool_use</code> is answered by its <code>tool_result</code>s in the very next message with nothing
+    between. All three <code>role:user</code> sources &mdash; tool-results, human <code>UserMessage</code>,
+    monitor <code>MonitorDelivery</code> &mdash; must respect that.
+    <strong>Today this is only partly structural.</strong> The <em>single-writer</em> rule (only the loop
+    appends context records; monitors/humans merely enqueue) is enforced by ownership. But the
+    <em>seam-gated drain</em> (&ldquo;inject only at Seam A / Seam B&rdquo;) is held up by the <em>placement</em>
+    of the drain calls in <code>drive_turn</code>'s control flow, and the <em>atomic tool-result batch</em> is
+    enforced by loop logic plus <em>reactive</em> <code>inject_dangling_tool_results</code> recovery on the
+    <em>next</em> turn. <code>project_messages()</code> <em>assumes</em> a valid order &mdash; it merges
+    consecutive <code>role:user</code> records blindly and would happily fold a monitor delivery <em>ahead
+    of</em> the tool_result blocks if one ever landed mid-pair, so validity is a property of <em>where the
+    append calls sit</em>, not of any type.
+    <strong>Proposal:</strong> make &ldquo;valid conversation&rdquo; a <em>typestate</em> &mdash; a
+    conversation/append API whose available operations depend on its state (<code>Idle</code> &rarr; the only
+    state where the queue may be drained; <code>AwaitingToolResults{ids}</code> &rarr; only
+    <code>add_tool_result(id)</code>, no drain method, cannot transition out until <code>ids</code> is empty).
+    A third drain point would not compile; the dangling-tool_use bug class is prevented at the source instead
+    of repaired next turn. Lighter variant: a <em>seam-capability token</em> (<code>SeamGuard</code> produced
+    only at a real seam, consumed by <code>drain_queue</code>) &mdash; less invasive, captures most of the value.
+    <strong>Spike first:</strong> enumerate the states <code>drive_turn</code> actually moves through &mdash; the
+    loop holds <code>&amp;mut self</code> for the whole session, so the typestate is likely a field-enum tag
+    rather than a consumed <code>self</code>; confirm it maps cleanly before committing. Highest-value polish
+    identified: turns model-facing protocol correctness from an emergent property into a structural one.</li>
+  <li><span class="rank">Event sink &amp; observability — Phase B (full unification).</span>
+    <em>Scope note: distinct from item 1.</em> A/B concerns the <strong>observability</strong> path
+    (<code>events.jsonl</code> + the WebSocket the human watches), <em>not</em> the model-facing context
+    (<code>context.jsonl</code>); the sink never writes the context, so this is orthogonal to item 1's protocol
+    correctness. Phase B = make the sink the <em>sole</em> emission path: the loop emits via
+    <code>sink.emit()</code> too; WS/tests observe the sink, not the run-stream. Cures the &ldquo;emission
+    coupled to the loop&rdquo; smell and makes the no-double-emit guarantee structural rather than a maintained
+    invariant. <strong>But not a strict improvement:</strong> the returned run-stream is also the server's
+    control backbone (turn-state, roster/queue pushes) and is what tests collect as a turn-scoped synchronous
+    list; Phase B trades that ergonomic away and splits the server's reaction path. Main migration cost = how
+    the test harness observes events (<code>Agent::send_message</code> collects the returned stream).
+    Deliberately gated on whether Phase A earns its keep.
+    <strong>Owner note:</strong> the observability mechanics &mdash; how A/B touches <code>events.jsonl</code> +
+    WS, and why that is orthogonal to model-facing correctness &mdash; are <em>not yet fully understood</em>;
+    get the explanation from that angle before acting.</li>
   <li><span class="rank">Per-monitor <code>timeout_ms</code> (bounded wait / runaway guard).</span>
     Deferred to evidence; the bounded-wait gap is mapped in <a href="#active">§2.2</a>. A per-monitor deadline that auto-stops a job/monitor after N
     ms &mdash; the one piece that would give back <code>wait_for_output</code>'s <code>timeoutMs</code> safety
     (&ldquo;never hang forever&rdquo;) <em>without</em> a blocking tool, and simultaneously bounds runaway monitors.
     Today the equivalent is a <code>timeout N …</code> wrapper inside the command. Lowest-risk, highest-leverage of
     the deferred cluster &mdash; add on first evidence of an unbounded wait or a stuck job.</li>
-  <li><span class="rank">Event sink — Phase B (full unification).</span> Make the sink the sole
-    emission path: the loop emits via <code>sink.emit()</code> too; WS/tests observe the sink, not the
-    run-stream. Cures the &ldquo;emission coupled to the loop&rdquo; smell. Main cost = migrating how
-    the test harness observes events (<code>Agent::send_message</code> collects the returned stream).
-    Deliberately gated on whether Phase A earns its keep.</li>
   <li><span class="rank">Action-vs-effect completeness (schema-wide policy).</span> The log is
     inconsistent about recording the <em>action</em> vs the <em>effect</em>. Sharpest case: monitor
     stdout — queue time (action) is computed as <code>InputQueueItem.enqueued_at</code> for the
