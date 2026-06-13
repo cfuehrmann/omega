@@ -1115,6 +1115,25 @@ fn render_event_body(
             <span class="block-body">{format!("{:?}: {}", e.kind, e.content)}</span>
         }
         .into_any(),
+        // Seam-typestate guard: a conversation-shape invariant violation
+        // (a fatal Omega bug). Surface the full forensic payload.
+        OmegaEvent::ConversationInvariantViolated(e) => {
+            let detail = format!(
+                "{}\nstate={} move={}\npending={:?} move_ids={:?}\nmissing={:?} extra={:?}",
+                e.violated_rule,
+                e.state,
+                e.attempted_move,
+                e.pending_ids,
+                e.move_ids,
+                e.missing_ids,
+                e.extra_ids,
+            );
+            view! {
+                <span class="block-label">{"Conversation invariant violated"}</span>
+                <pre class="block-body">{detail}</pre>
+            }
+            .into_any()
+        }
     }
 }
 

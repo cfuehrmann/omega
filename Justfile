@@ -191,6 +191,15 @@ mutants-system-prompt-guard:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
 
+# Run cargo-mutants targeted at the seam-typestate conversation-shape guard.
+# Mutates conv_state.rs (conv_state, classify_move, next_state — the δ that
+# keeps the in-memory conversation a valid Anthropic sequence, incl. the
+# tool_use↔tool_result id bijection) and runs the full omega-agent suite.
+# All mutations must be CAUGHT or UNVIABLE — no survivors.
+# Uses --in-place to avoid copying the large (incl. leptos wasm) target tree.
+mutants-conv-state:
+    cargo mutants -p omega-agent --in-place --cap-lints=true --file "crates/omega-agent/src/agent/conv_state.rs"
+
 # Run cargo-mutants targeted at the identity primitives (Phase 1).
 # Mutates only omega-types/src/ids.rs and runs the omega-types test suite.
 # Fast: pure functions with no I/O.

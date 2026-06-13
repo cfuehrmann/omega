@@ -76,7 +76,10 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         OmegaEvent::AgentError(_)
         | OmegaEvent::LlmError(_)
         | OmegaEvent::TransportError(_)
-        | OmegaEvent::TurnInterrupted(_) => EventKind::Error,
+        | OmegaEvent::TurnInterrupted(_)
+        // Seam-typestate guard: a conversation-shape invariant violation is a
+        // fatal Omega bug — surface it as an error.
+        | OmegaEvent::ConversationInvariantViolated(_) => EventKind::Error,
         // SCHEMA-8 additive variants. Block events surface as Assistant
         // content; lifecycle markers are Status. Phase 4 will give them
         // proper rendering / coalescing.
@@ -158,6 +161,7 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::TurnEnd(_) => "turn_end",
         OmegaEvent::LlmError(_) => "llm_error",
         OmegaEvent::AgentError(_) => "agent_error",
+        OmegaEvent::ConversationInvariantViolated(_) => "conversation_invariant_violated",
         OmegaEvent::TurnInterrupted(_) => "turn_interrupted",
         OmegaEvent::LlmRetry(_) => "llm_retry",
         OmegaEvent::ModelChanged(_) => "model_changed",
@@ -248,6 +252,7 @@ pub fn event_label(event: &OmegaEvent) -> &str {
         OmegaEvent::TurnEnd(_) => LABEL_TURN_END,
         OmegaEvent::LlmError(_) => LABEL_LLM_ERROR,
         OmegaEvent::AgentError(_) => LABEL_AGENT_ERROR,
+        OmegaEvent::ConversationInvariantViolated(_) => "Conversation invariant violated",
         OmegaEvent::TransportError(_) => LABEL_TRANSPORT_ERROR,
         OmegaEvent::TurnInterrupted(_) => LABEL_TURN_INTERRUPTED,
         OmegaEvent::SessionStarted(_) => LABEL_SESSION_STARTED,

@@ -7,6 +7,34 @@ pending tool-call ids as an unbounded `Set<ToolUseId>` *data* field (never
 flattened into finite state labels). Decision recorded in
 `docs/monitors-design.html` §3 to-do 1.
 
+## STEP 2 PROGRESS (resume here if context lost)
+- DONE: schema (events.rs variant + struct + time() arm; events_reference 34 + snapshot).
+- DONE: Step 1 append_record chokepoint (commit 0248c72).
+- DONE: conv_state.rs module (4-state δ: Empty/Idle/AwaitingAssistant/
+  AwaitingToolResults{pending}); guard wired into append_record (forensic
+  event + panic). `Empty` state added for compaction-resume (see below).
+- DONE: unit tests in conv_state.rs + Justfile `mutants-conv-state`.
+- GREEN: cargo test -p omega-agent (64) + omega-types; clippy clean.
+- DONE: `just mutants-conv-state` — 30 mutants, 26 caught / 4 unviable, 0 survivors.
+  (recipe uses --in-place to avoid copying the leptos wasm target.)
+- STEP 2 COMPLETE. Guard live, exhaustive mutation coverage, full gate green.
+
+### δ transition table (the whole automaton)
+States: Idle | AwaitingAssistant | AwaitingToolResults{pending:BTreeSet<String>}
+Moves (classify from role+blocks): UserInput | AssistantPlain |
+  AssistantToolUse{ids} | ToolResults{ids} | Other{role}
+conv_state(history) from LAST record: empty->Idle; Assistant w/ tool_use ids
+  ->AwaitingToolResults{ids}; Assistant w/o ->Idle; User->AwaitingAssistant;
+  System/_ ->Idle.
+LEGAL: (Idle|AwaitingAssistant, UserInput)->AwaitingAssistant;
+  (AwaitingAssistant, AssistantPlain)->Idle;
+  (AwaitingAssistant, AssistantToolUse{ids})->AwaitingToolResults{ids};
+  (AwaitingToolResults{pending}, ToolResults{ids}) if pending==ids
+  ->AwaitingAssistant else VIOLATION(missing=pending\ids, extra=ids\pending).
+ALL OTHER combos -> VIOLATION. Use BTreeSet for deterministic ids.
+ContentBlock kinds: Text{text}, Thinking{thinking,signature},
+  ToolUse{id,name,input}, ToolResult{tool_use_id,content,is_error}.
+
 ## DECISION: violation handling = forensics-first, then hard fail (Step 2)
 Agreed with user: a δ violation is ALWAYS an Omega software bug, never caused
 by "the world" (the world can enqueue inputs but cannot force an illegal append
@@ -332,7 +360,37 @@ sequence is legal under δ before forcing it through. Safest for STEP 1: route
 ONLY the inject.rs helpers + run_loop.rs:877 through append_record (pure
 refactor); leave lifecycle/resume as-is for now and revisit when the guard lands.
 
+## Compaction finding (Step 2 implementation)
+
+The guard immediately caught a flow the original 3-state model missed:
+**server-side context compaction**. On a `type=="compaction"` iteration
+(`run_loop.rs:534`) the loop does `self.history.clear()` (in-memory only —
+on-disk `context.jsonl` keeps the full record), then appends the
+post-compaction assistant message to an **empty** in-memory history. So an
+empty in-memory history can validly be followed by an *assistant* message,
+not just a user message.
+
+Resolution: a 4th state `ConvState::Empty`, distinct from `Idle`:
+- `Empty` = empty in-memory history (fresh session OR post-compaction reset).
+  Admits UserInput (→ AwaitingAssistant), AssistantPlain (→ Idle),
+  AssistantToolUse (→ AwaitingToolResults). ToolResults → violation.
+- `Idle` = turn ended (last record = assistant-plain). Only UserInput legal;
+  an assistant here is "two in a row" → violation.
+
+This keeps the strictness everywhere except the one place the architecture
+genuinely allows an assistant-first baseline.
+
 ## STATUS / RESUME-HERE (as of commit after 92f85fb)
+- **STEP 2 DONE (pending commit).** Guard live in `append_record`. New
+  `crates/omega-agent/src/agent/conv_state.rs`: `ConvState`
+  (Empty/Idle/AwaitingAssistant/AwaitingToolResults{pending}) derived from the
+  history tail; total `next_state` δ with strict id bijection. Dedicated
+  `OmegaEvent::ConversationInvariantViolated` forensic event written (awaited)
+  before `panic!`. The `Empty` state models the context-compaction reset
+  (in-memory `history.clear()`) the guard caught during implementation.
+  Mutation: 26 caught / 4 unviable / 0 survivors (`just mutants-conv-state`,
+  in-place). Frontend `omega-web` exhaustive matches updated. omega-types +
+  omega-agent + omega-web all compile; agent suite (64) green.
 - Spike COMPLETE and committed (92f85fb). This file is the durable record.
 - Refined design agreed in discussion: state-as-view-of-history + single δ
   inside a guarded `append_record(role, blocks) -> Result<ContextHash>`.

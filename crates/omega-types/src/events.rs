@@ -718,6 +718,55 @@ pub struct MonitorStoppedEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Conversation-shape invariant violation (seam typestate — forensics)
+// ---------------------------------------------------------------------------
+
+/// A model-facing conversation-shape invariant was violated when the
+/// harness tried to append a context record.
+///
+/// This event is a **forensic tombstone**.  A violation can only be an
+/// Omega bug: the world influences *what is enqueued*, never the *append
+/// order*, which is driven entirely by the agent loop.  So there is no
+/// in-session recovery — `append_record` writes this event durably to
+/// `events.jsonl` and then panics.  This struct exists so the violation is
+/// captured as typed, filterable data (not a free-text error string)
+/// before the process dies.
+///
+/// The fields describe the rejected transition of the conversation
+/// automaton (`Idle` / `AwaitingAssistant` / `AwaitingToolResults`):
+/// the `state` it was in, the `attempted_move`, and — for the strict
+/// tool-use-id bijection — exactly which ids were `missing` (pending but
+/// unanswered) and which were `extra` (answered but never requested).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationInvariantViolatedEvent {
+    pub time: ISOTimestamp,
+    /// Conversation state at the time of the rejected append:
+    /// `"idle"` | `"awaiting_assistant"` | `"awaiting_tool_results"`.
+    pub state: String,
+    /// Pending tool-use ids when `state == "awaiting_tool_results"`
+    /// (empty otherwise).
+    pub pending_ids: Vec<String>,
+    /// The classified append that was rejected:
+    /// `"user_input"` | `"assistant_plain"` | `"assistant_tool_use"` |
+    /// `"tool_results"`.
+    pub attempted_move: String,
+    /// Tool-use ids carried by the attempted move (the `tool_use` ids for
+    /// `assistant_tool_use`, the answered `tool_use_id`s for `tool_results`;
+    /// empty otherwise).
+    pub move_ids: Vec<String>,
+    /// Ids pending but not answered by the attempted `tool_results` move.
+    pub missing_ids: Vec<String>,
+    /// Ids answered by the attempted move that were never pending.
+    pub extra_ids: Vec<String>,
+    /// Human-readable name of the violated rule (the rejected δ arm).
+    pub violated_rule: String,
+    /// Summary of the recent history tail (`"role: blockKinds"` per record)
+    /// for post-mortem context.
+    pub history_tail: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // OmegaEvent — the unified discriminated union
 // ---------------------------------------------------------------------------
 
@@ -801,6 +850,12 @@ pub enum OmegaEvent {
     /// `ProcessExited`, `ProcessCrashed`) are projected into LLM context;
     /// `StoppedByAgent` and `StoppedBySessionEnd` are not.
     MonitorStopped(MonitorStoppedEvent),
+
+    // --- Seam typestate — conversation-shape invariant forensics -----------
+    /// A model-facing conversation-shape invariant was violated on append.
+    /// A forensic tombstone written durably immediately before the harness
+    /// panics (the violation is always an Omega bug, never recoverable).
+    ConversationInvariantViolated(ConversationInvariantViolatedEvent),
 }
 
 impl OmegaEvent {
@@ -847,6 +902,7 @@ impl OmegaEvent {
             Self::MonitorDelivery(e) => &e.time,
             Self::MonitorStderr(e) => &e.time,
             Self::MonitorStopped(e) => &e.time,
+            Self::ConversationInvariantViolated(e) => &e.time,
         }
     }
 }

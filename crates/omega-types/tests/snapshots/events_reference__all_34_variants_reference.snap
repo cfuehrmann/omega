@@ -1,0 +1,295 @@
+---
+source: crates/omega-types/tests/events_reference.rs
+expression: events
+---
+[
+  {
+    "type": "session_started",
+    "time": "2024-01-15T12:00:00.000Z",
+    "sessionId": "018f4c2e-3a1b-7d00-8000-abcdef012345",
+    "path": ".omega/sessions/20240115_120000",
+    "model": "claude-sonnet-4-6",
+    "effort": "medium",
+    "systemPrompt": "You are an expert assistant operating inside Omega, a software engineering agent harness.",
+    "omegaCommit": "abc1234",
+    "agentTimeZone": "Europe/Berlin",
+    "origin": {
+      "type": "root"
+    },
+    "features": {
+      "subagents": false
+    },
+    "toolSelection": [
+      "read_file",
+      "write_file",
+      "run_command",
+      "edit_file",
+      "list_files",
+      "web_search",
+      "fetch_url",
+      "grep_files",
+      "find_files",
+      "run_background",
+      "write_stdin"
+    ]
+  },
+  {
+    "type": "server_started",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "server_stopped",
+    "time": "2024-01-15T12:00:00.000Z",
+    "outcome": "clean"
+  },
+  {
+    "type": "user_message",
+    "time": "2024-01-15T12:00:00.000Z",
+    "content": "What files are in the current directory?"
+  },
+  {
+    "type": "llm_call",
+    "time": "2024-01-15T12:00:00.000Z",
+    "url": "https://api.anthropic.com/v1/messages",
+    "model": "claude-sonnet-4-6",
+    "contextHashes": [
+      "deadbeefcafe1234"
+    ],
+    "cacheBreakpointIndex": null,
+    "requestBytes": 1234
+  },
+  {
+    "type": "tool_call",
+    "time": "2024-01-15T12:00:00.000Z",
+    "toolCallId": "[id_1]",
+    "name": "list_dir",
+    "input": {
+      "path": "."
+    },
+    "contextHash": "deadbeefcafe1234"
+  },
+  {
+    "type": "tool_result",
+    "time": "2024-01-15T12:00:00.000Z",
+    "toolCallId": "[id_1]",
+    "name": "list_dir",
+    "isError": false,
+    "durationMs": 8,
+    "output": "README.md\nsrc/\ntests/"
+  },
+  {
+    "type": "turn_end",
+    "time": "2024-01-15T12:00:00.000Z",
+    "metrics": {
+      "inputTokens": 512,
+      "outputTokens": 64,
+      "cacheCreationTokens": 480
+    }
+  },
+  {
+    "type": "llm_error",
+    "time": "2024-01-15T12:00:00.000Z",
+    "url": "https://api.anthropic.com/v1/messages",
+    "error": "HTTP 429: rate limit exceeded",
+    "httpStatus": 429
+  },
+  {
+    "type": "agent_error",
+    "time": "2024-01-15T12:00:00.000Z",
+    "error": "Tool execution failed: permission denied"
+  },
+  {
+    "type": "turn_interrupted",
+    "time": "2024-01-15T12:00:00.000Z",
+    "reason": "aborted"
+  },
+  {
+    "type": "llm_retry",
+    "time": "2024-01-15T12:00:00.000Z",
+    "attempt": 2,
+    "httpStatus": 429,
+    "waitMs": 5000,
+    "error": "rate limited",
+    "retryAt": "2024-01-15T12:00:00.000Z",
+    "errorBody": {
+      "type": "error",
+      "error": {
+        "type": "rate_limit_error",
+        "message": "Too many requests"
+      }
+    },
+    "reason": "retry-after"
+  },
+  {
+    "type": "model_changed",
+    "time": "2024-01-15T12:00:00.000Z",
+    "model": "claude-opus-4-6"
+  },
+  {
+    "type": "effort_changed",
+    "time": "2024-01-15T12:00:00.000Z",
+    "effort": "high"
+  },
+  {
+    "type": "transport_error",
+    "time": "2024-01-15T12:00:00.000Z",
+    "error": "WebSocket connection closed unexpectedly",
+    "context": "client 192.168.1.42"
+  },
+  {
+    "type": "resuming_session",
+    "time": "2024-01-15T12:00:00.000Z",
+    "resumedFrom": "20240114_090000",
+    "name": "prior session",
+    "basis": "The agent fixed a bug in the parser."
+  },
+  {
+    "type": "session_resumed",
+    "time": "2024-01-15T12:00:00.000Z",
+    "resumedFrom": "20240114_090000",
+    "summary": "Fixed a bug in the parser module."
+  },
+  {
+    "type": "halt_requested",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "halt_unrequested",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "turn_halted",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "turn_resumed",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "llm_response_started",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "llm_response_ended",
+    "time": "2024-01-15T12:00:00.000Z",
+    "stopReason": "end_turn",
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "iterations": [
+        {
+          "type": "compaction",
+          "input_tokens": 80,
+          "output_tokens": 0,
+          "cache_creation_input_tokens": 40
+        },
+        {
+          "type": "message",
+          "input_tokens": 20,
+          "output_tokens": 50,
+          "cache_read_input_tokens": 40
+        }
+      ]
+    },
+    "contextHash": "deadbeefcafe1234"
+  },
+  {
+    "type": "llm_response_discarded",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "text_block",
+    "time": "2024-01-15T12:00:00.000Z",
+    "text": "Hello, world.",
+    "partial": false
+  },
+  {
+    "type": "thinking_block",
+    "time": "2024-01-15T12:00:00.000Z",
+    "thinking": "Let me check the directory.",
+    "signature": "sig_ref_01",
+    "partial": false
+  },
+  {
+    "type": "tool_use_block",
+    "time": "2024-01-15T12:00:00.000Z",
+    "toolCallId": "[id_1]",
+    "toolUseId": "[id_2]",
+    "name": "list_dir",
+    "input": {
+      "path": "."
+    },
+    "partial": false
+  },
+  {
+    "type": "context_compacted",
+    "time": "2024-01-15T12:00:00.000Z",
+    "tokensBefore": 80000,
+    "tokensAfter": 500,
+    "summaryTokens": 300
+  },
+  {
+    "type": "monitor_started",
+    "id": "mon-1",
+    "description": "Watch the build log for errors",
+    "command": "tail -f build.log",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "monitor_delivery",
+    "time": "2024-01-15T12:00:00.000Z",
+    "items": [
+      {
+        "monitorId": "mon-1",
+        "lines": [
+          "Build step 1 done",
+          "Build step 2 done"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "monitor_stderr",
+    "id": "mon-1",
+    "chunk": "tail: inotify resources exhausted",
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "monitor_stopped",
+    "id": "mon-1",
+    "reason": "process_crashed",
+    "exitCode": null,
+    "time": "2024-01-15T12:00:00.000Z"
+  },
+  {
+    "type": "harness_recovery",
+    "time": "2024-01-15T12:00:00.000Z",
+    "kind": "empty_response_continuation",
+    "content": "Please continue."
+  },
+  {
+    "type": "conversation_invariant_violated",
+    "time": "2024-01-15T12:00:00.000Z",
+    "state": "awaiting_tool_results",
+    "pendingIds": [
+      "toolu_a",
+      "toolu_b"
+    ],
+    "attemptedMove": "tool_results",
+    "moveIds": [
+      "toolu_a",
+      "toolu_c"
+    ],
+    "missingIds": [
+      "toolu_b"
+    ],
+    "extraIds": [
+      "toolu_c"
+    ],
+    "violatedRule": "tool_results ids must equal pending exactly",
+    "historyTail": [
+      "assistant: tool_use",
+      "user: tool_result"
+    ]
+  }
+]

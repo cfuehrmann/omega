@@ -690,6 +690,7 @@ mod tests {
             OmegaEvent::TurnEnd(_) => "turn_end",
             OmegaEvent::LlmError(_) => "llm_error",
             OmegaEvent::AgentError(_) => "agent_error",
+            OmegaEvent::ConversationInvariantViolated(_) => "conversation_invariant_violated",
             OmegaEvent::TurnInterrupted(_) => "turn_interrupted",
             OmegaEvent::LlmRetry(_) => "llm_retry",
             OmegaEvent::ModelChanged(_) => "model_changed",
@@ -752,6 +753,7 @@ mod tests {
             r#"{"type":"context_compacted","time":"t","tokensBefore":1,"tokensAfter":2,"summaryTokens":3}"#,
             r#"{"type":"python_repl_bootstrapped","time":"t","durationMs":1,"success":true,"stderrExcerpt":""}"#,
             r#"{"type":"harness_recovery","time":"t","kind":"empty_response_continuation","content":"c"}"#,
+            r#"{"type":"conversation_invariant_violated","time":"t","state":"awaiting_tool_results","pendingIds":["a"],"attemptedMove":"user_input","moveIds":[],"missingIds":["a"],"extraIds":[],"violatedRule":"r","historyTail":[]}"#,
             r#"{"type":"monitor_started","id":"m1","description":"d","command":"c","time":"t"}"#,
             r#"{"type":"monitor_delivery","time":"t","items":[{"monitorId":"m1","lines":["l"]}]}"#,
             r#"{"type":"monitor_stderr","id":"m1","chunk":"c","time":"t"}"#,
@@ -770,7 +772,7 @@ mod tests {
         // guard; this count is the runtime reminder to add the sample too.
         assert_eq!(
             samples.len(),
-            34,
+            35,
             "add a drift-guard sample for the new OmegaEvent variant"
         );
         let mut seen = std::collections::BTreeSet::new();
@@ -794,7 +796,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(seen.len(), 34, "all 34 variant tags must be distinct");
+        assert_eq!(seen.len(), 35, "all 35 variant tags must be distinct");
     }
 
     // ---- ClientFrame --------------------------------------------------------

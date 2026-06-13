@@ -1,4 +1,4 @@
-//! All-33-variants `OmegaEvent` reference snapshot.
+//! All-34-variants `OmegaEvent` reference snapshot.
 //!
 //! This file is the living wire-format reference for `events.jsonl`.  It
 //! contains exactly one example of every `OmegaEvent` variant, serialised
@@ -22,23 +22,24 @@
 //! variants 28–31: `MonitorStarted`, `MonitorDelivery`, `MonitorStderr`,
 //! `MonitorStopped`.  §15 (forensics gap close) adds variant 32:
 //! `HarnessRecovery`.  Halt-unrequest UX adds variant 33:
-//! `HaltUnrequested`.
+//! `HaltUnrequested`.  The seam-typestate work adds variant 34:
+//! `ConversationInvariantViolated` (conversation-shape forensics).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use omega_types::FeatureFlags;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    AgentErrorEvent, ContextCompactedEvent, EffortChangedEvent, HaltRequestedEvent,
-    HaltUnrequestedEvent, HarnessRecoveryEvent, HarnessRecoveryKind, InterruptReason, LlmCallEvent,
-    LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent, LlmResponseStartedEvent,
-    LlmResponseUsage, LlmRetryEvent, LlmRetryReason, ModelChangedEvent, MonitorDeliveryEvent,
-    MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent, MonitorStopReason,
-    MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent, ServerStopOutcome,
-    ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent, TextBlockEvent,
-    ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent, TransportErrorEvent,
-    TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent, TurnMetrics, TurnResumedEvent,
-    UsageIteration, UserMessageEvent,
+    AgentErrorEvent, ContextCompactedEvent, ConversationInvariantViolatedEvent, EffortChangedEvent,
+    HaltRequestedEvent, HaltUnrequestedEvent, HarnessRecoveryEvent, HarnessRecoveryKind,
+    InterruptReason, LlmCallEvent, LlmErrorEvent, LlmResponseDiscardedEvent, LlmResponseEndedEvent,
+    LlmResponseStartedEvent, LlmResponseUsage, LlmRetryEvent, LlmRetryReason, ModelChangedEvent,
+    MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStderrEvent,
+    MonitorStopReason, MonitorStoppedEvent, ResumingSessionEvent, ServerStartedEvent,
+    ServerStopOutcome, ServerStoppedEvent, SessionResumedEvent, SessionStartedEvent,
+    TextBlockEvent, ThinkingBlockEvent, ToolCallEvent, ToolResultEvent, ToolUseBlockEvent,
+    TransportErrorEvent, TurnEndEvent, TurnHaltedEvent, TurnInterruptedEvent, TurnMetrics,
+    TurnResumedEvent, UsageIteration, UserMessageEvent,
 };
 use omega_types::ids::{Origin, SessionId};
 use serde_json::json;
@@ -70,8 +71,8 @@ const TOOL_USE_ID: &str = "toolu_ref_01";
 ///
 /// The correlated pair (positions 6–7) uses the same `id` to demonstrate
 /// id propagation.  Every other value is illustrative but realistic.
-#[allow(clippy::too_many_lines)] // test fixture: 33 event variants, one per arm
-fn all_33_events() -> Vec<OmegaEvent> {
+#[allow(clippy::too_many_lines)] // test fixture: 34 event variants, one per arm
+fn all_34_events() -> Vec<OmegaEvent> {
     vec![
         // 1. SessionStarted
         OmegaEvent::SessionStarted(SessionStartedEvent {
@@ -325,6 +326,22 @@ fn all_33_events() -> Vec<OmegaEvent> {
             kind: HarnessRecoveryKind::EmptyResponseContinuation,
             content: "Please continue.".into(),
         }),
+        // --- Seam typestate — conversation-shape invariant forensics ----------
+        // 34. ConversationInvariantViolated — forensic tombstone before panic.
+        OmegaEvent::ConversationInvariantViolated(ConversationInvariantViolatedEvent {
+            time: T.into(),
+            state: "awaiting_tool_results".into(),
+            pending_ids: vec!["toolu_a".into(), "toolu_b".into()],
+            attempted_move: "tool_results".into(),
+            move_ids: vec!["toolu_a".into(), "toolu_c".into()],
+            missing_ids: vec!["toolu_b".into()],
+            extra_ids: vec!["toolu_c".into()],
+            violated_rule: "tool_results ids must equal pending exactly".into(),
+            history_tail: vec![
+                "assistant: tool_use".into(),
+                "user: tool_result".into(),
+            ],
+        }),
     ]
 }
 
@@ -343,9 +360,9 @@ fn all_33_events() -> Vec<OmegaEvent> {
 ///     transcript field from the provider's `tool_use` block,
 ///     redacted to `[id_2]`.
 #[test]
-fn all_33_variants_reference() {
-    let events = all_33_events();
-    assert_eq!(events.len(), 33, "exactly 33 OmegaEvent variants");
+fn all_34_variants_reference() {
+    let events = all_34_events();
+    assert_eq!(events.len(), 34, "exactly 34 OmegaEvent variants");
 
     let r = common::id_redactor();
     insta::assert_json_snapshot!(events, {

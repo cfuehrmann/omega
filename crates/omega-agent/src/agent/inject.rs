@@ -9,13 +9,15 @@ use omega_store::ContextHash;
 use omega_tools::MonitorManager;
 use omega_types::OmegaEvent;
 use omega_types::events::{
-    HarnessRecoveryEvent, HarnessRecoveryKind, MonitorDeliveryEvent, MonitorDeliveryItem,
-    MonitorStartedEvent, MonitorStopReason, MonitorStoppedEvent, ToolResultEvent, UserMessageEvent,
+    ConversationInvariantViolatedEvent, HarnessRecoveryEvent, HarnessRecoveryKind,
+    MonitorDeliveryEvent, MonitorDeliveryItem, MonitorStartedEvent, MonitorStopReason,
+    MonitorStoppedEvent, ToolResultEvent, UserMessageEvent,
 };
 
 use super::Agent;
 use super::InputItem;
 use super::context::{format_monitor_lines, format_monitor_stopped};
+use super::conv_state::{classify_move, conv_state, history_tail_summary, next_state};
 use super::util::{gen_call_id, now_iso};
 
 /// Error text injected for dangling tool-use blocks (no matching result).
@@ -33,19 +35,58 @@ impl Agent {
     /// append, in-memory `history` push, and `context_hashes` push — into one
     /// place, and returns the resulting [`ContextHash`].
     ///
-    /// Step 1 of the seam-typestate work (see `docs/seam-typestate-spike.md`):
-    /// this is the future home of the conversation-shape transition guard
-    /// (δ over `Idle` / `AwaitingAssistant` / `AwaitingToolResults`), so every
-    /// model-facing record passes a single validated seam.  This commit is a
-    /// pure refactor — no guard yet, behaviour unchanged.
+    /// The seam-typestate guard (see `docs/seam-typestate-spike.md`): every
+    /// model-facing record passes this single validated seam.  The transition
+    /// function δ (over `Empty` / `Idle` / `AwaitingAssistant` /
+    /// `AwaitingToolResults`) decides whether the append keeps the in-memory
+    /// conversation a valid Anthropic message sequence — including the strict
+    /// `tool_use`↔`tool_result` id bijection that a finite automaton cannot
+    /// express.
+    ///
+    /// # Panics
+    /// Panics if the append would violate a conversation-shape invariant
+    /// (the transition function δ rejects it).  Such a violation is always an
+    /// Omega bug — the world influences *what* is enqueued, never the append
+    /// *order* — so there is no in-session recovery.  Before panicking, a
+    /// [`ConversationInvariantViolatedEvent`] is written durably to
+    /// `events.jsonl` so the violation is captured as typed, filterable
+    /// forensic data.
     ///
     /// # Errors
     /// Returns an error if the context store write fails.
+    // A δ violation is an unrecoverable Omega bug, never world-caused, so a
+    // hard panic (after the forensic write) is the deliberate failure mode.
+    #[allow(clippy::panic)]
     pub(crate) async fn append_record(
         &mut self,
         role: Role,
         blocks: Vec<ContentBlock>,
     ) -> omega_store::Result<ContextHash> {
+        let state = conv_state(&self.history);
+        let mv = classify_move(role, &blocks);
+        if let Err(v) = next_state(&state, &mv) {
+            // Forensics-first: persist a typed tombstone before failing hard.
+            let ev =
+                OmegaEvent::ConversationInvariantViolated(ConversationInvariantViolatedEvent {
+                    time: now_iso(),
+                    state: state.label().to_owned(),
+                    pending_ids: state.pending_ids(),
+                    attempted_move: mv.label().to_owned(),
+                    move_ids: mv.ids(),
+                    missing_ids: v.missing.clone(),
+                    extra_ids: v.extra.clone(),
+                    violated_rule: v.rule.clone(),
+                    history_tail: history_tail_summary(&self.history, 6),
+                });
+            let _ = self.event_store.append(&ev).await;
+            panic!(
+                "conversation-shape invariant violated: {} (state={}, move={}); \
+                 forensic event written to events.jsonl",
+                v.rule,
+                state.label(),
+                mv.label(),
+            );
+        }
         let hash = self.context_store.append(role, blocks.clone()).await?;
         self.history.push(Message {
             role,

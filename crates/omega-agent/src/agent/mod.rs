@@ -20,6 +20,7 @@
 //! compaction, tool-result clearing, model-context-window recovery).
 
 mod context;
+mod conv_state;
 mod inject;
 mod lifecycle;
 mod resume;
