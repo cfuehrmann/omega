@@ -24,20 +24,93 @@ Implementation plan for the guard inside `append_record`:
    violation the symmetric difference (missing ids / extra ids), plus the
    history tail (>= last record's role + block kinds; ideally last N records).
    A stable discriminator identifying WHICH δ arm was violated.
-3. OPEN: dedicated `OmegaEvent` variant (e.g. ConversationInvariantViolated)
-   vs reuse `AgentError(rich string)`. Dedicated variant = best forensics
-   (typed, queryable) and honors Contract Authority "new meaning = new syntax",
-   but is a schema change (serde + WsMessage projection + fold invariants).
-   LEAN: start by confirming with user; a dedicated typed variant is the
-   forensically-correct choice given user stressed forensics is "absolutely
-   crucial". MVP fallback = AgentError rich string, upgrade later.
+3. CONFIRMED by user: DEDICATED `OmegaEvent` variant (better for filtering).
+   Name: ConversationInvariantViolated. Typed fields (see payload list above):
+   state discriminator + pending ids, attempted-move discriminator + its ids,
+   missing_ids, extra_ids, history-tail summary, which-δ-arm string. Schema
+   change: add to crates/omega-types/src/events.rs (OmegaEvent enum + the
+   event struct), update WsMessage projection in
+   crates/omega-server/src/ws_message.rs, check fold/projection in
+   crates/omega-agent + any events_reference test
+   (crates/omega-types/tests/events_reference.rs).
 4. NOT threaded through Result as a recoverable error — conflating "disk write
    failed" (recoverable, already handled) with "conversation invariant
    violated" (a bug) is exactly the silent-masking AGENTS.md warns against.
-5. Panic vs graceful-terminal-shutdown: both satisfy forensics if the
-   forensic event is pre-written. Panic is simpler (append_record is deep in
-   the loop; callers don't thread a terminal path). Confirm with user whether
-   a clean terminal shutdown surfaced to the UI is preferred over raw panic.
+5. CONFIRMED by user: PANIC (after the forensic event is durably written).
+   Loudest failure in tests is a feature for a should-never-happen invariant.
+   So append_record: on illegal move -> await event_store.append(forensic_ev)
+   -> panic!(rich msg mirroring the forensic payload).
+
+## STEP 2 IMPLEMENTATION MAP (precise insertion points)
+### Schema (crates/omega-types/src/events.rs)
+- OmegaEvent enum @ line 733; add LAST variant after `MonitorStopped(...)`
+  (~line 802):  `ConversationInvariantViolated(ConversationInvariantViolatedEvent),`
+- time() match (~lines 810-848); add arm after MonitorStopped arm (~847):
+  `Self::ConversationInvariantViolated(e) => &e.time,`
+- Struct pattern to mirror (see HarnessRecoveryEvent @583, MonitorStoppedEvent @713):
+  `#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]`
+  `#[serde(rename_all = "camelCase")]`
+  Fields (all Eq-able): time: ISOTimestamp; state: String ("idle"|
+  "awaiting_assistant"|"awaiting_tool_results"); pending_ids: Vec<String>;
+  attempted_move: String ("user_input"|"assistant_plain"|"assistant_tool_use"|
+  "tool_results"); move_ids: Vec<String>; missing_ids: Vec<String>;
+  extra_ids: Vec<String>; violated_rule: String; history_tail: Vec<String>
+  (summary lines "role: blockkinds").
+- WsMessage projection: crates/omega-server/src/ws_message.rs (CHECK how events
+  map — may have catch-all or per-variant match; add arm if needed).
+- events_reference test: crates/omega-types/tests/events_reference.rs (CHECK —
+  may enumerate all variants; add entry if exhaustive).
+
+### Guard logic (crates/omega-agent/src/agent/, likely new module conv_state.rs
+### or inside inject.rs alongside append_record)
+- enum ConvState { Idle, AwaitingAssistant, AwaitingToolResults { pending: HashSet<String> } }
+- fn classify_state(history: &[Message]) -> ConvState  (pure; derive from tail:
+  empty|assistant-no-tooluse => Idle; any user => AwaitingAssistant;
+  assistant-with-tooluse => AwaitingToolResults{ids of ToolUse blocks}).
+- fn classify_move(role, &blocks) -> Move  (pure: User+all-ToolResult =>
+  ToolResults{tool_use_ids}; User otherwise => UserInput; Assistant+any ToolUse
+  => AssistantToolUse{ids}; Assistant otherwise => AssistantPlain).
+- delta inside append_record: state=classify_state(&self.history);
+  move=classify_move(role,&blocks); match (state,move) -> legal Ok / illegal:
+  build ConversationInvariantViolatedEvent, `self.event_store.append(&ev).await`
+  (durable!), then panic!(rich msg). Legal arms then proceed to existing triple.
+- CHECK omega_core ContentBlock variant field names: ToolUse { id, .. } and
+  ToolResult { tool_use_id, .. } (verify exact names before coding).
+- Tests: pure-fn unit tests for classify_state + classify_move + delta legality
+  (justified carve-out per AGENTS.md — agent-level setup for every illegal
+  transition is disproportionate); PLUS agent-level happy-path via MockProvider.
+  `cargo mutants -p omega-agent --cap-lints=true --file <changed files>` +
+  Justfile recipe (template: mutants-system-prompt-guard).
+- delta legality table (the 6 legal arms, all else illegal):
+  (Idle,UserInput)->AwaitingAssistant; (AwaitingAssistant,UserInput)->AwaitingAssistant;
+  (AwaitingAssistant,AssistantPlain)->Idle; (AwaitingAssistant,AssistantToolUse)->AwaitingToolResults;
+  (AwaitingToolResults,ToolResults{R}): require R==pending exactly ->AwaitingAssistant.
+
+## STEP 2 — VERIFIED schema-surface facts (checked, ready to code)
+- ContentBlock (crates/omega-types/src/conversation.rs:32, `#[serde(tag=type,
+  rename_all=snake_case)]`): `Text{text}`, `Thinking{thinking,signature:Option}`,
+  `ToolUse{id,name,input:Value}`, `ToolResult{tool_use_id,content,is_error:bool}`.
+  (agent imports via omega_core::ContentBlock re-export.)
+- ws_message.rs: wraps the WHOLE OmegaEvent (no per-variant match) => NO change.
+- server router.rs: is_monitor_event/is_inbox_drain_event use `matches!`
+  (non-exhaustive); next_turn_state_for has `_ => return None`. => NO change
+  needed; new variant safely maps to false/None. (The violation event precedes
+  a panic anyway.)
+- events_reference.rs (crates/omega-types/tests/events_reference.rs) IS exhaustive
+  by convention & count-asserted. REQUIRED edits when adding the variant:
+  * factory `all_33_events()` (~line 75) ends at variant 32 HarnessRecovery
+    (~line 326): append a 33rd example before the closing `]`.
+  * test `all_33_variants_reference` (~line 348): `assert_eq!(events.len(), 33)`
+    -> bump to 34; rename fn + factory to ...34...; update `#[allow(too_many_lines)]`
+    comment + module-doc header (top of file lists variant numbering).
+  * add new event struct to the `use omega_types::events::{...}` import list.
+  * snapshot: `cargo insta accept` (or hand-edit
+    crates/omega-types/tests/snapshots/events_reference__*.snap) — gate runs
+    cargo test => snapshot MISMATCH FAILS until accepted. MUST run insta accept.
+- events.rs: variant goes LAST in enum (after MonitorStopped ~line 802) + time()
+  arm after MonitorStopped arm (~line 847). Mirror HarnessRecoveryEvent struct
+  shape (#[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]
+  #[serde(rename_all=camelCase)]).
 
 ## Key constraints (model-facing protocol correctness)
 - Three `role:user` sources: tool-results, human `UserMessage`, monitor `MonitorDelivery`.
