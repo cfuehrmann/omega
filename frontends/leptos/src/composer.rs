@@ -304,8 +304,8 @@ pub fn Composer() -> impl IntoView {
     // InputQueue. Parked → drained immediately; in-block → queued until
     // the next seam. Works in every turn state.
     // Enqueue `content` (§15: one user message = one push to the InputQueue)
-    // and clear the textarea. Shared by the keyboard/Send paths and the
-    // external-editor auto-send path. No-op for blank content.
+    // and clear the textarea. Shared by the keyboard and Send-button paths.
+    // No-op for blank content.
     let send_content = move |content: String| {
         if content.trim().is_empty() {
             return;
@@ -320,17 +320,28 @@ pub fn Composer() -> impl IntoView {
     let do_send = move || send_content(draft.get());
 
     // Compose in the operator's configured editor ($OMEGA_EDITOR / $VISUAL /
-    // $EDITOR), seeded with the current draft, then auto-send the result.
-    // The editor launches on the server host (see `editor.rs`); on failure
-    // (no editor configured, non-zero exit) the draft is left untouched so
-    // the operator can fall back to typing in the browser, and the reason is
-    // surfaced in the transport-error banner — otherwise a misconfigured
-    // editor would make the button appear to do nothing.
+    // $EDITOR), seeded with the current draft. The result is dropped into the
+    // textarea for review — NOT sent — so the operator can edit it further or
+    // back out (clear it, or simply not press Send) even after saving in the
+    // editor. The editor launches on the server host (see `editor.rs`); on
+    // failure (no editor configured, non-zero exit) the draft is left
+    // untouched so the operator can fall back to typing in the browser, and
+    // the reason is surfaced in the transport-error banner — otherwise a
+    // misconfigured editor would make the button appear to do nothing.
     let do_editor = move || {
         let draft_now = draft.get();
         spawn_local(async move {
             match compose_via_editor(&draft_now).await {
-                Ok(content) => send_content(content),
+                Ok(content) => {
+                    // Fill the textarea (cursor at end) and focus it; the
+                    // operator reviews and presses Send. `set_selection_*`
+                    // clamps an over-long byte offset to the end.
+                    let cursor = content.len();
+                    set_textarea_state(content, cursor);
+                    if let Some(el) = textarea_ref.get() {
+                        let _ = el.focus();
+                    }
+                }
                 Err(err) => {
                     leptos::logging::warn!("composer editor failed: {err}");
                     store
@@ -537,7 +548,7 @@ pub fn Composer() -> impl IntoView {
             <button
                 class="leptos-composer-editor"
                 data-testid="leptos-composer-editor"
-                title="Compose in your editor ($OMEGA_EDITOR), then auto-send"
+                title="Compose in your editor ($OMEGA_EDITOR), then review & Send"
                 on:click=on_editor_click
             >
                 "✎ Editor"

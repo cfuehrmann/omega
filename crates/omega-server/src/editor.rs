@@ -78,7 +78,12 @@ pub fn split_editor_command(command: &str) -> Option<(String, Vec<String>)> {
 }
 
 /// Launch the configured editor on a temp file seeded with `draft`, wait
-/// for it to exit, and return the edited contents.
+/// for it to exit, and return the edited contents verbatim.
+///
+/// The contents are returned as-is (including when the operator quit without
+/// saving, in which case the file still holds the seed). The client drops the
+/// result into the composer textarea for review rather than sending it, so
+/// there is always a chance to back out.
 ///
 /// # Errors
 ///

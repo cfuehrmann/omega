@@ -784,6 +784,81 @@ async fn post_compose_runs_configured_editor_and_returns_edited_text() {
     let _ = child.kill().await;
 }
 
+/// `POST /api/compose` returns the file **verbatim** even when the editor is
+/// quit without saving (the file still holds the seed). The server does no
+/// send/suppress logic: the client drops the result into the textarea for
+/// review, so the operator can back out. Emptying server-side would instead
+/// wipe the draft on refill — the opposite of what we want.
+#[tokio::test]
+async fn post_compose_quit_without_saving_returns_seed_verbatim() {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let tmp = TempDir::new().expect("tempdir");
+
+    // Fake editor that exits 0 without touching the file — i.e. the operator
+    // opened the buffer and quit without writing (`:q!`).
+    let editor = tmp.path().join("fake-editor.sh");
+    std::fs::write(&editor, "#!/bin/sh\nexit 0\n").expect("write fake editor");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).expect("chmod +x");
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let sessions_root = tmp.path().join("sessions");
+    let bin = env!("CARGO_BIN_EXE_omega-server");
+    let mut child = Command::new(bin)
+        .args(["--port", &port.to_string()])
+        .arg("--sessions-root")
+        .arg(&sessions_root)
+        .current_dir(tmp.path())
+        .env("HOME", tmp.path())
+        .env("ANTHROPIC_API_KEY", "dummy")
+        .env("OMEGA_EDITOR", &editor)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn omega-server");
+
+    let url = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = reqwest::get(format!("{url}/health")).await {
+            if r.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "server did not become ready in 5 s");
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/api/compose"))
+        .json(&serde_json::json!({ "draft": "please keep my draft" }))
+        .send()
+        .await
+        .expect("POST /api/compose");
+    assert_eq!(resp.status().as_u16(), 200, "expected 200 OK");
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(
+        body["content"].as_str().expect("content field"),
+        "please keep my draft",
+        "quitting without saving must return the seed verbatim (the client \
+         refills the textarea for review rather than sending)",
+    );
+
+    let _ = child.kill().await;
+}
+
 /// `POST /api/compose` with no editor configured responds `500` with an
 /// actionable plaintext error mentioning `OMEGA_EDITOR`.
 #[tokio::test]
