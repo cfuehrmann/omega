@@ -522,6 +522,83 @@ subscribe, as they always did.
 
 ---
 
+## SLICE (b) SCOPING (main-thread) — RE-SLICES (b)/(c)/(d)
+
+### Server run-task consumer anatomy (`router.rs:991–1027`)
+For each `AgentItem` the consumer does **one forward + three reactions**:
+1. **WS-forward** — `send_to_active(WsMessage::Item(item))`. Needs **events AND
+   signals** (live render needs a `Text` signal *between*
+   `LlmResponseStarted`/`Ended`).
+2. **turn-state** — `next_turn_state_for(ev)` (`router.rs:574`); on change,
+   update `turn_state` + send `SessionInfo`. **Event-only** (`Signal => None`).
+3. **roster** — `is_monitor_event(item)` (`router.rs:83`) → push
+   `MonitorRoster`. **Event-only**.
+4. **queue** — `is_inbox_drain_event(item)` (`router.rs:115`) → push
+   `InputQueue`. **Event-only**.
+(The `input_queue.set_on_change` callback pushes queue snapshots independently;
+not part of the stream consumer.)
+
+### Key finding: original slice (b) is NOT viable standalone
+The three reactions are event-only but need a **complete** event feed (in-turn
+`LlmCall`→running, `TurnEnd`→idle). The emitter (`EventSink`) today carries
+*only out-of-band* events, so making reactions subscribe to it gives an
+incomplete feed until the loop emits in-turn events (old slice c). And routing
+in-turn events through `emit` while the WS-broadcaster is a subscriber **and**
+the run-stream is still forwarded = **double WS**; splitting events (emitter)
+from signals (run-stream) onto two WS paths = **interleaving race**. So (b) and
+(c) are coupled and the WS/signal cutover must be **atomic**.
+
+### The unlock: make the returned stream a *drain of a sink-owned wire*
+Instead of the loop's generator BEING the stream, the **sink owns an ordered
+wire** (unbounded mpsc); `emit`/`emit_signal` append-then-push to it; `run()`
+returns the wire **receiver**. Then:
+- The loop pushes events+signals to the wire in causal order (one ordered
+  channel → interleaving preserved).
+- Out-of-band callers (`set_model`, `deliver_stderr`) call `sink.emit` → same
+  wire → they now appear on the returned stream too. **Promptness while parked**
+  is automatic: the drain loop is a *separate* task from the (parked) loop.
+- **The server consumer body is UNCHANGED** — it still drains a stream and runs
+  WS-forward + 3 reactions. The sink's separate **WS-broadcaster is retired**
+  (out-of-band reaches WS via the wire now). **No WS double-emit** (one path).
+- Borrow model preserved (NO `Arc<Mutex>` rewrite): `run()` becomes a plain
+  `async fn` (no `stream!`) returning `()`; the server does
+  `let rx = sink.take_wire_receiver(); tokio::join!(guard.run(…), drain(rx))`.
+  The run-future borrows `&mut guard`; `rx` is owned; they run concurrently.
+
+### Behaviour-change AUDIT (out-of-band events now traverse the reactions)
+Enumerated out-of-band event × reaction:
+- **turn-state**: `ModelChanged`/`EffortChanged`/`HaltRequested`/
+  `HaltUnrequested`/`MonitorStderr` all hit `_ => None`. No double-update with
+  `handle_halt` (which sets "halted" manually; `TurnHalted` is in-turn and
+  already idempotent via the `*ts != target` guard). **SAFE.**
+- **queue** (`is_inbox_drain_event`): none of the out-of-band variants match.
+  **SAFE.**
+- **roster** (`is_monitor_event`): includes **`MonitorStderr`** — which is
+  out-of-band (`emit_detached`) and does NOT reach the consumer today, so it
+  fires **no** roster push now. On the wire it WOULD. **ONE behaviour change.**
+  Resolution: **remove `MonitorStderr` from `is_monitor_event`** — stderr is
+  output, not a roster-mutating lifecycle event (the doc comment already says
+  "lifecycle event"); arguably a pre-existing wart. Do this in the cutover.
+
+### Parity oracle
+The `collect_stream` tests encode the expected `AgentItem` sequence. Pointing
+them at the wire receiver and keeping them green proves event/signal parity;
+the chromiumoxide e2e suite guards live wire ordering.
+
+### RE-SLICED plan (replaces (b)/(c)/(d) above)
+- **(b1)** Sink owns an ordered wire (unbounded mpsc) + `emit_signal` +
+  `take_wire_receiver`; `emit`/`emit_signal` append(events)-then-push. Pure
+  addition, nothing drains the receiver yet → behaviour-preserving. Tested.
+- **(b2 = the cutover)** `run()` pushes via `emit`/`emit_signal` instead of
+  `yield` (drop `stream!`); server does `join!(run, drain(rx))` with the
+  EXISTING consumer body; retire the sink WS-broadcaster + its
+  `set_event_broadcaster` wiring; remove `MonitorStderr` from
+  `is_monitor_event`. Guarded by (b3) parity migration + e2e.
+- **(b3)** Migrate `collect_stream`/`RecordingBroadcaster` tests to drain the
+  receiver; opportunistic `events.jsonl` assertions. Retire dual path.
+
+---
+
 ## STATUS / RESUME-HERE
 
 - **Spike COMPLETE (read-only).** This file is the durable record. No
