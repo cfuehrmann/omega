@@ -38,8 +38,10 @@
 
 use std::sync::{Arc, Mutex};
 
+use omega_core::AgentItem;
 use omega_store::EventStore;
-use omega_types::OmegaEvent;
+use omega_types::{OmegaEvent, StreamSignal};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 /// The WebSocket half of the sink.
 ///
@@ -67,6 +69,11 @@ pub trait EventBroadcaster: Send + Sync {
 pub struct EventSink {
     store: Arc<EventStore>,
     subscribers: Mutex<Vec<Arc<dyn EventBroadcaster>>>,
+    /// The ordered "wire" (uniform-emission Phase 2): a single channel that
+    /// carries **events and signals** to the server's drain loop in causal
+    /// order.  Inert (`None`) until [`Self::take_wire_receiver`] activates it,
+    /// so a sink with no receiver taken is behaviour-identical to pre-wire.
+    wire_tx: Mutex<Option<UnboundedSender<AgentItem>>>,
 }
 
 impl std::fmt::Debug for EventSink {
@@ -90,7 +97,45 @@ impl EventSink {
         Self {
             store,
             subscribers: Mutex::new(Vec::new()),
+            wire_tx: Mutex::new(None),
         }
+    }
+
+    /// Activate the wire and take its receiver.  The wire is the ordered
+    /// channel that carries events **and** signals to the server's drain loop
+    /// (uniform-emission Phase 2, `docs/uniform-emission-spike.md`).  Until
+    /// this is called the wire is inert: [`Self::emit`] / [`Self::emit_signal`]
+    /// push nowhere, so the sink is behaviour-identical to pre-wire.  Called
+    /// once per session by the server (the drain loop reads the receiver while
+    /// the run-future borrows the agent).
+    pub fn take_wire_receiver(&self) -> UnboundedReceiver<AgentItem> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        *self
+            .wire_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx);
+        rx
+    }
+
+    /// Push an [`AgentItem`] onto the wire if active; a no-op otherwise.
+    /// A closed receiver is ignored (the session is winding down).
+    fn push_to_wire(&self, item: AgentItem) {
+        if let Some(tx) = self
+            .wire_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            let _ = tx.send(item);
+        }
+    }
+
+    /// Push a streaming [`StreamSignal`] onto the wire.  Signals are ephemeral
+    /// live-render fragments: never appended to `events.jsonl`, never
+    /// broadcast as events — they only ride the wire to the UI, interleaved
+    /// in causal order with the events emitted around them.
+    pub fn emit_signal(&self, signal: StreamSignal) {
+        self.push_to_wire(AgentItem::Signal(signal));
     }
 
     /// Install the WS broadcaster as the **sole** subscriber, replacing any
@@ -132,6 +177,7 @@ impl EventSink {
     pub async fn emit(&self, event: OmegaEvent) -> OmegaEvent {
         let _ = self.store.append(&event).await;
         self.broadcast(&event);
+        self.push_to_wire(AgentItem::event(event.clone()));
         event
     }
 
@@ -143,6 +189,7 @@ impl EventSink {
     /// differ from time order).
     pub fn emit_detached(self: &Arc<Self>, event: OmegaEvent) {
         self.broadcast(&event);
+        self.push_to_wire(AgentItem::event(event.clone()));
         let sink = Arc::clone(self);
         tokio::spawn(async move {
             let _ = sink.store.append(&event).await;
@@ -172,7 +219,7 @@ mod tests {
     // self-contained property of the sink; exercising multi-subscriber
     // registration through a full agent run (which only ever installs one
     // broadcaster) would be disproportionate setup for the logic under test.
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
     use omega_types::events::AgentErrorEvent;
@@ -246,5 +293,70 @@ mod tests {
 
         assert_eq!(first.count(), 1);
         assert_eq!(second.count(), 1);
+    }
+
+    // --- wire (uniform-emission Phase 2, slice b1) -----------------------
+
+    /// Bounded wire read: a missing push fails fast (panic) instead of
+    /// hanging, so a `push_to_wire`/`emit_signal` no-op mutant is CAUGHT
+    /// rather than timing out.
+    async fn next(rx: &mut UnboundedReceiver<AgentItem>) -> AgentItem {
+        tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for a wire item")
+            .expect("wire closed unexpectedly")
+    }
+
+    #[tokio::test]
+    async fn emit_pushes_event_onto_active_wire() {
+        let sink = sink();
+        let mut rx = sink.take_wire_receiver();
+
+        sink.emit(err_event("boom")).await;
+
+        match next(&mut rx).await {
+            AgentItem::Event(ev) => {
+                assert!(matches!(*ev, OmegaEvent::AgentError(e) if e.error == "boom"));
+            }
+            other @ AgentItem::Signal(_) => panic!("expected event on wire, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn emit_signal_pushes_signal_onto_wire() {
+        let sink = sink();
+        let mut rx = sink.take_wire_receiver();
+
+        sink.emit_signal(StreamSignal::Text {
+            index: 0,
+            text: "hi".to_owned(),
+        });
+
+        assert!(matches!(next(&mut rx).await, AgentItem::Signal(_)));
+    }
+
+    #[tokio::test]
+    async fn wire_is_inert_until_receiver_taken() {
+        let sink = sink();
+        // No receiver taken yet: emit must not panic and must push nowhere.
+        sink.emit(err_event("before")).await;
+
+        let mut rx = sink.take_wire_receiver();
+        sink.emit(err_event("after")).await;
+
+        // Only the post-activation event is on the wire — the pre-activation
+        // emit was inert (behaviour-preserving until the wire is active).
+        match next(&mut rx).await {
+            AgentItem::Event(ev) => {
+                assert!(matches!(*ev, OmegaEvent::AgentError(e) if e.error == "after"));
+            }
+            other @ AgentItem::Signal(_) => {
+                panic!("expected only the post-activation event, got {other:?}")
+            }
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "the pre-activation emit must not be buffered on the wire"
+        );
     }
 }
