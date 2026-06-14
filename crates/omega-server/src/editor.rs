@@ -16,17 +16,21 @@
 //!
 //! The editor runs on the **server host**, spawned by the `omega-server`
 //! process, which has no controlling terminal of its own.  A TUI editor
-//! (Helix, vim) must therefore be wrapped in a terminal command:
+//! (Helix, nvim, vim) must therefore be wrapped in a terminal command:
 //!
 //! ```text
 //! OMEGA_EDITOR="foot hx"            # foot runs `hx <tmpfile>` and blocks
-//! OMEGA_EDITOR="alacritty -e hx"    # likewise for alacritty
+//! OMEGA_EDITOR="alacritty -e nvim" # likewise for alacritty + nvim
 //! ```
 //!
 //! GUI editors need their blocking flag instead, e.g. `code --wait` or
-//! `gedit -w`.  A bare `EDITOR=hx` will fail to launch from the server.
-//! Because the editor opens on the server host, the feature only makes
-//! sense when the browser and server share a machine (the usual setup).
+//! `gedit -w`.  A bare `EDITOR=nvim` (or `hx`/`vim`) cannot work from the
+//! server: with no terminal to attach to, the editor's stdin is detached
+//! ([`std::process::Stdio::null`]) so it exits immediately rather than
+//! hanging the request, and [`compose_with_editor`] returns an error that
+//! names the terminal-wrapper fix.  Because the editor opens on the server
+//! host, the feature only makes sense when the browser and server share a
+//! machine (the usual setup).
 //!
 //! ## Mutation-test split
 //!
@@ -104,14 +108,29 @@ pub async fn compose_with_editor(draft: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("seed temp file: {e}"))?;
 
+    // Detach the child's stdin from the server's. The server has no
+    // controlling terminal, so a bare TUI editor (nvim, vim, hx) launched
+    // without a terminal wrapper would otherwise read the server's non-tty
+    // stdin and block forever, hanging the `/api/compose` request. With a
+    // null stdin it instead hits EOF immediately and exits non-zero, so the
+    // operator gets a prompt error they can act on. A correctly wrapped
+    // command (`foot nvim`, `alacritty -e hx`, `code --wait`) opens its own
+    // terminal/pty and is unaffected.
     let status = tokio::process::Command::new(&program)
         .args(&args)
         .arg(&path)
+        .stdin(std::process::Stdio::null())
         .status()
         .await
         .map_err(|e| format!("launch editor '{program}': {e}"))?;
     if !status.success() {
-        return Err(format!("editor '{program}' exited with {status}"));
+        return Err(format!(
+            "editor '{program}' exited with {status}. If this is a terminal \
+             editor (nvim, vim, hx), the server has no terminal to run it in \
+             — wrap it in one, e.g. OMEGA_EDITOR=\"foot {program}\" or \
+             \"alacritty -e {program}\"; GUI editors need a blocking flag \
+             like \"code --wait\"."
+        ));
     }
 
     tokio::fs::read_to_string(&path)

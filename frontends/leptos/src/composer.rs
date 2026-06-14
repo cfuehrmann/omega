@@ -321,15 +321,22 @@ pub fn Composer() -> impl IntoView {
 
     // Compose in the operator's configured editor ($OMEGA_EDITOR / $VISUAL /
     // $EDITOR), seeded with the current draft, then auto-send the result.
-    // The editor launches on the server host (see `editor.rs`); a failure
-    // (no editor configured, non-zero exit) is logged and leaves the draft
-    // untouched so the operator can fall back to typing in the browser.
+    // The editor launches on the server host (see `editor.rs`); on failure
+    // (no editor configured, non-zero exit) the draft is left untouched so
+    // the operator can fall back to typing in the browser, and the reason is
+    // surfaced in the transport-error banner — otherwise a misconfigured
+    // editor would make the button appear to do nothing.
     let do_editor = move || {
         let draft_now = draft.get();
         spawn_local(async move {
             match compose_via_editor(&draft_now).await {
                 Ok(content) => send_content(content),
-                Err(err) => leptos::logging::warn!("composer editor failed: {err}"),
+                Err(err) => {
+                    leptos::logging::warn!("composer editor failed: {err}");
+                    store
+                        .transport_errors
+                        .update(|v| v.push(format!("Editor: {err}")));
+                }
             }
         });
     };

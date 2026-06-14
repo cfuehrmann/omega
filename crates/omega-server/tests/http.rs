@@ -847,3 +847,102 @@ async fn post_compose_without_editor_configured_returns_500() {
 
     let _ = child.kill().await;
 }
+
+/// Regression: `POST /api/compose` must not hang when the configured editor
+/// reads from stdin (as every TUI editor does).  The server has no
+/// controlling terminal, so the editor is launched with a detached stdin
+/// (`Stdio::null`); without that, a bare `nvim`/`vim`/`hx` reads the
+/// server's inherited non-tty stdin and blocks forever, leaving the browser
+/// button "doing nothing".
+///
+/// The harness spawns the server with a *piped* stdin and keeps the write
+/// end open for the whole test, so the editor would inherit an open,
+/// never-closing pipe.  The fake editor blocks on `cat` until its stdin
+/// reaches EOF before editing the file — which only happens if stdin is
+/// detached.  A timeout around the request turns the would-be hang into a
+/// clean failure.
+#[tokio::test]
+async fn post_compose_does_not_hang_when_editor_reads_stdin() {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let tmp = TempDir::new().expect("tempdir");
+
+    // Fake editor that reads its stdin to EOF *before* editing. With the
+    // editor's stdin detached (the fix) `cat` sees EOF at once; without it,
+    // `cat` blocks on the inherited open pipe and the request never returns.
+    let editor = tmp.path().join("fake-editor.sh");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\ncat > /dev/null\nprintf 'EDITED[%s]' \"$(cat \"$1\")\" > \"$1\"\n",
+    )
+    .expect("write fake editor");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).expect("chmod +x");
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let sessions_root = tmp.path().join("sessions");
+    let bin = env!("CARGO_BIN_EXE_omega-server");
+    // Piped stdin, with the write end held open by `child` for the whole
+    // test: this is the open, never-closing pipe the editor would inherit
+    // were its stdin not detached.
+    let mut child = Command::new(bin)
+        .args(["--port", &port.to_string()])
+        .arg("--sessions-root")
+        .arg(&sessions_root)
+        .current_dir(tmp.path())
+        .env("HOME", tmp.path())
+        .env("ANTHROPIC_API_KEY", "dummy")
+        .env("OMEGA_EDITOR", &editor)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn omega-server");
+    // Hold the pipe's write end open; dropping it would send EOF and mask
+    // the bug.
+    let _server_stdin = child.stdin.take().expect("piped stdin");
+
+    let url = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = reqwest::get(format!("{url}/health")).await {
+            if r.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "server did not become ready in 5 s");
+
+    let resp = tokio::time::timeout(
+        Duration::from_secs(10),
+        reqwest::Client::new()
+            .post(format!("{url}/api/compose"))
+            .json(&serde_json::json!({ "draft": "seed" }))
+            .send(),
+    )
+    .await
+    .expect("POST /api/compose hung — editor blocked on inherited stdin")
+    .expect("POST /api/compose");
+
+    assert_eq!(resp.status().as_u16(), 200, "expected 200");
+    let body: serde_json::Value = resp.json().await.expect("json body");
+    assert_eq!(
+        body["content"].as_str(),
+        Some("EDITED[seed]"),
+        "editor must have run to completion after EOF on stdin",
+    );
+
+    let _ = child.kill().await;
+}
