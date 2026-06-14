@@ -142,7 +142,7 @@ impl Agent {
     /// events reach the WS via the run-stream / wire drain).  Returns the
     /// event so the caller can `yield` it.  Uniform-emission Phase 2 (b2a).
     async fn commit_event(&self, event: OmegaEvent) -> OmegaEvent {
-        self.event_sink.commit(event).await
+        self.event_sink.emit(event).await
     }
 
     /// Drive one coding turn (one Gather→Process block of [`Self::run`]).

@@ -12,7 +12,7 @@ use omega_types::ids::{Origin, SessionId};
 use omega_types::{FeatureFlags, OmegaEvent};
 
 use crate::config::max_output_tokens_for_model;
-use crate::event_sink::EventBroadcaster;
+
 use crate::system_prompt::{
     SystemBlock, build_system_blocks, discover_instruction_files, join_blocks,
 };
@@ -256,15 +256,6 @@ impl Agent {
             effort: Arc::clone(&self.active_effort),
             event_sink: Arc::clone(&self.event_sink),
         }
-    }
-
-    /// Install the WebSocket broadcaster on the out-of-band [`EventSink`]
-    /// (§17, Phase A).  Called once per session by the server after the
-    /// agent is built; the broadcaster resolves the *current* `ws_tx` at
-    /// emit time (it is replaced on reconnect).  Headless / CLI callers
-    /// never call this — the sink then only appends to disk.
-    pub fn set_event_broadcaster(&self, broadcaster: Arc<dyn EventBroadcaster>) {
-        self.event_sink.set_broadcaster(broadcaster);
     }
 
     /// Take the wire receiver carrying this session's events + signals to the

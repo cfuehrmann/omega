@@ -358,7 +358,7 @@ async fn create_active_session(
     // model/effort changes) reach the WS the same way in-turn events do — they
     // push onto the agent's wire, which the run task drains into this session's
     // `ws_tx` slot via `send_to_active` (resolving the CURRENT socket on each
-    // send, so a reconnect is transparent).  No event broadcaster is bound.
+    // send, so a reconnect is transparent).
     let ws_tx: WsTxCell = Arc::new(std::sync::Mutex::new(None));
 
     let controls = agent.controls();

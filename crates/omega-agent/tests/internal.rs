@@ -79,10 +79,10 @@
 mod common;
 
 use common::{
-    RecordingBroadcaster, collect_stream, drive, make_llm_response, make_monitor_item,
-    make_terminal_response, make_test_agent, make_tool_use_items, tags,
+    collect_stream, drive, make_llm_response, make_monitor_item, make_terminal_response,
+    make_test_agent, make_tool_use_items, tags,
 };
-use omega_agent::{Agent, AgentConfig, EventBroadcaster, InputItem, InputQueue};
+use omega_agent::{Agent, AgentConfig, InputItem, InputQueue};
 use omega_core::{AgentItem, ContentBlock, LlmError, LlmRequest, Message, Role};
 use omega_store::{ContextStore, EventStore, content_hash};
 use omega_types::events::MonitorStopReason;
@@ -852,16 +852,14 @@ async fn model_effort_handle_effort_getter_round_trips() {
     assert_eq!(handle.effort(), "high");
 }
 
-/// (§17, Phase A) test (c): a model change that occurs MID-TURN must not
-/// affect the in-flight turn — every `LlmRequest` in that turn uses the model
-/// snapshotted at `drive_turn` entry — but it IS recorded at click time (out
-/// of band, through the `EventSink`) and takes effect on the NEXT turn.
+/// A model change that occurs MID-TURN must not affect the in-flight turn
+/// — every `LlmRequest` in that turn uses the model snapshotted at
+/// `drive_turn` entry — but it IS recorded at click time (out of band,
+/// through the `EventSink` wire) and takes effect on the NEXT turn.
 #[tokio::test]
 async fn mid_turn_model_change_snapshots_and_applies_next_turn() {
     let (mut agent, provider, tmp) = make_test_agent();
     let events_path = tmp.path().join("events.jsonl");
-    let broadcaster = Arc::new(RecordingBroadcaster::default());
-    agent.set_event_broadcaster(Arc::clone(&broadcaster) as Arc<dyn EventBroadcaster>);
     // Obtain the lock-free handle BEFORE `run` borrows the agent mutably.
     let handle = agent.model_effort_handle();
 
@@ -906,7 +904,7 @@ async fn mid_turn_model_change_snapshots_and_applies_next_turn() {
         });
     }
 
-    let _ = pull_to_turn_end(&mut stream).await;
+    let seen = pull_to_turn_end(&mut stream).await;
 
     // Both of turn 1's requests used the SNAPSHOT model, despite the change.
     let turn1 = provider.take_requests();
@@ -918,26 +916,25 @@ async fn mid_turn_model_change_snapshots_and_applies_next_turn() {
         );
     }
 
-    // The change WAS recorded at click time (out of band): broadcaster + disk.
-    poll_until(
-        || {
-            broadcaster
-                .snapshot()
-                .iter()
-                .any(|e| matches!(e, OmegaEvent::ModelChanged(m) if m.model == "claude-opus-4-8"))
-        },
-        "ModelChanged must be broadcast at click time",
-    )
-    .await;
-    let changed = broadcaster
-        .snapshot()
-        .into_iter()
-        .find_map(|e| match e {
-            OmegaEvent::ModelChanged(m) if m.model == "claude-opus-4-8" => Some(m),
-            _ => None,
+    // The change WAS recorded at click time: it rode the wire (in-stream)
+    // and was appended to disk.  ModelChanged arrives before TurnEnd because
+    // `emit` (awaited by `set_model`) completes during the 0.5 s tool sleep.
+    assert!(
+        seen.contains(&"ModelChanged"),
+        "ModelChanged must appear on the wire (stream) before TurnEnd; seen={seen:?}"
+    );
+
+    // Read the timestamp from disk (emit awaits the append, so the record
+    // is there by the time pull_to_turn_end returns).
+    let disk = read_events_jsonl(&events_path);
+    let changed = disk
+        .iter()
+        .find(|v| {
+            v.get("type").and_then(|t| t.as_str()) == Some("model_changed")
+                && v.get("model").and_then(|m| m.as_str()) == Some("claude-opus-4-8")
         })
-        .expect("ModelChanged present");
-    let stamp = chrono::DateTime::parse_from_rfc3339(&changed.time)
+        .expect("ModelChanged must be on disk");
+    let stamp = chrono::DateTime::parse_from_rfc3339(changed["time"].as_str().unwrap())
         .expect("time is rfc3339")
         .with_timezone(&chrono::Utc);
     assert!(
@@ -960,8 +957,8 @@ async fn mid_turn_model_change_snapshots_and_applies_next_turn() {
     run_cancel.cancel();
     drop(stream);
 
-    // Durable on disk as a model_changed event.
-    let disk = read_events_jsonl(&events_path);
+    // Durable on disk as a model_changed event (already read above, but
+    // confirm the invariant explicitly).
     assert!(
         disk.iter().any(
             |v| v.get("type").and_then(|t| t.as_str()) == Some("model_changed")
@@ -1496,21 +1493,18 @@ async fn tool_selection_drives_request_tools_and_system_prompt() {
 // All tests drive the public Agent API and observe effects via
 // history() / MockProvider.take_requests().
 
-/// (a) MonitorStderr (§17, Phase A): a live monitor's STDERR becomes a
-/// `MonitorStderr` event committed to the event-log + WS through the
-/// `EventSink`, and is NEVER projected into the LLM context.
+/// (a) MonitorStderr: a live monitor's STDERR becomes a `MonitorStderr`
+/// event committed to the event-log + WS through the `EventSink` wire,
+/// and is NEVER projected into the LLM context.
 ///
 /// End-to-end through the run loop with a REAL monitor: the stderr text must
-/// reach the WS (the wire, and any installed broadcaster) and `events.jsonl`
-/// (disk), but must NOT enter `history`, the inbox, or the next turn's
-/// LlmRequest (zero token cost) — i.e. delivered for observation, never
-/// projected into the LLM context.
+/// reach the WS wire and `events.jsonl` (disk), but must NOT enter `history`,
+/// the inbox, or the next turn's LlmRequest (zero token cost).
 #[tokio::test]
 async fn monitor_stderr_emitted_to_sink_not_projected() {
     let (mut agent, provider, tmp) = make_test_agent();
     let events_path = tmp.path().join("events.jsonl");
-    let broadcaster = Arc::new(RecordingBroadcaster::default());
-    agent.set_event_broadcaster(Arc::clone(&broadcaster) as Arc<dyn EventBroadcaster>);
+    // No broadcaster: events ride the wire only (uniform emission, slice b3).
 
     // call1: spawn a monitor that writes a UNIQUE marker to STDERR and lingers.
     // The marker is ASSEMBLED at runtime (`printf 'OUTERR_%s' "$m"`) so the
@@ -1539,19 +1533,9 @@ async fn monitor_stderr_emitted_to_sink_not_projected() {
     });
     let seen = pull_to_turn_end(&mut stream).await;
 
-    // Uniform emission (Phase 2): the stderr marker reaches the WS as a
-    // MonitorStderr event by riding the SAME wire as in-turn events (it no
-    // longer takes a separate broadcaster-only path).  So it is both delivered
-    // (on the wire/stream) and broadcast to any installed subscriber.
-    poll_until(
-        || {
-            broadcaster.snapshot().iter().any(
-                |e| matches!(e, OmegaEvent::MonitorStderr(s) if s.chunk.contains("OUTERR_ZZZ9")),
-            )
-        },
-        "MonitorStderr must reach the WS broadcaster",
-    )
-    .await;
+    // `emit_detached` pushes MonitorStderr onto the wire synchronously;
+    // `pull_to_turn_end` drains the wire, so the event appears in `seen`
+    // (pushed during the 0.3 s `sleep` in call2, before TurnEnd).
     assert!(
         seen.contains(&"MonitorStderr"),
         "stderr is delivered on the wire to the WS (just never into the LLM context); seen={seen:?}"
@@ -2012,21 +1996,20 @@ async fn append_monitor_started_writes_event_to_log() {
 }
 
 /// (§17, Phase A) test (a): STDERR produced while the agent is PARKED (no
-/// turn running) becomes a `MonitorStderr` event PROMPTLY — committed through
-/// the `EventSink` the instant the line is read, NOT deferred until the
-/// monitor stops or the next seam.  Its `time` is a production-time stamp.
+/// A `MonitorStderr` event is delivered PROMPTLY through the `EventSink`
+/// wire the instant the line is read, NOT deferred until the monitor stops
+/// or the next seam.  Its `time` is a production-time stamp.
 ///
 /// The monitor writes its stderr ~0.4 s after spawn, by which point the
-/// one-shot turn that spawned it has ended and the run loop is parked on the
-/// empty inbox.  The event must reach the broadcaster (WS) while the monitor
-/// is STILL ALIVE (proving it is not a stop-time drain), and carry a `time`
+/// one-shot turn that spawned it has ended and the run loop is parked on
+/// the empty inbox.  The event must reach the wire while the monitor is
+/// STILL ALIVE (proving it is not a stop-time drain), and carry a `time`
 /// between the moment we started and the moment it arrived.
 #[tokio::test]
 async fn monitor_stderr_emitted_promptly_while_agent_parked() {
     let (mut agent, provider, tmp) = make_test_agent();
     let events_path = tmp.path().join("events.jsonl");
-    let broadcaster = Arc::new(RecordingBroadcaster::default());
-    agent.set_event_broadcaster(Arc::clone(&broadcaster) as Arc<dyn EventBroadcaster>);
+    // No broadcaster: events ride the wire only (uniform emission, slice b3).
 
     // call1: spawn a monitor that stays SILENT for 0.4 s, then writes one
     // stderr line, then lingers (so it is still alive when we assert).
@@ -2054,33 +2037,35 @@ async fn monitor_stderr_emitted_promptly_while_agent_parked() {
     let seen = pull_to_turn_end(&mut stream).await;
     assert!(
         !seen.contains(&"MonitorStderr"),
-        "stderr must NOT ride the run() stream; seen={seen:?}"
+        "stderr must not appear in the during-turn items (monitor hasn't written yet); seen={seen:?}"
     );
 
-    // While PARKED (no turn running) and the monitor STILL ALIVE, the stderr
-    // line must arrive at the broadcaster promptly.
-    poll_until(
-        || {
-            broadcaster.snapshot().iter().any(
-                |e| matches!(e, OmegaEvent::MonitorStderr(s) if s.chunk.contains("PARKED_STDERR")),
-            )
-        },
-        "MonitorStderr must arrive while the agent is parked and monitor alive",
-    )
-    .await;
-    let t1 = chrono::Utc::now();
+    // The run_stream future is still active (agent parked, wire still open).
+    // Once the monitor writes stderr, `emit_detached` pushes MonitorStderr
+    // onto the wire synchronously; the stream yields it here.
+    let t1;
+    let ev_time;
+    loop {
+        match pull(&mut stream, 3000).await {
+            Pull::Item(item) => {
+                if let AgentItem::Event(boxed) = &item {
+                    if let OmegaEvent::MonitorStderr(s) = boxed.as_ref() {
+                        if s.chunk.contains("PARKED_STDERR") {
+                            t1 = chrono::Utc::now();
+                            ev_time = s.time.clone();
+                            break;
+                        }
+                    }
+                }
+            }
+            Pull::Ended => panic!("stream ended before MonitorStderr"),
+            Pull::Parked => panic!("stream stalled for 3 s before MonitorStderr arrived"),
+        }
+    }
 
     // The event's `time` is a plausible PRODUCTION-time stamp: between when
     // we started and when it arrived (well before the monitor is stopped).
-    let ev = broadcaster
-        .snapshot()
-        .into_iter()
-        .find_map(|e| match e {
-            OmegaEvent::MonitorStderr(s) if s.chunk.contains("PARKED_STDERR") => Some(s),
-            _ => None,
-        })
-        .expect("MonitorStderr present");
-    let stamp = chrono::DateTime::parse_from_rfc3339(&ev.time)
+    let stamp = chrono::DateTime::parse_from_rfc3339(&ev_time)
         .expect("time is rfc3339")
         .with_timezone(&chrono::Utc);
     assert!(
@@ -2088,7 +2073,8 @@ async fn monitor_stderr_emitted_promptly_while_agent_parked() {
         "stderr time {stamp} must be a production-time stamp within [{t0}, {t1}]"
     );
 
-    // It is durable on disk too.
+    // It is durable on disk too (emit_detached spawns the append, so we
+    // poll_until rather than reading immediately).
     poll_until(
         || {
             read_events_jsonl(&events_path)

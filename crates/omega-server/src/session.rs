@@ -6,11 +6,10 @@
 
 use std::sync::Arc;
 
-use omega_agent::{Agent, ControlHandle, EventBroadcaster, InputQueue, ModelEffortHandle};
-use omega_core::AgentItem;
+use omega_agent::{Agent, ControlHandle, InputQueue, ModelEffortHandle};
 use omega_store::SessionPaths;
 use omega_tools::MonitorManager;
-use omega_types::{FeatureFlags, OmegaEvent};
+use omega_types::FeatureFlags;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
@@ -22,12 +21,10 @@ use crate::ws_message::WsMessage;
 ///
 /// `ws_tx` is `None` until a socket upgrades and is **replaced** on every
 /// reconnect.  Wrapping it in `Arc<Mutex<Option<…>>>` lets two readers share
-/// the SAME live value: the per-turn forwarder ([`send_to_active`]) and the
-/// out-of-band [`EventSink`](omega_agent::EventSink) broadcaster
-/// ([`WsEventBroadcaster`]).  A `std::sync::Mutex` (not tokio) is deliberate —
+/// the same live value: the per-turn forwarder ([`send_to_active`]) and the
+/// per-session drain task.  A `std::sync::Mutex` (not tokio) is deliberate —
 /// the guard is held only for a single non-blocking `try_send`/`send`, never
-/// across an `.await`, so the broadcaster's `broadcast` can stay synchronous
-/// and preserve wire order.
+/// across an `.await`.
 pub type WsTxCell = Arc<std::sync::Mutex<Option<UnboundedSender<WsMessage>>>>;
 
 /// Replace the sender held by a [`WsTxCell`] (poison-tolerant: a poisoned
@@ -48,41 +45,6 @@ pub(crate) fn send_via_ws_tx(cell: &WsTxCell, msg: WsMessage) {
         .as_ref()
     {
         let _ = tx.send(msg);
-    }
-}
-
-/// [`EventBroadcaster`] that fans an out-of-band [`OmegaEvent`] onto the
-/// session's current WebSocket (§17, Phase A).
-///
-/// Resolves the CURRENT `ws_tx` from a shared [`WsTxCell`] at broadcast time,
-/// so events emitted after a reconnect still reach the live socket.  Wraps
-/// the event in the same `WsMessage::Item(AgentItem::Event(…))` frame the
-/// per-turn run stream uses, so the client decodes it identically.
-#[derive(Debug, Clone)]
-pub struct WsEventBroadcaster {
-    ws_tx: WsTxCell,
-}
-
-impl WsEventBroadcaster {
-    /// Bind a broadcaster to a session's `ws_tx` cell.
-    #[must_use]
-    pub fn new(ws_tx: WsTxCell) -> Self {
-        Self { ws_tx }
-    }
-}
-
-impl EventBroadcaster for WsEventBroadcaster {
-    fn broadcast(&self, event: &OmegaEvent) {
-        // Hold the std lock only for the non-blocking `send`; never across an
-        // await.  A dropped message (no client / closed channel) is fine —
-        // the canonical copy is already (or will be) on disk.
-        if let Ok(guard) = self.ws_tx.lock()
-            && let Some(tx) = guard.as_ref()
-        {
-            let _ = tx.send(WsMessage::Item(Box::new(AgentItem::Event(Box::new(
-                event.clone(),
-            )))));
-        }
     }
 }
 
@@ -128,9 +90,8 @@ pub struct ActiveSession {
     /// fanned-out) on every reconnect, matching the TS server's
     /// single-WS-at-a-time model.
     ///
-    /// A shared [`WsTxCell`] (not a bare `Option`) so the out-of-band
-    /// [`WsEventBroadcaster`] resolves the SAME live sender as the per-turn
-    /// forwarder (§17, Phase A).
+    /// Shared handle so the per-session drain task and the WS writer resolve
+    /// the SAME live sender on reconnect.
     pub ws_tx: WsTxCell,
     /// Handle to the persistent per-session `Agent::run` task (§15 Unified
     /// Input Model, U1).

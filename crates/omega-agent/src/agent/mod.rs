@@ -101,12 +101,11 @@ pub struct Agent {
     provider: Arc<dyn Provider>,
     context_store: ContextStore,
     event_store: Arc<EventStore>,
-    /// Out-of-band event sink (§17, Phase A): append-to-log + broadcast-to-WS
-    /// for events born **outside** a turn (monitor stderr, halt, model/effort
-    /// changes).  Shares the same [`Arc<EventStore>`] as the loop's
-    /// append-and-yield path; each event source uses exactly one path so
-    /// nothing is emitted twice.  The WS half is installed later by the
-    /// server via [`Agent::set_event_broadcaster`].
+    /// The unified event sink: append-to-log + push-to-wire for ALL events,
+    /// both in-turn (via the `commit_event` chokepoint in the run loop) and
+    /// out-of-band (monitor stderr, halt, model/effort changes).  Shares the
+    /// same [`Arc<EventStore>`] as the loop's append path; each event source
+    /// uses exactly one path so nothing is emitted twice.
     event_sink: Arc<EventSink>,
     /// Pause / continue / abort handle.  Cloned out via
     /// [`Agent::controls`] **before** the caller starts a turn so the

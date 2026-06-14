@@ -1,4 +1,5 @@
-//! The event sink (§17 of `docs/monitors-design.html`, Phase A).
+//! The event sink — the unified emit path for all `OmegaEvent`s
+//! (`docs/uniform-emission-spike.md`, Phase 2 / slice b3).
 //!
 //! ## Why this exists
 //!
@@ -7,34 +8,27 @@
 //! `events.jsonl` and then *yielded* the event on its stream so the server
 //! could forward it to the WebSocket.  Events born **outside** a turn (a
 //! monitor's stderr line read while the agent is parked, a halt click, a
-//! mid-turn model switch) had no clean home — they were parked on side
-//! queues and only committed late, sometimes re-stamped at drain time.
+//! mid-turn model switch) had no clean home.
 //!
-//! The [`EventSink`] is the out-of-band home for those events.  A single call
-//! to [`EventSink::emit`] both **appends** the event to `events.jsonl` and
-//! **broadcasts** it to whichever WebSocket is currently connected.  The
-//! event already carries its true event-*time* (stamped at the moment of
-//! occurrence by the caller); the sink only *commits* it.  Event-time and
-//! commit-time are independent and both preserved — the log is never sorted
-//! by time, the UI shows file/arrival order with each row's own `time`.
+//! The [`EventSink`] is now the **unified emit point** for ALL events.  A
+//! single call to [`EventSink::emit`] both **appends** the event to
+//! `events.jsonl` and **pushes it onto the ordered wire** that the server
+//! (and test harness) drains.  In-turn events use the same [`EventSink::emit`]
+//! path via the `commit_event` helper in the loop; out-of-band events (model
+//! changes, halt clicks, monitor stderr) call `emit` or `emit_detached`
+//! directly.  Either way, every event reaches disk and the WS through ONE
+//! code path.
 //!
-//! ## What still uses the loop
+//! ## The wire
 //!
-//! Phase A is **additive**.  The loop's existing append-and-yield path is
-//! untouched: conversation events, turn lifecycle, monitor delivery, etc.
-//! still flow through `run()`.  Each event source uses exactly **one** path,
-//! so nothing is emitted twice.  The sink is for the three out-of-band
-//! sources migrated in Phase A: monitor **stderr**, **halt** requests, and
-//! **model / effort** changes.
-//!
-//! ## The broadcaster
-//!
-//! The WS half is abstracted behind [`EventBroadcaster`] so this crate need
-//! not depend on the server's `WsMessage` type.  The server installs a
-//! concrete broadcaster (resolving the *current* `ws_tx`, which is replaced
-//! on reconnect) via [`EventSink::set_broadcaster`].  Headless / CLI / test
-//! callers leave it unset, in which case `emit` still appends to disk and the
-//! broadcast is a no-op.
+//! The server (and the test harness) calls [`EventSink::take_wire_receiver`]
+//! once per session, then drives `agent.run()` and the wire drain
+//! concurrently (`join!(run, drain(rx))`).  The wire is an ordered,
+//! unbounded MPSC channel that carries both [`OmegaEvent`]s (via `emit` /
+//! `emit_detached`) and ephemeral [`StreamSignal`]s (via `emit_signal`) in
+//! causal order.  Signals are never appended to disk; events always are.
+//! The broadcaster / subscriber-registry machinery (Phase A) has been retired
+//! (slice b3); nothing installs a broadcaster any more.
 
 use std::sync::{Arc, Mutex};
 
@@ -43,60 +37,45 @@ use omega_store::EventStore;
 use omega_types::{OmegaEvent, StreamSignal};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-/// The WebSocket half of the sink.
-///
-/// Implemented by the server with a handle that resolves the *current*
-/// `ws_tx` at broadcast time (the sender is `Option` and replaced on
-/// reconnect).  `broadcast` must be cheap and non-blocking — it is called
-/// synchronously from [`EventSink::emit`] to preserve arrival order on the
-/// wire.
-pub trait EventBroadcaster: Send + Sync {
-    /// Forward `event` to the currently-connected client, if any.
-    fn broadcast(&self, event: &OmegaEvent);
-}
-
-/// Appends an event to `events.jsonl` and broadcasts it to every registered
-/// subscriber, from any caller at any time.
+/// Appends an event to `events.jsonl` and pushes it onto the ordered wire,
+/// from any caller at any time.
 ///
 /// Holds an [`Arc<EventStore>`] (per-line-atomic, safe under concurrent
-/// callers) plus a **registry** of [`EventBroadcaster`] subscribers.  Today
-/// the server installs exactly one (the WS broadcaster); the registry is the
-/// groundwork for "observers as projections" (uniform-emission Phase 2,
-/// `docs/uniform-emission-spike.md`), where the WS forwarder, the server's
-/// control-reactions, and a test recorder all subscribe to the same emit.
+/// callers) and an **ordered wire** — a single MPSC channel that carries
+/// events AND signals in causal order to the server's drain loop.  The wire
+/// is inert until [`Self::take_wire_receiver`] activates it; before that,
+/// `emit` / `emit_signal` are behaviour-identical to pre-wire operation.
 /// No locking enforces time order: each event is stamped at occurrence by its
 /// caller and committed whenever the sink gets to it.
 pub struct EventSink {
     store: Arc<EventStore>,
-    subscribers: Mutex<Vec<Arc<dyn EventBroadcaster>>>,
-    /// The ordered "wire" (uniform-emission Phase 2): a single channel that
-    /// carries **events and signals** to the server's drain loop in causal
-    /// order.  Inert (`None`) until [`Self::take_wire_receiver`] activates it,
-    /// so a sink with no receiver taken is behaviour-identical to pre-wire.
+    /// The ordered "wire": a single channel that carries **events and signals**
+    /// to the server's drain loop in causal order.  Inert (`None`) until
+    /// [`Self::take_wire_receiver`] activates it, so a sink with no receiver
+    /// taken is behaviour-identical to pre-wire.
     wire_tx: Mutex<Option<UnboundedSender<AgentItem>>>,
 }
 
 impl std::fmt::Debug for EventSink {
-    // Cosmetic, hand-written because `dyn EventBroadcaster` is not `Debug`
-    // (so the struct cannot derive it).  The exact rendering is not behaviour
-    // any test should pin, so the body-replacement mutant has nothing to
-    // catch it — skip rather than assert on debug text.
+    // Cosmetic: the wire_tx Mutex<Option<…>> does not implement Debug in a
+    // useful way, so we hand-write a minimal representation.  The exact
+    // rendering is not behaviour any test should pin, so the body-replacement
+    // mutant has nothing to catch it — skip rather than assert on debug text.
     #[mutants::skip]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let subscriber_count = self.subscribers.lock().map_or(0, |g| g.len());
+        let wire_active = self.wire_tx.lock().is_ok_and(|g| g.is_some());
         f.debug_struct("EventSink")
-            .field("subscriber_count", &subscriber_count)
+            .field("wire_active", &wire_active)
             .finish_non_exhaustive()
     }
 }
 
 impl EventSink {
-    /// Build a sink over `store` with no broadcaster installed yet.
+    /// Build a sink over `store`.
     #[must_use]
     pub fn new(store: Arc<EventStore>) -> Self {
         Self {
             store,
-            subscribers: Mutex::new(Vec::new()),
             wire_tx: Mutex::new(None),
         }
     }
@@ -150,30 +129,6 @@ impl EventSink {
         self.push_to_wire(AgentItem::Signal(signal));
     }
 
-    /// Install the WS broadcaster as the **sole** subscriber, replacing any
-    /// existing ones.  Called by the server once per session; the broadcaster
-    /// itself resolves the live `ws_tx`.  (Replace semantics preserve the
-    /// historical single-broadcaster behaviour; use [`Self::add_subscriber`]
-    /// to register additional observers without displacing this one.)
-    pub fn set_broadcaster(&self, broadcaster: Arc<dyn EventBroadcaster>) {
-        let mut subs = self
-            .subscribers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        subs.clear();
-        subs.push(broadcaster);
-    }
-
-    /// Register an additional subscriber without displacing existing ones.
-    /// Every registered subscriber receives every emitted event, in
-    /// registration order, on each [`Self::emit`] / [`Self::emit_detached`].
-    pub fn add_subscriber(&self, subscriber: Arc<dyn EventBroadcaster>) {
-        self.subscribers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(subscriber);
-    }
-
     /// Borrow the backing store (used by handles that need to read the log
     /// back, e.g. control-handle tests).
     #[must_use]
@@ -181,27 +136,13 @@ impl EventSink {
         &self.store
     }
 
-    /// Commit `event`: append to `events.jsonl`, then broadcast to the
-    /// current WS.  Returns the event unchanged so callers can keep using it
-    /// (e.g. update an info cache).  Append happens before broadcast so a
-    /// client that reconnects right after never sees a wire event that is not
-    /// yet on disk.
+    /// Emit `event`: append to `events.jsonl`, then push onto the wire.
+    /// Returns the event unchanged so callers can keep using it.  This is the
+    /// **unified emit path** for both in-turn events (called via the
+    /// `commit_event` chokepoint in the run loop) and out-of-band events
+    /// (model changes, halt clicks).  Append happens before push so a client
+    /// that reconnects right after never sees a wire event not yet on disk.
     pub async fn emit(&self, event: OmegaEvent) -> OmegaEvent {
-        let _ = self.store.append(&event).await;
-        self.broadcast(&event);
-        self.push_to_wire(AgentItem::event(event.clone()));
-        event
-    }
-
-    /// Commit a turn-loop event: append to `events.jsonl`, then push onto the
-    /// wire — but **do not broadcast**.  In-turn events reach the WS via the
-    /// run-stream / wire drain, not the broadcaster, so broadcasting here
-    /// would double them.  Returns the event so the caller can keep using it
-    /// (e.g. `yield` it).  Append-before-wire preserves the disk-before-WS
-    /// ordering invariant.  This is the single event-log chokepoint for the
-    /// loop (uniform-emission Phase 2, slice b2a); until the wire is active
-    /// the push is a no-op, so it is behaviour-identical to a bare append.
-    pub async fn commit(&self, event: OmegaEvent) -> OmegaEvent {
         let _ = self.store.append(&event).await;
         self.push_to_wire(AgentItem::event(event.clone()));
         event
@@ -209,63 +150,29 @@ impl EventSink {
 
     /// Fire-and-forget emit for synchronous callers (e.g. the monitor stderr
     /// reader, whose [`MonitorSink`](omega_tools::MonitorSink) method is not
-    /// `async`).  The broadcast happens **synchronously and in-order** so the
-    /// wire reflects production order; the disk append is spawned (its
-    /// commit-time may lag, and per §17 file order is explicitly allowed to
-    /// differ from time order).
+    /// `async`).  The wire push happens **synchronously and in-order** so the
+    /// consumer sees events in production order; the disk append is spawned
+    /// (its commit-time may lag, and per §17 file order is explicitly allowed
+    /// to differ from time order for stderr).
     pub fn emit_detached(self: &Arc<Self>, event: OmegaEvent) {
-        self.broadcast(&event);
         self.push_to_wire(AgentItem::event(event.clone()));
         let sink = Arc::clone(self);
         tokio::spawn(async move {
             let _ = sink.store.append(&event).await;
         });
     }
-
-    /// Broadcast helper shared by [`Self::emit`] and [`Self::emit_detached`].
-    /// Fans the event out to every registered subscriber, in registration
-    /// order.  The lock is released before broadcasting (the snapshot is
-    /// cloned) so a subscriber can never deadlock the registry.
-    fn broadcast(&self, event: &OmegaEvent) {
-        let subscribers = self
-            .subscribers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        for subscriber in &subscribers {
-            subscriber.broadcast(event);
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     // Carve-out: these unit tests target `EventSink` directly rather than
-    // through `Agent::send_message`.  The subscriber-registry fan-out is a
-    // self-contained property of the sink; exercising multi-subscriber
-    // registration through a full agent run (which only ever installs one
-    // broadcaster) would be disproportionate setup for the logic under test.
+    // through `Agent::send_message`.  The wire ordering and signal delivery
+    // are self-contained properties of the sink; exercising them through a
+    // full agent run would be disproportionate setup for the logic under test.
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
     use omega_types::events::AgentErrorEvent;
-
-    #[derive(Default)]
-    struct Rec {
-        seen: Mutex<Vec<String>>,
-    }
-    impl Rec {
-        fn count(&self) -> usize {
-            self.seen.lock().unwrap().len()
-        }
-    }
-    impl EventBroadcaster for Rec {
-        fn broadcast(&self, event: &OmegaEvent) {
-            if let OmegaEvent::AgentError(e) = event {
-                self.seen.lock().unwrap().push(e.error.clone());
-            }
-        }
-    }
 
     fn sink() -> EventSink {
         let dir = tempfile::tempdir().unwrap();
@@ -279,49 +186,7 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn emit_fans_out_to_every_subscriber_in_order() {
-        let sink = sink();
-        let a = Arc::new(Rec::default());
-        let b = Arc::new(Rec::default());
-        sink.add_subscriber(Arc::clone(&a) as Arc<dyn EventBroadcaster>);
-        sink.add_subscriber(Arc::clone(&b) as Arc<dyn EventBroadcaster>);
-
-        sink.emit(err_event("boom")).await;
-
-        assert_eq!(a.seen.lock().unwrap().as_slice(), ["boom"]);
-        assert_eq!(b.seen.lock().unwrap().as_slice(), ["boom"]);
-    }
-
-    #[tokio::test]
-    async fn set_broadcaster_replaces_all_existing_subscribers() {
-        let sink = sink();
-        let old = Arc::new(Rec::default());
-        let new = Arc::new(Rec::default());
-        sink.add_subscriber(Arc::clone(&old) as Arc<dyn EventBroadcaster>);
-        sink.set_broadcaster(Arc::clone(&new) as Arc<dyn EventBroadcaster>);
-
-        sink.emit(err_event("x")).await;
-
-        assert_eq!(old.count(), 0, "replaced subscriber must not receive");
-        assert_eq!(new.count(), 1, "installed subscriber must receive");
-    }
-
-    #[tokio::test]
-    async fn add_subscriber_appends_without_displacing() {
-        let sink = sink();
-        let first = Arc::new(Rec::default());
-        let second = Arc::new(Rec::default());
-        sink.add_subscriber(Arc::clone(&first) as Arc<dyn EventBroadcaster>);
-        sink.add_subscriber(Arc::clone(&second) as Arc<dyn EventBroadcaster>);
-
-        sink.emit(err_event("y")).await;
-
-        assert_eq!(first.count(), 1);
-        assert_eq!(second.count(), 1);
-    }
-
-    // --- wire (uniform-emission Phase 2, slice b1) -----------------------
+    // --- wire tests -------------------------------------------------------
 
     /// Bounded wire read: a missing push fails fast (panic) instead of
     /// hanging, so a `push_to_wire`/`emit_signal` no-op mutant is CAUGHT
@@ -386,28 +251,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn commit_pushes_to_wire_without_broadcasting() {
-        let sink = sink();
-        let rec = Arc::new(Rec::default());
-        sink.add_subscriber(Arc::clone(&rec) as Arc<dyn EventBroadcaster>);
-        let mut rx = sink.take_wire_receiver();
-
-        sink.commit(err_event("c")).await;
-
-        match next(&mut rx).await {
-            AgentItem::Event(ev) => {
-                assert!(matches!(*ev, OmegaEvent::AgentError(e) if e.error == "c"));
-            }
-            other @ AgentItem::Signal(_) => panic!("expected event on wire, got {other:?}"),
-        }
-        assert_eq!(
-            rec.count(),
-            0,
-            "commit must not broadcast — in-turn events reach WS via the wire"
-        );
-    }
-
     /// The wire is a single FIFO channel, so events and signals are delivered
     /// in exactly the causal order they were emitted — the property the live
     /// UI relies on (a `Text` signal must land between its surrounding
@@ -417,12 +260,12 @@ mod tests {
         let sink = sink();
         let mut rx = sink.take_wire_receiver();
 
-        sink.commit(err_event("1")).await;
+        sink.emit(err_event("1")).await;
         sink.emit_signal(StreamSignal::Text {
             index: 0,
             text: "x".to_owned(),
         });
-        sink.commit(err_event("2")).await;
+        sink.emit(err_event("2")).await;
 
         assert!(
             matches!(next(&mut rx).await, AgentItem::Event(_)),
@@ -448,8 +291,8 @@ mod tests {
         let sink = sink();
         let mut rx = sink.take_wire_receiver();
 
-        sink.commit(err_event("a")).await;
-        sink.commit(err_event("b")).await;
+        sink.emit(err_event("a")).await;
+        sink.emit(err_event("b")).await;
         sink.close_wire();
 
         // Buffered items survive the close.

@@ -343,7 +343,6 @@ mod tests {
     //! behaviour is covered in `tests/internal.rs`.
 
     use super::*;
-    use crate::event_sink::EventBroadcaster;
     use omega_store::EventStore;
     use omega_types::events::OmegaEvent;
     use tempfile::TempDir;
@@ -354,17 +353,6 @@ mod tests {
         let store = Arc::new(EventStore::new(path));
         let sink = Arc::new(EventSink::new(store));
         (ControlHandle::new(sink), tmp)
-    }
-
-    /// Records every event the sink broadcasts to the "wire".
-    #[derive(Default)]
-    struct RecBroadcaster {
-        events: std::sync::Mutex<Vec<OmegaEvent>>,
-    }
-    impl EventBroadcaster for RecBroadcaster {
-        fn broadcast(&self, event: &OmegaEvent) {
-            self.events.lock().unwrap().push(event.clone());
-        }
     }
 
     #[test]
@@ -497,17 +485,16 @@ mod tests {
         assert_eq!(events[0]["type"], "halt_requested");
     }
 
-    /// (§17, Phase A) test (b): a single halt produces ONE `HaltRequested`
-    /// event, routed to BOTH disk and wire from a single creation — so the
-    /// disk timestamp and the wire timestamp are identical (no double stamp).
+    /// A single halt produces ONE `HaltRequested` event, routed to BOTH disk
+    /// and wire from a single creation — so the disk timestamp and the wire
+    /// timestamp are identical (no double stamp).
     #[tokio::test]
     async fn request_halt_emits_once_disk_time_equals_wire_time() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("events.jsonl");
         let store = Arc::new(EventStore::new(path));
         let sink = Arc::new(EventSink::new(Arc::clone(&store)));
-        let rec = Arc::new(RecBroadcaster::default());
-        sink.set_broadcaster(Arc::clone(&rec) as Arc<dyn EventBroadcaster>);
+        let mut rx = sink.take_wire_receiver();
         let h = ControlHandle::new(sink);
 
         h.request_halt().await;
@@ -521,20 +508,27 @@ mod tests {
         assert_eq!(disk_halts.len(), 1, "exactly one HaltRequested on disk");
 
         // Exactly one HaltRequested on the wire.
-        let wire = rec.events.lock().unwrap();
-        let wire_times: Vec<&str> = wire
-            .iter()
-            .filter_map(|e| match e {
-                OmegaEvent::HaltRequested(ev) => Some(ev.time.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(wire_times.len(), 1, "exactly one HaltRequested on the wire");
+        let wire_item = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+            .await
+            .expect("timed out waiting for wire item")
+            .expect("wire was closed");
+        let wire_time = match wire_item {
+            omega_core::AgentItem::Event(ev) => match *ev {
+                OmegaEvent::HaltRequested(ev) => ev.time,
+                other => unreachable!("unexpected event on wire: {other:?}"),
+            },
+            omega_core::AgentItem::Signal(_) => unreachable!("unexpected signal on wire"),
+        };
+        // No additional items on the wire.
+        assert!(
+            rx.try_recv().is_err(),
+            "exactly one item must be on the wire after a single halt"
+        );
 
         // Single creation ⇒ the disk and wire timestamps are identical.
         let disk_time = disk_halts[0]["time"].as_str().unwrap();
         assert_eq!(
-            disk_time, wire_times[0],
+            disk_time, wire_time,
             "disk and wire timestamps must come from one stamp"
         );
     }
