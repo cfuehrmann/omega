@@ -191,9 +191,10 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <li><strong>User action vs effect.</strong> A model/effort change is recorded at action-time
     (out-of-band, even mid-turn); its <em>effect</em> is turn-aligned — <code>drive_turn</code>
     snapshots model+effort at entry, so a mid-turn change applies next turn, never to the in-flight one.</li>
-  <li class="meta">Phase A (additive sink alongside the loop's path) is shipped; full unification of
-    emission (one emitter, observers as projections &mdash; with control kept out of the bus) is future
-    work, tracked at <a href="#future">§3 item 1</a>.</li>
+  <li class="meta">The dual emission paths have since been <strong>unified</strong>: a single
+    <code>EventSink</code> wire that all producers push to, with observers (disk, frontend, server
+    reactions) draining it as projections and control kept out of the bus &mdash; design record in
+    <code>docs/uniform-emission-spike.md</code>.</li>
 </ul>
 
 <h3>Guardrail stance &amp; teaching copy</h3>
@@ -361,7 +362,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 </table>
 <p>Every param has a shell-idiom home except <code>timeoutMs</code> (“never hang forever”): today
   that is a <code>timeout N …</code> wrapper inside the command. A first-class per-monitor <code>timeout_ms</code>
-  — the one bounded-wait affordance worth restoring — is tracked as <a href="#future">§3 item 2</a>. A
+  — the one bounded-wait affordance worth restoring — is tracked at <a href="#future">§3</a> (<code>td-2w6zub</code>). A
   blocking <code>wait_for_output</code> is <em>not</em> the way back: it holds Seam B shut (<a href="#invariants">§1</a>).</p>
 
 <h3>2.3 Where to gather evidence</h3>
@@ -381,85 +382,42 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <code>run_command</code>? The fired-count + commit-time/event-time skew already in the log is a start.</p>
 
 <h2 id="future">3. Future work (sorted by attractivity)</h2>
-<p class="meta">Ranked by (value × readiness) ÷ (cost × risk). Nothing is scheduled — this is the menu.
-  Two items that used to head this list have <strong>shipped</strong>: the blocking-wait /
-  one-shot-vs-streaming question (now <a href="#invariants">§1</a> invariants), and the
-  <strong>seam-typestate guard</strong> that lifts model-facing protocol correctness from an emergent
-  property into a structural one &mdash; a register automaton (<code>Empty</code> / <code>Idle</code> /
-  <code>AwaitingAssistant</code> / <code>AwaitingToolResults{pending}</code>) at the single
-  <code>append_record</code> context-append chokepoint, enforcing the strict
-  <code>tool_use</code>&harr;<code>tool_result</code> id bijection, with a dedicated
-  <code>ConversationInvariantViolated</code> forensic event written before a hard fail on any violation.
-  A <strong>uniform event-emission architecture</strong> (one emitter; observers as projections) has now
-  largely <strong>shipped</strong> (see item 1), superseding the former &ldquo;Phase B&rdquo;; only optional
-  cleanup (b3) remains. The evidence-deferred cluster (per-monitor timeout, auto-stop) follows.</p>
-<ol>
-  <li><span class="rank">Uniform event emission &mdash; one emitter, observers as projections.</span>
-    <em>(Supersedes the former &ldquo;event sink &mdash; Phase B&rdquo;.)</em>
-    <strong>Status &mdash; SHIPPED, cleanup remaining:</strong> implemented on <code>develop</code> as a single
-    <code>EventSink</code> wire that all producers push to; the run-stream generator is gone
-    (<code>run</code>/<code>drive_turn</code> are plain <code>async fn</code>s), and the server / CLI / test
-    harness drive the loop and drain the wire concurrently (<code>join!</code> + <code>close_wire</code>).
-    Slices <code>a</code> / <code>b1</code> / <code>b2a</code> / <code>b2b</code> landed (Rust gate + full e2e
-    browser suite green); the design record and the remaining optional cleanup (b3 &mdash; retire the now
-    no-op broadcaster machinery) live in <code>docs/uniform-emission-spike.md</code>. The rest of this item is
-    the original design rationale, preserved.
-    <strong>Target:</strong> the agent emits each event <em>once</em>, to a single emitter; every observer is a
-    <em>projection</em> that subscribes &mdash; <code>events.jsonl</code> the comprehensive, durable, ordered
-    projection; the frontend a live, best-effort one; tests subscribe a recorder. This makes
-    missing/double-emit <em>structurally</em> impossible (one emit point) and makes each projection
-    <em>independently testable</em> &mdash; notably the events&rarr;<code>events.jsonl</code> transform, which
-    today is only exercisable <em>through</em> a full agent run.
-    <strong>Today there are two emission paths:</strong> the loop's <code>event_store.append()</code> +
-    <code>yield</code> (in-turn events) and the sink's <code>emit()</code> (out-of-band: model/effort change,
-    halt, monitor stderr). The durable record is <em>not</em> the problem &mdash; <em>both</em> paths call
-    <code>append()</code>, so <code>events.jsonl</code> is already complete and correct. The split shows up in
-    the <em>live</em> observers and especially in tests: <code>collect_stream</code> sees only in-turn events,
-    <code>RecordingBroadcaster</code> only the sink's; a test wanting the whole wire picture must combine them,
-    and a stream-only test is e2e <em>for the Agent API</em> but <em>not</em> w.r.t. the durable record
-    (<code>defensive.rs</code> already shows the more-e2e style &mdash; assert against <code>events.jsonl</code>).
-    <strong>Control stays out of the bus.</strong> Only <em>events</em> are unified. The loop's drive (call LLM,
-    dispatch tools, decide next turn) remains ordinary sequential code issuing <em>effects</em>; the server's
-    UI-reaction observers (turn-state, roster, queue snapshots) remain subscribers as they already are.
-    <strong>Considered and declined:</strong> folding the loop's drive into the event stream (a one-channel
-    actor / event-sourced loop). Rejected because it would make the <em>fact/command</em> boundary a maintained
-    typing discipline rather than a <em>structural</em> one (in sequential code an effect is a function call, so
-    it physically cannot land in the log), obscure inherently-sequential turn logic, and reintroduce the
-    ordering/backpressure that the pull loop gives for free.
-    <strong>Invariants to preserve:</strong> (a) inputs are <em>peers, not projections</em> &mdash; the loop
-    folds over events &oplus; the external input queue (user / monitor), which is not derivable from emitted
-    events; (b) <em>commands are not events</em> &mdash; an effect (&ldquo;call the LLM&rdquo;) must never reach
-    <code>events.jsonl</code>, or replay/resume would re-execute it.
-    <strong>Sequencing &mdash; tests first, as the enabler:</strong> point agent tests at the unified projection
-    (a recorder / <code>events.jsonl</code>) instead of the run-stream; <em>because</em> tests then assert on the
-    projection rather than the emission mechanism, the emission internals can be unified behind them without
-    rewriting the suite. Spike the event/control split (what is fact vs effect on today's run-stream) before
-    committing &mdash; same discipline as the seam work.</li>
-  <li><span class="rank">Per-monitor <code>timeout_ms</code> (bounded wait / runaway guard).</span>
+<p class="meta">Ranked by (value &times; readiness) &divide; (cost &times; risk). Nothing is scheduled — this is the menu.
+  Items are keyed by a stable 6-character id (not a position), so references survive reordering and pruning.
+  <strong>Shipped</strong> and removed from this menu: the blocking-wait / one-shot-vs-streaming question
+  (now <a href="#invariants">§1</a> invariants); the <strong>seam-typestate guard</strong> &mdash; a register
+  automaton (<code>Empty</code> / <code>Idle</code> / <code>AwaitingAssistant</code> /
+  <code>AwaitingToolResults{pending}</code>) at the <code>append_record</code> chokepoint enforcing the
+  <code>tool_use</code>&harr;<code>tool_result</code> id bijection, with a
+  <code>ConversationInvariantViolated</code> forensic event; the <strong>uniform event-emission
+  architecture</strong> (one <code>EventSink</code> wire, observers as projections; the run-stream generator
+  gone) &mdash; design record in <code>docs/uniform-emission-spike.md</code>; and <strong>live real-time queue
+  streaming</strong> (<code>input_queue.set_on_change</code> pushes a snapshot on every mutation, sub-seam)
+  &mdash; the residual per-line badge micro-polish was dropped as low-value.</p>
+<ul class="todo" style="list-style:none; padding-left:0;">
+  <li id="td-2w6zub"><span class="rank"><code>2w6zub</code> &mdash; Per-monitor <code>timeout_ms</code> (bounded wait / runaway guard).</span>
     Deferred to evidence; the bounded-wait gap is mapped in <a href="#active">§2.2</a>. A per-monitor deadline that auto-stops a job/monitor after N
     ms &mdash; the one piece that would give back <code>wait_for_output</code>'s <code>timeoutMs</code> safety
     (&ldquo;never hang forever&rdquo;) <em>without</em> a blocking tool, and simultaneously bounds runaway monitors.
     Today the equivalent is a <code>timeout N …</code> wrapper inside the command. Lowest-risk, highest-leverage of
     the deferred cluster &mdash; add on first evidence of an unbounded wait or a stuck job.</li>
-  <li><span class="rank">Action-vs-effect completeness (schema-wide policy).</span> The log is
+  <li id="td-mmbh3n"><span class="rank"><code>mmbh3n</code> &mdash; Action-vs-effect completeness (schema-wide policy).</span> The log is
     inconsistent about recording the <em>action</em> vs the <em>effect</em>. Sharpest case: monitor
     stdout — queue time (action) is computed as <code>InputQueueItem.enqueued_at</code> for the
     live queue-viz but discarded at delivery; only <code>MonitorDeliveryEvent.time</code> (effect) is
     persisted. Inspection step: enumerate every <code>OmegaEvent</code> variant, classify action /
     effect / both, decide a documented rule. Low cost, high conceptual payoff.</li>
-  <li><span class="rank">Reconsider auto-stop of chatty monitors.</span> Dropped by explorative
+  <li id="td-b2vkq1"><span class="rank"><code>b2vkq1</code> &mdash; Reconsider auto-stop of chatty monitors.</span> Dropped by explorative
     minimalism; kept by Claude Code (confirmed: &ldquo;monitors that produce too many events are
     automatically stopped&rdquo;). Re-add on evidence of the agent leaking/flooding, or keep observing.
     See <a href="#active">§2.1</a> (Claude's auto-stop).</li>
-  <li><span class="rank">Per-tool toggle for non-UI sessions.</span> A <code>--tool</code> /
+  <li id="td-qq2pz3"><span class="rank"><code>qq2pz3</code> &mdash; Per-tool toggle for non-UI sessions.</span> A <code>--tool</code> /
     <code>--no-tool</code> CLI flag (or config) so headless/scripted sessions toggle individual tools
     without a custom preset; today only coarse <code>--preset</code> exists server-side.</li>
-  <li><span class="rank">Live queue/badge polish.</span> Sub-seam real-time queue streaming + per-line
-    badge updates. Seam-aligned already suffices — low-value polish.</li>
-  <li><span class="rank">Monitors controllable inside the Python REPL.</span> Expose the monitor queue
+  <li id="td-51pbw8"><span class="rank"><code>51pbw8</code> &mdash; Monitors controllable inside the Python REPL.</span> Expose the monitor queue
     as a Python API so REPL code reacts to events in-session. Speculative; the tool-call boundary is
     the right abstraction for now.</li>
-</ol>
+</ul>
 
 <h2 id="codefacts">4. Resume map (where things live)</h2>
 <ul>
