@@ -33,6 +33,7 @@ use omega_store::{ContextStore, EventStore};
 use omega_types::events::{LlmResponseEndedEvent, ToolCallEvent};
 use omega_types::{LlmResponseUsage, MonitorDeliveryItem, OmegaEvent, StreamSignal};
 use tempfile::TempDir;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,12 @@ pub struct MockProvider {
     /// Captured `LlmRequest`s (one per call) so tests can assert on the
     /// payload the agent sent.
     pub captured_requests: Mutex<Vec<LlmRequest>>,
+    /// One-shot step gate. If armed (`gate_next`), the NEXT `stream()` call
+    /// parks until the `Notify` is signalled before yielding any items. This
+    /// is a deterministic pause point *after* `reset_for_turn` and *before*
+    /// the tool/halt seam — letting a test set a control flag (e.g. halt)
+    /// race-free under the autonomous (post-wire) run loop.
+    gate: Mutex<Option<Arc<Notify>>>,
 }
 
 impl MockProvider {
@@ -62,7 +69,17 @@ impl MockProvider {
         Self {
             responses: Mutex::new(VecDeque::new()),
             captured_requests: Mutex::new(Vec::new()),
+            gate: Mutex::new(None),
         }
+    }
+
+    /// Arm a one-shot gate: the next `stream()` call parks until the returned
+    /// [`Notify`] is signalled. Lets a test pause the loop at the LLM call
+    /// (turn running, seam not yet reached) to set halt/abort deterministically.
+    pub fn gate_next(&self) -> Arc<Notify> {
+        let n = Arc::new(Notify::new());
+        *self.gate.lock().expect("mock gate mutex poisoned") = Some(Arc::clone(&n));
+        n
     }
 
     /// Enqueue one transcript that will be replayed on the next
@@ -97,8 +114,15 @@ impl Provider for MockProvider {
             .expect("mock responses mutex poisoned")
             .pop_front()
             .unwrap_or_default();
-        let stream: BoxStream<'static, Result<AgentItem, LlmError>> =
-            Box::pin(futures::stream::iter(items));
+        let gate = self.gate.lock().expect("mock gate mutex poisoned").take();
+        let stream: BoxStream<'static, Result<AgentItem, LlmError>> = Box::pin(stream! {
+            if let Some(g) = gate {
+                g.notified().await;
+            }
+            for item in items {
+                yield item;
+            }
+        });
         stream
     }
 }

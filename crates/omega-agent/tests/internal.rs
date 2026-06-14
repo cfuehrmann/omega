@@ -3289,17 +3289,24 @@ async fn halt_parks_at_seam_then_queued_message_resumes_with_injection() {
     let queue = InputQueue::new();
     let cancel = CancellationToken::new();
     let mut stream = common::run_stream(&mut agent, queue.clone(), cancel.clone());
+    // Pause the loop at block 1's LLM call — after `reset_for_turn`, before the
+    // tool/halt seam — so the halt is requested race-free. Under the autonomous
+    // (post-wire) loop there is no pull-backpressure, so requesting halt after
+    // observing ToolResult races the seam check and loses under load; and a
+    // pre-turn halt is wiped by `reset_for_turn`. The gate is the only
+    // deterministic window: the turn is running (flag sticks) and the loop
+    // cannot reach the seam until released.
+    let gate = provider.gate_next();
     queue.push(InputItem::Human {
         content: "go".to_owned(),
     });
-
-    // Drive to the tool result (the last yield before the halt seam). The
-    // loop is now suspended at that yield, so requesting halt here is race-
-    // free: the seam check runs on the very next poll.
-    let _ = pull_until_tag(&mut stream, "ToolResult", 5000).await;
+    let _ = pull_until_tag(&mut stream, "LlmCall", 5000).await;
     controls.request_halt().await;
+    gate.notify_one();
 
-    // Next poll: the seam observes the halt request and parks.
+    // Block 1 completes (tool → tool result); the seam then observes the halt
+    // and parks.
+    let _ = pull_until_tag(&mut stream, "ToolResult", 5000).await;
     let seen = pull_until_tag(&mut stream, "TurnHalted", 5000).await;
     assert!(
         !seen.contains(&"LlmCall"),
@@ -3352,12 +3359,17 @@ async fn halt_parks_then_explicit_resume_continues_with_no_input() {
     let queue = InputQueue::new();
     let cancel = CancellationToken::new();
     let mut stream = common::run_stream(&mut agent, queue.clone(), cancel.clone());
+    // Gate at block 1's LLM call so the halt is requested race-free (see the
+    // note in halt_parks_at_seam_then_queued_message_resumes_with_injection).
+    let gate = provider.gate_next();
     queue.push(InputItem::Human {
         content: "go".to_owned(),
     });
+    let _ = pull_until_tag(&mut stream, "LlmCall", 5000).await;
+    controls.request_halt().await;
+    gate.notify_one();
 
     let _ = pull_until_tag(&mut stream, "ToolResult", 5000).await;
-    controls.request_halt().await;
     let _ = pull_until_tag(&mut stream, "TurnHalted", 5000).await;
     assert!(
         matches!(pull(&mut stream, 500).await, Pull::Parked),
@@ -3398,12 +3410,17 @@ async fn abort_while_halted_interrupts_block_and_returns_to_park() {
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
     let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
+    // Gate at block 1's LLM call so the halt is requested race-free (see the
+    // note in halt_parks_at_seam_then_queued_message_resumes_with_injection).
+    let gate = provider.gate_next();
     queue.push(InputItem::Human {
         content: "go".to_owned(),
     });
+    let _ = pull_until_tag(&mut stream, "LlmCall", 5000).await;
+    controls.request_halt().await;
+    gate.notify_one();
 
     let _ = pull_until_tag(&mut stream, "ToolResult", 5000).await;
-    controls.request_halt().await;
     let _ = pull_until_tag(&mut stream, "TurnHalted", 5000).await;
     assert!(
         matches!(pull(&mut stream, 500).await, Pull::Parked),
