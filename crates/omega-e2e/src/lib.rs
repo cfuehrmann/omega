@@ -713,14 +713,29 @@ impl TestHarness {
     /// appears as an intermediate step), and wait for
     /// `<main data-active-session-dir>` to flip to a new value.
     pub async fn new_session(&self) -> Result<String> {
+        const CREATE: &str = "[data-testid='leptos-tool-create']";
         let before = self.active_dir().await.unwrap_or_default();
         self.click("[data-testid='leptos-session-new']").await?;
         // The new session button now opens a tool-selection panel.
         // Wait for the Create button to appear, then click it.
-        self.wait_for_selector("[data-testid='leptos-tool-create']", DEFAULT_TIMEOUT)
-            .await?;
-        self.click("[data-testid='leptos-tool-create']").await?;
+        self.wait_for_selector(CREATE, DEFAULT_TIMEOUT).await?;
+        self.click(CREATE).await?;
+
+        // Idempotent create. Under heavy machine load (chrome's renderer
+        // starved by CPU + memory pressure) the first Create click can
+        // land before Leptos has the freshly-mounted button wired and
+        // laid out, so it is a silent no-op: the `Reset` frame is never
+        // sent, the session is never created, and `active_dir` never
+        // flips. A *successful* Create unmounts the panel (the Create
+        // button detaches synchronously, before the WS round-trip), so
+        // while the button is still present the session has not been
+        // created yet — re-issue the click. This is idempotent (it can
+        // never double-create) precisely because a click that registers
+        // removes the button, gating out all further retries. The
+        // deadline stays a real failure boundary: if the session
+        // genuinely never gets created we still bail loudly.
         let deadline = Instant::now() + DEFAULT_TIMEOUT;
+        let mut next_retry = Instant::now() + Duration::from_millis(400);
         loop {
             if let Ok(now) = self.active_dir().await
                 && now != before
@@ -730,6 +745,20 @@ impl TestHarness {
             }
             if Instant::now() >= deadline {
                 bail!("new_session: active dir did not change from {before:?}");
+            }
+            // Re-click only while the panel is still open (button still
+            // in the DOM), and only after a sub-interval without
+            // progress, so a click that simply hasn't round-tripped yet
+            // isn't needlessly repeated.
+            if Instant::now() >= next_retry {
+                let panel_open: bool = self
+                    .eval::<bool>(&format!("!!document.querySelector({})", json_str(CREATE)))
+                    .await
+                    .unwrap_or(false);
+                if panel_open {
+                    let _ = self.click(CREATE).await;
+                }
+                next_retry = Instant::now() + Duration::from_millis(400);
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
