@@ -53,16 +53,20 @@ pub trait EventBroadcaster: Send + Sync {
     fn broadcast(&self, event: &OmegaEvent);
 }
 
-/// Appends an event to `events.jsonl` and broadcasts it to the current WS,
-/// from any caller at any time.
+/// Appends an event to `events.jsonl` and broadcasts it to every registered
+/// subscriber, from any caller at any time.
 ///
 /// Holds an [`Arc<EventStore>`] (per-line-atomic, safe under concurrent
-/// callers) plus a swappable [`EventBroadcaster`].  No locking enforces time
-/// order: each event is stamped at occurrence by its caller and committed
-/// whenever the sink gets to it.
+/// callers) plus a **registry** of [`EventBroadcaster`] subscribers.  Today
+/// the server installs exactly one (the WS broadcaster); the registry is the
+/// groundwork for "observers as projections" (uniform-emission Phase 2,
+/// `docs/uniform-emission-spike.md`), where the WS forwarder, the server's
+/// control-reactions, and a test recorder all subscribe to the same emit.
+/// No locking enforces time order: each event is stamped at occurrence by its
+/// caller and committed whenever the sink gets to it.
 pub struct EventSink {
     store: Arc<EventStore>,
-    broadcaster: Mutex<Option<Arc<dyn EventBroadcaster>>>,
+    subscribers: Mutex<Vec<Arc<dyn EventBroadcaster>>>,
 }
 
 impl std::fmt::Debug for EventSink {
@@ -72,9 +76,9 @@ impl std::fmt::Debug for EventSink {
     // catch it — skip rather than assert on debug text.
     #[mutants::skip]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let has_broadcaster = self.broadcaster.lock().is_ok_and(|g| g.is_some());
+        let subscriber_count = self.subscribers.lock().map_or(0, |g| g.len());
         f.debug_struct("EventSink")
-            .field("has_broadcaster", &has_broadcaster)
+            .field("subscriber_count", &subscriber_count)
             .finish_non_exhaustive()
     }
 }
@@ -85,17 +89,32 @@ impl EventSink {
     pub fn new(store: Arc<EventStore>) -> Self {
         Self {
             store,
-            broadcaster: Mutex::new(None),
+            subscribers: Mutex::new(Vec::new()),
         }
     }
 
-    /// Install (or replace) the WS broadcaster.  Called by the server once
-    /// per session; the broadcaster itself resolves the live `ws_tx`.
+    /// Install the WS broadcaster as the **sole** subscriber, replacing any
+    /// existing ones.  Called by the server once per session; the broadcaster
+    /// itself resolves the live `ws_tx`.  (Replace semantics preserve the
+    /// historical single-broadcaster behaviour; use [`Self::add_subscriber`]
+    /// to register additional observers without displacing this one.)
     pub fn set_broadcaster(&self, broadcaster: Arc<dyn EventBroadcaster>) {
-        *self
-            .broadcaster
+        let mut subs = self
+            .subscribers
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(broadcaster);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        subs.clear();
+        subs.push(broadcaster);
+    }
+
+    /// Register an additional subscriber without displacing existing ones.
+    /// Every registered subscriber receives every emitted event, in
+    /// registration order, on each [`Self::emit`] / [`Self::emit_detached`].
+    pub fn add_subscriber(&self, subscriber: Arc<dyn EventBroadcaster>) {
+        self.subscribers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(subscriber);
     }
 
     /// Borrow the backing store (used by handles that need to read the log
@@ -131,14 +150,101 @@ impl EventSink {
     }
 
     /// Broadcast helper shared by [`Self::emit`] and [`Self::emit_detached`].
+    /// Fans the event out to every registered subscriber, in registration
+    /// order.  The lock is released before broadcasting (the snapshot is
+    /// cloned) so a subscriber can never deadlock the registry.
     fn broadcast(&self, event: &OmegaEvent) {
-        let broadcaster = self
-            .broadcaster
+        let subscribers = self
+            .subscribers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        if let Some(b) = broadcaster {
-            b.broadcast(event);
+        for subscriber in &subscribers {
+            subscriber.broadcast(event);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Carve-out: these unit tests target `EventSink` directly rather than
+    // through `Agent::send_message`.  The subscriber-registry fan-out is a
+    // self-contained property of the sink; exercising multi-subscriber
+    // registration through a full agent run (which only ever installs one
+    // broadcaster) would be disproportionate setup for the logic under test.
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use omega_types::events::AgentErrorEvent;
+
+    #[derive(Default)]
+    struct Rec {
+        seen: Mutex<Vec<String>>,
+    }
+    impl Rec {
+        fn count(&self) -> usize {
+            self.seen.lock().unwrap().len()
+        }
+    }
+    impl EventBroadcaster for Rec {
+        fn broadcast(&self, event: &OmegaEvent) {
+            if let OmegaEvent::AgentError(e) = event {
+                self.seen.lock().unwrap().push(e.error.clone());
+            }
+        }
+    }
+
+    fn sink() -> EventSink {
+        let dir = tempfile::tempdir().unwrap();
+        EventSink::new(Arc::new(EventStore::new(dir.path().join("events.jsonl"))))
+    }
+
+    fn err_event(msg: &str) -> OmegaEvent {
+        OmegaEvent::AgentError(AgentErrorEvent {
+            time: "2026-01-01T00:00:00.000Z".to_owned(),
+            error: msg.to_owned(),
+        })
+    }
+
+    #[tokio::test]
+    async fn emit_fans_out_to_every_subscriber_in_order() {
+        let sink = sink();
+        let a = Arc::new(Rec::default());
+        let b = Arc::new(Rec::default());
+        sink.add_subscriber(Arc::clone(&a) as Arc<dyn EventBroadcaster>);
+        sink.add_subscriber(Arc::clone(&b) as Arc<dyn EventBroadcaster>);
+
+        sink.emit(err_event("boom")).await;
+
+        assert_eq!(a.seen.lock().unwrap().as_slice(), ["boom"]);
+        assert_eq!(b.seen.lock().unwrap().as_slice(), ["boom"]);
+    }
+
+    #[tokio::test]
+    async fn set_broadcaster_replaces_all_existing_subscribers() {
+        let sink = sink();
+        let old = Arc::new(Rec::default());
+        let new = Arc::new(Rec::default());
+        sink.add_subscriber(Arc::clone(&old) as Arc<dyn EventBroadcaster>);
+        sink.set_broadcaster(Arc::clone(&new) as Arc<dyn EventBroadcaster>);
+
+        sink.emit(err_event("x")).await;
+
+        assert_eq!(old.count(), 0, "replaced subscriber must not receive");
+        assert_eq!(new.count(), 1, "installed subscriber must receive");
+    }
+
+    #[tokio::test]
+    async fn add_subscriber_appends_without_displacing() {
+        let sink = sink();
+        let first = Arc::new(Rec::default());
+        let second = Arc::new(Rec::default());
+        sink.add_subscriber(Arc::clone(&first) as Arc<dyn EventBroadcaster>);
+        sink.add_subscriber(Arc::clone(&second) as Arc<dyn EventBroadcaster>);
+
+        sink.emit(err_event("y")).await;
+
+        assert_eq!(first.count(), 1);
+        assert_eq!(second.count(), 1);
     }
 }
