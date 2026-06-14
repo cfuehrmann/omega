@@ -150,6 +150,14 @@ impl Agent {
         })
     }
 
+    /// Commit a turn-loop event through the single event-log chokepoint:
+    /// append to `events.jsonl` and push onto the wire (no broadcast — in-turn
+    /// events reach the WS via the run-stream / wire drain).  Returns the
+    /// event so the caller can `yield` it.  Uniform-emission Phase 2 (b2a).
+    async fn commit_event(&self, event: OmegaEvent) -> OmegaEvent {
+        self.event_sink.commit(event).await
+    }
+
     /// Drive one coding turn (one Gather→Process block of [`Self::run`]).
     ///
     /// Returns a stream of every event/signal produced by the agentic
@@ -243,14 +251,12 @@ impl Agent {
                             time: now_iso(),
                             error: format!("context_store append failed: {e}"),
                         });
-                        let _ = self.event_store.append(&ev).await;
-                        yield AgentItem::event(ev);
+                        yield AgentItem::event(self.commit_event(ev).await);
                         let ti = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                             time: now_iso(),
                             reason: Some(InterruptReason::Error),
                         });
-                        let _ = self.event_store.append(&ti).await;
-                        yield AgentItem::event(ti);
+                        yield AgentItem::event(self.commit_event(ti).await);
                         return;
                     }
                 }
@@ -274,8 +280,7 @@ impl Agent {
                             time: now_iso(),
                             error: format!("context_store append failed: {e}"),
                         });
-                        let _ = self.event_store.append(&ev).await;
-                        yield AgentItem::event(ev);
+                        yield AgentItem::event(self.commit_event(ev).await);
                         return;
                     }
                 }
@@ -299,8 +304,7 @@ impl Agent {
                         time: now_iso(),
                         reason: Some(InterruptReason::Aborted),
                     });
-                    let _ = self.event_store.append(&ev).await;
-                    yield AgentItem::event(ev);
+                    yield AgentItem::event(self.commit_event(ev).await);
                     return;
                 }
 
@@ -351,8 +355,7 @@ impl Agent {
                     request_bytes,
                     request_summary: Some(elide_request(&request)),
                 });
-                let _ = self.event_store.append(&call_ev).await;
-                yield AgentItem::event(call_ev);
+                yield AgentItem::event(self.commit_event(call_ev).await);
 
                 // --- Drain the provider stream -----------------------------
                 let mut provider_stream = self.provider.stream(request);
@@ -393,8 +396,7 @@ impl Agent {
                         let started = OmegaEvent::LlmResponseStarted(
                             LlmResponseStartedEvent { time: now_iso() },
                         );
-                        let _ = self.event_store.append(&started).await;
-                        yield AgentItem::event(started);
+                        yield AgentItem::event(self.commit_event(started).await);
                     }
 
                     match item {
@@ -497,8 +499,7 @@ impl Agent {
                                 }
                             };
                             if let Some(be) = block_event {
-                                let _ = self.event_store.append(&be).await;
-                                yield AgentItem::event(be);
+                                yield AgentItem::event(self.commit_event(be).await);
                             }
                             if forward {
                                 yield AgentItem::Signal(sig);
@@ -558,8 +559,7 @@ impl Agent {
                                         for closer in make_abandonment_closers(
                                             std::mem::take(&mut slots),
                                         ) {
-                                            let _ = self.event_store.append(&closer).await;
-                                            yield AgentItem::event(closer);
+                                            yield AgentItem::event(self.commit_event(closer).await);
                                         }
                                     }
                                     // SCHEMA-8 Phase 3 commit 3b: the
@@ -567,15 +567,13 @@ impl Agent {
                                     // `LlmResponseStarted` opener.
                                     response_started = false;
                                     let ev = OmegaEvent::LlmRetry(retry);
-                                    let _ = self.event_store.append(&ev).await;
-                                    yield AgentItem::event(ev);
+                                    yield AgentItem::event(self.commit_event(ev).await);
                                 }
 
                                 other => {
                                     // Forward unmodified — provider may emit
                                     // future event types we don't yet model.
-                                    let _ = self.event_store.append(&other).await;
-                                    yield AgentItem::event(other);
+                                    yield AgentItem::event(self.commit_event(other).await);
                                 }
                             }
                         }
@@ -593,16 +591,14 @@ impl Agent {
                     // resetting because we `return` immediately.
                     if response_started {
                         for closer in make_abandonment_closers(std::mem::take(&mut slots)) {
-                            let _ = self.event_store.append(&closer).await;
-                            yield AgentItem::event(closer);
+                            yield AgentItem::event(self.commit_event(closer).await);
                         }
                     }
                     let ev = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                         time: now_iso(),
                         reason: Some(InterruptReason::Aborted),
                     });
-                    let _ = self.event_store.append(&ev).await;
-                    yield AgentItem::event(ev);
+                    yield AgentItem::event(self.commit_event(ev).await);
                     return;
                 }
 
@@ -617,8 +613,7 @@ impl Agent {
                     // `response_started` happens in this scope.
                     if response_started {
                         for closer in make_abandonment_closers(std::mem::take(&mut slots)) {
-                            let _ = self.event_store.append(&closer).await;
-                            yield AgentItem::event(closer);
+                            yield AgentItem::event(self.commit_event(closer).await);
                         }
                     }
                     let llm_err_ev = OmegaEvent::LlmError(LlmErrorEvent {
@@ -627,8 +622,7 @@ impl Agent {
                         error: err.to_string(),
                         http_status: err.status(),
                     });
-                    let _ = self.event_store.append(&llm_err_ev).await;
-                    yield AgentItem::event(llm_err_ev);
+                    yield AgentItem::event(self.commit_event(llm_err_ev).await);
 
                     if is_invalid_tool_json(&err)
                         && feedback_attempts < INVALID_TOOL_JSON_FEEDBACK_CAP
@@ -649,8 +643,7 @@ impl Agent {
                                     time: now_iso(),
                                     error: format!("context_store append failed: {e}"),
                                 });
-                                let _ = self.event_store.append(&ev).await;
-                                yield AgentItem::event(ev);
+                                yield AgentItem::event(self.commit_event(ev).await);
                                 return;
                             }
                         }
@@ -668,14 +661,12 @@ impl Agent {
                         time: now_iso(),
                         error: agent_msg,
                     });
-                    let _ = self.event_store.append(&ae).await;
-                    yield AgentItem::event(ae);
+                    yield AgentItem::event(self.commit_event(ae).await);
                     let ti = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                         time: now_iso(),
                         reason: Some(InterruptReason::Error),
                     });
-                    let _ = self.event_store.append(&ti).await;
-                    yield AgentItem::event(ti);
+                    yield AgentItem::event(self.commit_event(ti).await);
                     return;
                 }
 
@@ -685,14 +676,12 @@ impl Agent {
                         time: now_iso(),
                         error: "Provider stream ended without LlmResponseEnded".to_owned(),
                     });
-                    let _ = self.event_store.append(&ae).await;
-                    yield AgentItem::event(ae);
+                    yield AgentItem::event(self.commit_event(ae).await);
                     let ti = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                         time: now_iso(),
                         reason: Some(InterruptReason::Error),
                     });
-                    let _ = self.event_store.append(&ti).await;
-                    yield AgentItem::event(ti);
+                    yield AgentItem::event(self.commit_event(ti).await);
                     return;
                 };
 
@@ -803,12 +792,10 @@ impl Agent {
                             tokens_after,
                             summary_tokens,
                         });
-                        let _ = self.event_store.append(&cc_ev).await;
-                        yield AgentItem::event(cc_ev);
+                        yield AgentItem::event(self.commit_event(cc_ev).await);
                     }
                     let ended_ev = OmegaEvent::LlmResponseEnded(lr);
-                    let _ = self.event_store.append(&ended_ev).await;
-                    yield AgentItem::event(ended_ev);
+                    yield AgentItem::event(self.commit_event(ended_ev).await);
 
                     if empty_response_count > EMPTY_RESPONSE_CAP {
                         let ae = OmegaEvent::AgentError(AgentErrorEvent {
@@ -819,14 +806,12 @@ impl Agent {
                                  turn to avoid an infinite loop."
                             ),
                         });
-                        let _ = self.event_store.append(&ae).await;
-                        yield AgentItem::event(ae);
+                        yield AgentItem::event(self.commit_event(ae).await);
                         let ti = OmegaEvent::TurnInterrupted(TurnInterruptedEvent {
                             time: now_iso(),
                             reason: Some(InterruptReason::Error),
                         });
-                        let _ = self.event_store.append(&ti).await;
-                        yield AgentItem::event(ti);
+                        yield AgentItem::event(self.commit_event(ti).await);
                         return;
                     }
 
@@ -850,8 +835,7 @@ impl Agent {
                                 time: now_iso(),
                                 error: format!("context_store append failed: {e}"),
                             });
-                            let _ = self.event_store.append(&ev).await;
-                            yield AgentItem::event(ev);
+                            yield AgentItem::event(self.commit_event(ev).await);
                             return;
                         }
                     }
@@ -868,8 +852,7 @@ impl Agent {
                             time: now_iso(),
                             error: format!("context_store append failed: {e}"),
                         });
-                        let _ = self.event_store.append(&ev).await;
-                        yield AgentItem::event(ev);
+                        yield AgentItem::event(self.commit_event(ev).await);
                         return;
                     }
                 };
@@ -891,12 +874,10 @@ impl Agent {
                         tokens_after,
                         summary_tokens,
                     });
-                    let _ = self.event_store.append(&cc_ev).await;
-                    yield AgentItem::event(cc_ev);
+                    yield AgentItem::event(self.commit_event(cc_ev).await);
                 }
                 let ended_ev = OmegaEvent::LlmResponseEnded(lr);
-                let _ = self.event_store.append(&ended_ev).await;
-                yield AgentItem::event(ended_ev);
+                yield AgentItem::event(self.commit_event(ended_ev).await);
 
                 // --- Tool dispatch ----------------------------------------
                 if stop_reason == "tool_use" && !combined_tool_uses.is_empty() {
@@ -911,8 +892,7 @@ impl Agent {
                             input: input.clone(),
                             context_hash: assistant_hash.as_ref().to_owned(),
                         });
-                        let _ = self.event_store.append(&tc).await;
-                        yield AgentItem::event(tc);
+                        yield AgentItem::event(self.commit_event(tc).await);
                     }
 
                     // Concurrent dispatch — clone the call descriptor
@@ -983,8 +963,7 @@ impl Agent {
                         // before the ToolResultEvent so the log tells the
                         // full story in chronological order.
                         for ev in &res.extra_events {
-                            let _ = self.event_store.append(ev).await;
-                            yield AgentItem::event(ev.clone());
+                            yield AgentItem::event(self.commit_event(ev.clone()).await);
                         }
                         let duration_ms = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
                         let tr = OmegaEvent::ToolResult(ToolResultEvent {
@@ -995,8 +974,7 @@ impl Agent {
                             duration_ms,
                             output: res.content.clone(),
                         });
-                        let _ = self.event_store.append(&tr).await;
-                        yield AgentItem::event(tr);
+                        yield AgentItem::event(self.commit_event(tr).await);
                         by_call_id.insert(tool_call_id, (res.content, res.is_error));
                     }
 
@@ -1029,8 +1007,7 @@ impl Agent {
                             time: now_iso(),
                             error: format!("context_store append failed: {e}"),
                         });
-                        let _ = self.event_store.append(&ev).await;
-                        yield AgentItem::event(ev);
+                        yield AgentItem::event(self.commit_event(ev).await);
                         return;
                     }
 
@@ -1051,8 +1028,7 @@ impl Agent {
                         let halted_ev = OmegaEvent::TurnHalted(TurnHaltedEvent {
                             time: now_iso(),
                         });
-                        let _ = self.event_store.append(&halted_ev).await;
-                        yield AgentItem::event(halted_ev);
+                        yield AgentItem::event(self.commit_event(halted_ev).await);
 
                         // Park.  `enter/exit_halt_wait` flips `suspended` so
                         // request_resume / request_abort know to fire a wake.
@@ -1087,8 +1063,7 @@ impl Agent {
                                     reason: Some(InterruptReason::Aborted),
                                 },
                             );
-                            let _ = self.event_store.append(&ti).await;
-                            yield AgentItem::event(ti);
+                            yield AgentItem::event(self.commit_event(ti).await);
                             return;
                         }
 
@@ -1108,8 +1083,7 @@ impl Agent {
                                             ),
                                         },
                                     );
-                                    let _ = self.event_store.append(&ev).await;
-                                    yield AgentItem::event(ev);
+                                    yield AgentItem::event(self.commit_event(ev).await);
                                     return;
                                 }
                             }
@@ -1118,8 +1092,7 @@ impl Agent {
                         let resumed_ev = OmegaEvent::TurnResumed(TurnResumedEvent {
                             time: now_iso(),
                         });
-                        let _ = self.event_store.append(&resumed_ev).await;
-                        yield AgentItem::event(resumed_ev);
+                        yield AgentItem::event(self.commit_event(resumed_ev).await);
                     }
 
                     // ---- Seam B (§3/§15 U2): mid-cycle inbox drain. ------
@@ -1141,8 +1114,7 @@ impl Agent {
                                     time: now_iso(),
                                     error: format!("context_store append failed: {e}"),
                                 });
-                                let _ = self.event_store.append(&ev).await;
-                                yield AgentItem::event(ev);
+                                yield AgentItem::event(self.commit_event(ev).await);
                                 seam_b_failed = true;
                                 break;
                             }
@@ -1178,8 +1150,7 @@ impl Agent {
                     time: now_iso(),
                     metrics,
                 });
-                let _ = self.event_store.append(&te).await;
-                yield AgentItem::event(te);
+                yield AgentItem::event(self.commit_event(te).await);
 
                 // ---- Seam A (§3/§4/§15 U1): the turn ends here.  The former
                 // park loop (monitor drain + select over monitor-queue /

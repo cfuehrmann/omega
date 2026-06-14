@@ -181,6 +181,20 @@ impl EventSink {
         event
     }
 
+    /// Commit a turn-loop event: append to `events.jsonl`, then push onto the
+    /// wire — but **do not broadcast**.  In-turn events reach the WS via the
+    /// run-stream / wire drain, not the broadcaster, so broadcasting here
+    /// would double them.  Returns the event so the caller can keep using it
+    /// (e.g. `yield` it).  Append-before-wire preserves the disk-before-WS
+    /// ordering invariant.  This is the single event-log chokepoint for the
+    /// loop (uniform-emission Phase 2, slice b2a); until the wire is active
+    /// the push is a no-op, so it is behaviour-identical to a bare append.
+    pub async fn commit(&self, event: OmegaEvent) -> OmegaEvent {
+        let _ = self.store.append(&event).await;
+        self.push_to_wire(AgentItem::event(event.clone()));
+        event
+    }
+
     /// Fire-and-forget emit for synchronous callers (e.g. the monitor stderr
     /// reader, whose [`MonitorSink`](omega_tools::MonitorSink) method is not
     /// `async`).  The broadcast happens **synchronously and in-order** so the
@@ -357,6 +371,28 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "the pre-activation emit must not be buffered on the wire"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_pushes_to_wire_without_broadcasting() {
+        let sink = sink();
+        let rec = Arc::new(Rec::default());
+        sink.add_subscriber(Arc::clone(&rec) as Arc<dyn EventBroadcaster>);
+        let mut rx = sink.take_wire_receiver();
+
+        sink.commit(err_event("c")).await;
+
+        match next(&mut rx).await {
+            AgentItem::Event(ev) => {
+                assert!(matches!(*ev, OmegaEvent::AgentError(e) if e.error == "c"));
+            }
+            other @ AgentItem::Signal(_) => panic!("expected event on wire, got {other:?}"),
+        }
+        assert_eq!(
+            rec.count(),
+            0,
+            "commit must not broadcast — in-turn events reach WS via the wire"
         );
     }
 }
