@@ -191,8 +191,9 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <li><strong>User action vs effect.</strong> A model/effort change is recorded at action-time
     (out-of-band, even mid-turn); its <em>effect</em> is turn-aligned — <code>drive_turn</code>
     snapshots model+effort at entry, so a mid-turn change applies next turn, never to the in-flight one.</li>
-  <li class="meta">Phase A (additive sink alongside the loop's path) is shipped; Phase B (sink as the
-    sole emission path) is future work.</li>
+  <li class="meta">Phase A (additive sink alongside the loop's path) is shipped; full unification of
+    emission (one emitter, observers as projections &mdash; with control kept out of the bus) is future
+    work, tracked at <a href="#future">§3 item 1</a>.</li>
 </ul>
 
 <h3>Guardrail stance &amp; teaching copy</h3>
@@ -389,25 +390,43 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <code>append_record</code> context-append chokepoint, enforcing the strict
   <code>tool_use</code>&harr;<code>tool_result</code> id bijection, with a dedicated
   <code>ConversationInvariantViolated</code> forensic event written before a hard fail on any violation.
-  The event-sink / observability question now leads what remains &mdash; it concerns what the
-  <em>human</em> watches, not what the <em>model</em> sees &mdash; and is parked pending a fuller grasp of
-  its mechanics. The evidence-deferred cluster (per-monitor timeout, auto-stop) follows.</p>
+  A <strong>uniform event-emission architecture</strong> (one emitter; observers as projections) now leads
+  what remains, superseding the former &ldquo;Phase B&rdquo;. The evidence-deferred cluster (per-monitor
+  timeout, auto-stop) follows.</p>
 <ol>
-  <li><span class="rank">Event sink &amp; observability — Phase B (full unification).</span>
-    <em>Scope note: distinct from the shipped seam-typestate work.</em> A/B concerns the
-    <strong>observability</strong> path (<code>events.jsonl</code> + the WebSocket the human watches),
-    <em>not</em> the model-facing context (<code>context.jsonl</code>); the sink never writes the context, so
-    this is orthogonal to that protocol-correctness work. Phase B = make the sink the <em>sole</em> emission path: the loop emits via
-    <code>sink.emit()</code> too; WS/tests observe the sink, not the run-stream. Cures the &ldquo;emission
-    coupled to the loop&rdquo; smell and makes the no-double-emit guarantee structural rather than a maintained
-    invariant. <strong>But not a strict improvement:</strong> the returned run-stream is also the server's
-    control backbone (turn-state, roster/queue pushes) and is what tests collect as a turn-scoped synchronous
-    list; Phase B trades that ergonomic away and splits the server's reaction path. Main migration cost = how
-    the test harness observes events (<code>Agent::send_message</code> collects the returned stream).
-    Deliberately gated on whether Phase A earns its keep.
-    <strong>Owner note:</strong> the observability mechanics &mdash; how A/B touches <code>events.jsonl</code> +
-    WS, and why that is orthogonal to model-facing correctness &mdash; are <em>not yet fully understood</em>;
-    get the explanation from that angle before acting.</li>
+  <li><span class="rank">Uniform event emission &mdash; one emitter, observers as projections.</span>
+    <em>(Supersedes the former &ldquo;event sink &mdash; Phase B&rdquo;.)</em>
+    <strong>Target:</strong> the agent emits each event <em>once</em>, to a single emitter; every observer is a
+    <em>projection</em> that subscribes &mdash; <code>events.jsonl</code> the comprehensive, durable, ordered
+    projection; the frontend a live, best-effort one; tests subscribe a recorder. This makes
+    missing/double-emit <em>structurally</em> impossible (one emit point) and makes each projection
+    <em>independently testable</em> &mdash; notably the events&rarr;<code>events.jsonl</code> transform, which
+    today is only exercisable <em>through</em> a full agent run.
+    <strong>Today there are two emission paths:</strong> the loop's <code>event_store.append()</code> +
+    <code>yield</code> (in-turn events) and the sink's <code>emit()</code> (out-of-band: model/effort change,
+    halt, monitor stderr). The durable record is <em>not</em> the problem &mdash; <em>both</em> paths call
+    <code>append()</code>, so <code>events.jsonl</code> is already complete and correct. The split shows up in
+    the <em>live</em> observers and especially in tests: <code>collect_stream</code> sees only in-turn events,
+    <code>RecordingBroadcaster</code> only the sink's; a test wanting the whole wire picture must combine them,
+    and a stream-only test is e2e <em>for the Agent API</em> but <em>not</em> w.r.t. the durable record
+    (<code>defensive.rs</code> already shows the more-e2e style &mdash; assert against <code>events.jsonl</code>).
+    <strong>Control stays out of the bus.</strong> Only <em>events</em> are unified. The loop's drive (call LLM,
+    dispatch tools, decide next turn) remains ordinary sequential code issuing <em>effects</em>; the server's
+    UI-reaction observers (turn-state, roster, queue snapshots) remain subscribers as they already are.
+    <strong>Considered and declined:</strong> folding the loop's drive into the event stream (a one-channel
+    actor / event-sourced loop). Rejected because it would make the <em>fact/command</em> boundary a maintained
+    typing discipline rather than a <em>structural</em> one (in sequential code an effect is a function call, so
+    it physically cannot land in the log), obscure inherently-sequential turn logic, and reintroduce the
+    ordering/backpressure that the pull loop gives for free.
+    <strong>Invariants to preserve:</strong> (a) inputs are <em>peers, not projections</em> &mdash; the loop
+    folds over events &oplus; the external input queue (user / monitor), which is not derivable from emitted
+    events; (b) <em>commands are not events</em> &mdash; an effect (&ldquo;call the LLM&rdquo;) must never reach
+    <code>events.jsonl</code>, or replay/resume would re-execute it.
+    <strong>Sequencing &mdash; tests first, as the enabler:</strong> point agent tests at the unified projection
+    (a recorder / <code>events.jsonl</code>) instead of the run-stream; <em>because</em> tests then assert on the
+    projection rather than the emission mechanism, the emission internals can be unified behind them without
+    rewriting the suite. Spike the event/control split (what is fact vs effect on today's run-stream) before
+    committing &mdash; same discipline as the seam work.</li>
   <li><span class="rank">Per-monitor <code>timeout_ms</code> (bounded wait / runaway guard).</span>
     Deferred to evidence; the bounded-wait gap is mapped in <a href="#active">§2.2</a>. A per-monitor deadline that auto-stops a job/monitor after N
     ms &mdash; the one piece that would give back <code>wait_for_output</code>'s <code>timeoutMs</code> safety
