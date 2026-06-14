@@ -58,13 +58,14 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 <body>
 <main>
 
-<h1>Async Monitors — Invariants, Decisions &amp; Future Work</h1>
+<h1>Async Monitors — Architecture Record: Invariants &amp; Decisions</h1>
 <p class="meta">
   <span class="tag tag-status">CORE SHIPPED</span>
-  This doc keeps only what's needed to move forward: <strong>architectural
+  An architecture record for Omega's async monitors: <strong>architectural
   invariants</strong> (must-holds), <strong>locked-in decisions</strong> (must-not-revert),
-  the <strong>future menu</strong>, and a <strong>resume map</strong>. The history of how
-  each piece was built lives in the code and its tests.
+  and a <strong>resume map</strong> (where things live). The history of how each piece was
+  built lives in the code and its tests; speculative follow-ups are intentionally <em>not</em>
+  tracked here &mdash; they surface as pain points if and when they matter.
 </p>
 
 <div class="box ok">
@@ -86,8 +87,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <h4>Contents</h4>
   <ol>
     <li><a href="#invariants">Invariants &amp; locked-in decisions</a> <span class="meta">(do not revert)</span></li>
-    <li><a href="#active"><strong>Design reference: Claude Code’s model &amp; expressing waits</strong></a> <span class="meta">(forward-looking)</span></li>
-    <li><a href="#future">Future work (sorted by attractivity)</a></li>
+    <li><a href="#active"><strong>Decision: non-blocking waits (no blocking-wait tool)</strong></a></li>
     <li><a href="#codefacts">Resume map (where things live)</a></li>
   </ol>
   <p class="meta" style="margin:.6rem 0 0">A <span class="norevert">⛔</span> marks a decision whose
@@ -204,7 +204,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     is what earns skipping automated kill.</li>
   <li><strong>Currently dropped</strong> (re-add only on evidence): default/max <code>timeout_ms</code>,
     auto-stop of chatty monitors, line-buffering nagging. Verified prior art (Claude Code) keeps
-    auto-stop + line-buffering — flagged in Future work.</li>
+    auto-stop + line-buffering; deliberately omitted here until a pain point demands them.</li>
   <li><strong>No auto-stop</strong> — runaway monitors are caught by visibility (logs + UI fired-count),
     not automation.</li>
   <li><strong>Teaching copy is load-bearing for usability.</strong> Tool descriptions + system-prompt
@@ -257,11 +257,11 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
     <code>read_file</code> is the pull path (mirrors Claude's <code>BashOutput</code> buffer).</li>
 </ul>
 
-<h2 id="active">2. Design reference: Claude Code’s model &amp; expressing waits</h2>
-<p class="meta">Forward-looking reference for the open follow-ups (per-monitor <code>timeout_ms</code>,
-  auto-stop, evidence-gathering). The decisions that shipped are recorded as &#9940; invariants in
-  <a href="#invariants">§1</a>; this section keeps only the design knowledge those decisions rest on and
-  the questions they leave open.</p>
+<h2 id="active">2. Decision: non-blocking waits (no blocking-wait tool)</h2>
+<p class="meta">Omega has <strong>no synchronous blocking wait</strong>. &ldquo;Wait for X&rdquo; is expressed
+  in the <em>command</em> of a non-blocking background job (a condition loop that exits when true), not in a
+  tool parameter. This section records that decision and the design knowledge it rests on &mdash;
+  reverse-engineered from Claude Code, whose model Omega follows.</p>
 
 <h3>2.1 What Claude Code does (reverse-engineered)</h3>
 <p>First, the mechanic stated plainly. There is <strong>one tool</strong> &mdash; <code>Bash</code> &mdash;
@@ -349,7 +349,7 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 <p>Background jobs are non-blocking (<a href="#invariants">§1</a>): a job returns immediately and notifies on
   exit. “Wait for a condition” is therefore expressed in the <em>command</em>, not a tool param. The
   table maps each tuned param of the deleted blocking <code>wait_for_output</code> onto its shell-idiom
-  equivalent — the reference an agent (or a future <code>timeout_ms</code> design) needs:</p>
+  equivalent:</p>
 <table>
   <thead><tr><th><code>wait_for_output</code> param</th><th>Why it was tuned</th><th>Monitor-world equivalent</th></tr></thead>
   <tbody>
@@ -362,64 +362,10 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
 </table>
 <p>Every param has a shell-idiom home except <code>timeoutMs</code> (“never hang forever”): today
   that is a <code>timeout N …</code> wrapper inside the command. A first-class per-monitor <code>timeout_ms</code>
-  — the one bounded-wait affordance worth restoring — is tracked at <a href="#future">§3</a> (<code>td-2w6zub</code>). A
-  blocking <code>wait_for_output</code> is <em>not</em> the way back: it holds Seam B shut (<a href="#invariants">§1</a>).</p>
+  would be the one bounded-wait affordance worth restoring &mdash; but a blocking <code>wait_for_output</code>
+  is <em>not</em> the way back: it would hold Seam B shut (<a href="#invariants">§1</a>).</p>
 
-<h3>2.3 Where to gather evidence</h3>
-<p>The blocker is evidence: we need a task the agent <em>wants</em> to wait on and has the <em>opportunity</em>
-  to. Omega's own workflow supplies several &mdash; these are where to look first:</p>
-<ul>
-  <li><strong>Mutation testing</strong> (<code>cargo mutants</code>) &mdash; minutes-to-tens-of-minutes; the agent
-    has a real incentive to react to the first survivor rather than block. The strongest candidate.</li>
-  <li><strong>The gate / full <code>cargo test</code></strong> &mdash; slow enough that blocking wastes a turn;
-    a monitor watching for the first failure line is the natural shape.</li>
-  <li><strong>Web-UI dev server</strong> (<code>trunk serve</code> / Leptos watch) &mdash; a classic
-    &ldquo;wait for <em>Ready in</em>, then keep tailing for errors&rdquo; case spanning needs 1 and 2.</li>
-  <li><strong>Long release builds</strong> &mdash; pure need-1 (&ldquo;tell me when done&rdquo;).</li>
-</ul>
-<p class="meta">Instrumentation question alongside: what do we record to tell whether the agent <em>chose
-  well</em> — streaming <code>monitor</code> vs. silent <code>run_background</code> vs. blocking
-  <code>run_command</code>? The fired-count + commit-time/event-time skew already in the log is a start.</p>
-
-<h2 id="future">3. Future work (sorted by attractivity)</h2>
-<p class="meta">Ranked by (value &times; readiness) &divide; (cost &times; risk). Nothing is scheduled — this is the menu.
-  Items are keyed by a stable 6-character id (not a position), so references survive reordering and pruning.
-  <strong>Shipped</strong> and removed from this menu: the blocking-wait / one-shot-vs-streaming question
-  (now <a href="#invariants">§1</a> invariants); the <strong>seam-typestate guard</strong> &mdash; a register
-  automaton (<code>Empty</code> / <code>Idle</code> / <code>AwaitingAssistant</code> /
-  <code>AwaitingToolResults{pending}</code>) at the <code>append_record</code> chokepoint enforcing the
-  <code>tool_use</code>&harr;<code>tool_result</code> id bijection, with a
-  <code>ConversationInvariantViolated</code> forensic event; the <strong>uniform event-emission
-  architecture</strong> (one <code>EventSink</code> wire, observers as projections; the run-stream generator
-  gone) &mdash; design record in <code>docs/uniform-emission-spike.md</code>; and <strong>live real-time queue
-  streaming</strong> (<code>input_queue.set_on_change</code> pushes a snapshot on every mutation, sub-seam)
-  &mdash; the residual per-line badge micro-polish was dropped as low-value.</p>
-<ul class="todo" style="list-style:none; padding-left:0;">
-  <li id="td-2w6zub"><span class="rank"><code>2w6zub</code> &mdash; Per-monitor <code>timeout_ms</code> (bounded wait / runaway guard).</span>
-    Deferred to evidence; the bounded-wait gap is mapped in <a href="#active">§2.2</a>. A per-monitor deadline that auto-stops a job/monitor after N
-    ms &mdash; the one piece that would give back <code>wait_for_output</code>'s <code>timeoutMs</code> safety
-    (&ldquo;never hang forever&rdquo;) <em>without</em> a blocking tool, and simultaneously bounds runaway monitors.
-    Today the equivalent is a <code>timeout N …</code> wrapper inside the command. Lowest-risk, highest-leverage of
-    the deferred cluster &mdash; add on first evidence of an unbounded wait or a stuck job.</li>
-  <li id="td-mmbh3n"><span class="rank"><code>mmbh3n</code> &mdash; Action-vs-effect completeness (schema-wide policy).</span> The log is
-    inconsistent about recording the <em>action</em> vs the <em>effect</em>. Sharpest case: monitor
-    stdout — queue time (action) is computed as <code>InputQueueItem.enqueued_at</code> for the
-    live queue-viz but discarded at delivery; only <code>MonitorDeliveryEvent.time</code> (effect) is
-    persisted. Inspection step: enumerate every <code>OmegaEvent</code> variant, classify action /
-    effect / both, decide a documented rule. Low cost, high conceptual payoff.</li>
-  <li id="td-b2vkq1"><span class="rank"><code>b2vkq1</code> &mdash; Reconsider auto-stop of chatty monitors.</span> Dropped by explorative
-    minimalism; kept by Claude Code (confirmed: &ldquo;monitors that produce too many events are
-    automatically stopped&rdquo;). Re-add on evidence of the agent leaking/flooding, or keep observing.
-    See <a href="#active">§2.1</a> (Claude's auto-stop).</li>
-  <li id="td-qq2pz3"><span class="rank"><code>qq2pz3</code> &mdash; Per-tool toggle for non-UI sessions.</span> A <code>--tool</code> /
-    <code>--no-tool</code> CLI flag (or config) so headless/scripted sessions toggle individual tools
-    without a custom preset; today only coarse <code>--preset</code> exists server-side.</li>
-  <li id="td-51pbw8"><span class="rank"><code>51pbw8</code> &mdash; Monitors controllable inside the Python REPL.</span> Expose the monitor queue
-    as a Python API so REPL code reacts to events in-session. Speculative; the tool-call boundary is
-    the right abstraction for now.</li>
-</ul>
-
-<h2 id="codefacts">4. Resume map (where things live)</h2>
+<h2 id="codefacts">3. Resume map (where things live)</h2>
 <ul>
   <li>Canonical events: <small class="path">crates/omega-types/src/events.rs</small>. Event sink:
     <small class="path">crates/omega-agent/src/event_sink.rs</small>. Agent loop (split into modules):
