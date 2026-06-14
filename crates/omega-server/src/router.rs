@@ -45,9 +45,7 @@ use omega_types::OmegaEvent;
 use omega_types::ids::LoggedEvent;
 
 use crate::AppState;
-use crate::session::{
-    ActiveSession, SessionInfoCache, WsEventBroadcaster, WsTxCell, send_via_ws_tx, set_ws_tx,
-};
+use crate::session::{ActiveSession, SessionInfoCache, WsTxCell, send_via_ws_tx, set_ws_tx};
 use crate::ws_message::{InputQueueItem, MonitorRosterItem, PendingChangesIntent, WsMessage};
 
 // ---------------------------------------------------------------------------
@@ -88,7 +86,6 @@ pub fn is_monitor_event(item: &AgentItem) -> bool {
                 ev.as_ref(),
                 OmegaEvent::MonitorStarted(_)
                     | OmegaEvent::MonitorDelivery(_)
-                    | OmegaEvent::MonitorStderr(_)
                     | OmegaEvent::MonitorStopped(_)
             )
     )
@@ -357,12 +354,12 @@ async fn create_active_session(
         .await
         .map_err(|e| format!("agent.init() failed: {e}"))?;
 
-    // §17 (Phase A): out-of-band events (monitor stderr, halt, model/effort
-    // changes) reach the WS through the agent's `EventSink`.  Bind a
-    // broadcaster to THIS session's `ws_tx` cell so every emit resolves the
-    // CURRENT socket (the cell is updated, not the broadcaster, on reconnect).
+    // Uniform emission (Phase 2): out-of-band events (monitor stderr, halt,
+    // model/effort changes) reach the WS the same way in-turn events do — they
+    // push onto the agent's wire, which the run task drains into this session's
+    // `ws_tx` slot via `send_to_active` (resolving the CURRENT socket on each
+    // send, so a reconnect is transparent).  No event broadcaster is bound.
     let ws_tx: WsTxCell = Arc::new(std::sync::Mutex::new(None));
-    agent.set_event_broadcaster(Arc::new(WsEventBroadcaster::new(Arc::clone(&ws_tx))));
 
     let controls = agent.controls();
     let model_effort = agent.model_effort_handle();
@@ -990,38 +987,50 @@ async fn spawn_run_task(state: &AppState) {
     let handle = tokio::spawn(async move {
         // Owns the agent lock for the whole session (incl. while parked).
         let mut guard = agent.lock().await;
-        let mut stream = guard.run(input_queue.clone(), run_cancel);
-        while let Some(item) = stream.next().await {
-            let next = match &item {
-                AgentItem::Event(ev) => next_turn_state_for(ev),
-                AgentItem::Signal(_) => None,
-            };
-            // Detect push points *before* moving `item` into `WsMessage::Item`.
-            let push_roster = is_monitor_event(&item);
-            let push_queue = is_inbox_drain_event(&item);
-            send_to_active(&slot_arc, WsMessage::Item(Box::new(item))).await;
-            // Push a fresh roster snapshot after every monitor lifecycle event.
-            if push_roster {
-                let roster = roster_snapshot_msg(&monitor_manager);
-                send_to_active(&slot_arc, roster).await;
-            }
-            // Push a fresh queue snapshot after any inbox item is drained
-            // (UserMessage / MonitorDelivery / MonitorStopped — the item just
-            // left the queue).
-            if push_queue {
-                let snap = input_queue.snapshot();
-                send_to_active(&slot_arc, queue_snapshot_msg(snap)).await;
-            }
-            if let Some(target) = next {
-                let mut ts = turn_state.lock().await;
-                if *ts != target {
-                    target.clone_into(&mut ts);
-                    let cache = info_cache_arc.lock().await.clone();
-                    let info = cache_into_message(cache, target.to_owned());
-                    send_to_active(&slot_arc, info).await;
+        // Uniform emission (Phase 2): the loop pushes events + signals onto the
+        // wire; out-of-band emits (model/effort/halt/stderr) push onto the same
+        // wire.  We drain it here concurrently with the run-future, so parked
+        // out-of-band events still reach the WS promptly.  `close_wire` after
+        // `run` returns ends the drain with the session.
+        let mut rx = guard.take_wire_receiver();
+        let run_fut = async {
+            guard.run(input_queue.clone(), run_cancel).await;
+            guard.close_wire();
+        };
+        let drain_fut = async {
+            while let Some(item) = rx.recv().await {
+                let next = match &item {
+                    AgentItem::Event(ev) => next_turn_state_for(ev),
+                    AgentItem::Signal(_) => None,
+                };
+                // Detect push points *before* moving `item` into `WsMessage::Item`.
+                let push_roster = is_monitor_event(&item);
+                let push_queue = is_inbox_drain_event(&item);
+                send_to_active(&slot_arc, WsMessage::Item(Box::new(item))).await;
+                // Push a fresh roster snapshot after every monitor lifecycle event.
+                if push_roster {
+                    let roster = roster_snapshot_msg(&monitor_manager);
+                    send_to_active(&slot_arc, roster).await;
+                }
+                // Push a fresh queue snapshot after any inbox item is drained
+                // (UserMessage / MonitorDelivery / MonitorStopped — the item just
+                // left the queue).
+                if push_queue {
+                    let snap = input_queue.snapshot();
+                    send_to_active(&slot_arc, queue_snapshot_msg(snap)).await;
+                }
+                if let Some(target) = next {
+                    let mut ts = turn_state.lock().await;
+                    if *ts != target {
+                        target.clone_into(&mut ts);
+                        let cache = info_cache_arc.lock().await.clone();
+                        let info = cache_into_message(cache, target.to_owned());
+                        send_to_active(&slot_arc, info).await;
+                    }
                 }
             }
-        }
+        };
+        tokio::join!(run_fut, drain_fut);
     });
 
     {
@@ -1962,14 +1971,18 @@ mod tests {
         assert!(is_monitor_event(&item));
     }
 
+    /// Stderr is observability output, NOT a roster-mutating lifecycle event,
+    /// so it must NOT trigger a roster push.  (Under uniform emission it now
+    /// rides the wire through the consumer, where `is_monitor_event` is
+    /// consulted — unlike before, when it bypassed the consumer entirely.)
     #[test]
-    fn is_monitor_event_true_for_monitor_stderr() {
+    fn is_monitor_event_false_for_monitor_stderr() {
         let item = AgentItem::event(OmegaEvent::MonitorStderr(MonitorStderrEvent {
             id: "m".to_owned(),
             chunk: "err".to_owned(),
             time: "t".to_owned(),
         }));
-        assert!(is_monitor_event(&item));
+        assert!(!is_monitor_event(&item));
     }
 
     #[test]

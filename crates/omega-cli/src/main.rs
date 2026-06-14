@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use futures::StreamExt as _;
 use omega_agent::{Agent, AgentConfig};
 use omega_core::{AnthropicProvider, RetryConfig, RetryingProvider};
 use omega_store::{ContextStore, EventStore, SESSIONS_ROOT, make_session_dir};
@@ -265,82 +264,88 @@ async fn run(
     inbox.push(omega_agent::InputItem::Human {
         content: instruction,
     });
-    let mut stream = agent.run(inbox, cancel.clone());
+    let mut rx = agent.take_wire_receiver();
 
     let mut exit_code = 0i32;
 
-    while let Some(item) = stream.next().await {
-        match item {
-            omega_core::AgentItem::Signal(sig) => match sig {
-                omega_types::StreamSignal::Text { text, .. } => {
-                    print!("{text}");
-                }
-                omega_types::StreamSignal::Thinking { .. }
-                | omega_types::StreamSignal::ThinkingBlockComplete { .. }
-                | omega_types::StreamSignal::TextBlockComplete { .. }
-                | omega_types::StreamSignal::ToolUseBlockStart { .. }
-                | omega_types::StreamSignal::ToolInput { .. }
-                | omega_types::StreamSignal::ToolUseBlockComplete { .. } => {
-                    // Thinking, tool-use streaming signals and block
-                    // completion markers are not shown in CLI output.
-                }
-            },
-            omega_core::AgentItem::Event(boxed) => {
-                let ev = *boxed;
-                match &ev {
-                    OmegaEvent::TurnEnd(te) => {
-                        println!();
-                        eprintln!(
-                            "\n[turn complete | in={} out={} cache_hit={} cache_write={}]",
-                            te.metrics.input_tokens,
-                            te.metrics.output_tokens,
-                            te.metrics.cache_read_tokens.unwrap_or(0),
-                            te.metrics.cache_creation_tokens.unwrap_or(0),
-                        );
-                        exit_code = 0;
-                        // Cancel so the run loop exits instead of parking on
-                        // the empty InputQueue.
-                        cancel.cancel();
+    let run_fut = async {
+        agent.run(inbox, cancel.clone()).await;
+        agent.close_wire();
+    };
+    let drain_fut = async {
+        while let Some(item) = rx.recv().await {
+            match item {
+                omega_core::AgentItem::Signal(sig) => match sig {
+                    omega_types::StreamSignal::Text { text, .. } => {
+                        print!("{text}");
                     }
-                    OmegaEvent::TurnInterrupted(ti) => {
-                        println!();
-                        eprintln!(
-                            "\n[turn interrupted: {}]",
-                            ti.reason
-                                .as_ref()
-                                .map_or_else(|| "unknown".to_owned(), |r| format!("{r:?}"))
-                        );
-                        exit_code = 1;
-                        cancel.cancel();
+                    omega_types::StreamSignal::Thinking { .. }
+                    | omega_types::StreamSignal::ThinkingBlockComplete { .. }
+                    | omega_types::StreamSignal::TextBlockComplete { .. }
+                    | omega_types::StreamSignal::ToolUseBlockStart { .. }
+                    | omega_types::StreamSignal::ToolInput { .. }
+                    | omega_types::StreamSignal::ToolUseBlockComplete { .. } => {
+                        // Thinking, tool-use streaming signals and block
+                        // completion markers are not shown in CLI output.
                     }
-                    OmegaEvent::AgentError(ae) => {
-                        eprintln!("\n[agent error: {}]", ae.error);
+                },
+                omega_core::AgentItem::Event(boxed) => {
+                    let ev = *boxed;
+                    match &ev {
+                        OmegaEvent::TurnEnd(te) => {
+                            println!();
+                            eprintln!(
+                                "\n[turn complete | in={} out={} cache_hit={} cache_write={}]",
+                                te.metrics.input_tokens,
+                                te.metrics.output_tokens,
+                                te.metrics.cache_read_tokens.unwrap_or(0),
+                                te.metrics.cache_creation_tokens.unwrap_or(0),
+                            );
+                            exit_code = 0;
+                            // Cancel so the run loop exits instead of parking on
+                            // the empty InputQueue.
+                            cancel.cancel();
+                        }
+                        OmegaEvent::TurnInterrupted(ti) => {
+                            println!();
+                            eprintln!(
+                                "\n[turn interrupted: {}]",
+                                ti.reason
+                                    .as_ref()
+                                    .map_or_else(|| "unknown".to_owned(), |r| format!("{r:?}"))
+                            );
+                            exit_code = 1;
+                            cancel.cancel();
+                        }
+                        OmegaEvent::AgentError(ae) => {
+                            eprintln!("\n[agent error: {}]", ae.error);
+                        }
+                        OmegaEvent::ToolCall(tc) => {
+                            eprintln!("\n[tool: {}]", tc.name);
+                        }
+                        OmegaEvent::ToolResult(tr) => {
+                            let preview: String = tr.output.chars().take(120).collect();
+                            eprintln!(
+                                "[result{}: {}…]",
+                                if tr.is_error { " (error)" } else { "" },
+                                preview
+                            );
+                        }
+                        OmegaEvent::LlmCall(_) => {
+                            eprint!(".");
+                        }
+                        _ => {}
                     }
-                    OmegaEvent::ToolCall(tc) => {
-                        eprintln!("\n[tool: {}]", tc.name);
-                    }
-                    OmegaEvent::ToolResult(tr) => {
-                        let preview: String = tr.output.chars().take(120).collect();
-                        eprintln!(
-                            "[result{}: {}…]",
-                            if tr.is_error { " (error)" } else { "" },
-                            preview
-                        );
-                    }
-                    OmegaEvent::LlmCall(_) => {
-                        eprint!(".");
-                    }
-                    _ => {}
                 }
             }
         }
-    }
+    };
 
-    // Phase 4: drop the stream (releases the mutable borrow on `agent`),
-    // then kill any still-running monitors and persist
-    // MonitorStopped(StoppedBySessionEnd) for each.  The stream has already
-    // drained, so the agent loop is done writing — single-writer preserved.
-    drop(stream);
+    // Drive the run loop and drain its wire concurrently; `close_wire` (after
+    // `run` returns) ends the drain.  Then kill any still-running monitors and
+    // persist MonitorStopped(StoppedBySessionEnd) for each — the loop is done
+    // writing, so single-writer is preserved.
+    tokio::join!(run_fut, drain_fut);
     agent.shutdown_and_log_monitors().await;
 
     exit_code

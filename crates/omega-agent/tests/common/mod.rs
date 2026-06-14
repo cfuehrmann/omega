@@ -275,13 +275,46 @@ pub fn drive(
 ) -> futures::stream::BoxStream<'_, AgentItem> {
     let queue = InputQueue::new();
     queue.push(InputItem::Human { content });
-    let mut inner = agent.run(queue, cancel);
+    let mut inner = run_stream(agent, queue, cancel);
     Box::pin(stream! {
         while let Some(item) = inner.next().await {
             let terminal = is_turn_terminal(&item);
             yield item;
             if terminal {
                 break;
+            }
+        }
+    })
+}
+
+/// Adapt the push-based [`Agent::run`] (uniform emission, Phase 2) back into a
+/// `Stream` of [`AgentItem`]s for tests: drive the run-future and drain the
+/// wire concurrently, yielding every event + signal until the loop ends and
+/// the wire closes.  `close_wire` (after `run` returns) ends the drain.
+/// Dropping the returned stream drops the run-future, releasing the agent —
+/// the same shape as the old lazy `run()` stream.
+pub fn run_stream(
+    agent: &mut Agent,
+    queue: InputQueue,
+    cancel: CancellationToken,
+) -> futures::stream::BoxStream<'_, AgentItem> {
+    let mut rx = agent.take_wire_receiver();
+    Box::pin(stream! {
+        let run_fut = async {
+            agent.run(queue, cancel).await;
+            agent.close_wire();
+        };
+        tokio::pin!(run_fut);
+        let mut run_done = false;
+        loop {
+            tokio::select! {
+                () = &mut run_fut, if !run_done => { run_done = true; }
+                item = rx.recv() => {
+                    match item {
+                        Some(item) => yield item,
+                        None => break,
+                    }
+                }
             }
         }
     })

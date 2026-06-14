@@ -601,6 +601,30 @@ the chromiumoxide e2e suite guards live wire ordering.
 
 ## STATUS / RESUME-HERE
 
+- **IMPLEMENTATION IN PROGRESS** (slices landed on `develop`):
+  - (a) `014dce8` — subscriber registry on `EventSink`.
+  - (b1) `99c0dd0` — inert wire + `emit_signal` + `take_wire_receiver`.
+  - (b2a) `a545f40` — all loop event-log appends → single `commit` chokepoint.
+  - (b2b) **DONE, pending commit** — the atomic cutover: `run`/`drive_turn`
+    are now plain `async fn`s (no `stream!`); 37 mechanical `yield`s →
+    `commit_event`, 6 `inject_*` bare-yields → `push_to_wire`, signal →
+    `emit_signal`; `EventSink::close_wire` added. The 3 consumers (server
+    `router.rs`, CLI `cli/main.rs`, test harness `run_stream`/`drive`) now do
+    `take_wire_receiver()` + `join!(run+close_wire, drain)`. Broadcaster
+    install removed from the server; `MonitorStderr` dropped from
+    `is_monitor_event`. **Two behaviour changes, both intended & tested:**
+    (1) stderr now rides the wire (so it reaches the UI) while staying out of
+    LLM context — `monitor_stderr_emitted_to_sink_not_projected` updated to
+    assert the real invariant (∉ context, not ∉ stream); (2) the HaltRequested
+    event frame and its `session_info` are no longer strictly ordered (event
+    via async wire, info direct) — `halt_emits_session_info_*` relaxed to
+    order-independent (both arrive, nothing else interleaves while parked).
+    New deterministic tests: wire interleaving order + `close_wire` buffered-
+    then-terminate. Mutation sweep on `event_sink.rs` running.
+  - **Remaining (b3, optional):** retire the now-vestigial broadcaster /
+    subscriber-registry machinery (`WsEventBroadcaster`, `EventSink::emit`/
+    `broadcast`/`add_subscriber`) — nothing in production installs a
+    broadcaster anymore; out-of-band events reach WS via the wire.
 - **Spike COMPLETE (read-only).** This file is the durable record. No
   production code or tests changed.
 - **Two emission paths confirmed** (+ a minor third init-append): Path A

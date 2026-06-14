@@ -855,21 +855,23 @@ async fn halt_emits_session_info_with_halt_requested_turn_state() {
     let _ = recv_until_type(&mut ws, "llm_response_started").await;
     send_json(&mut ws, serde_json::json!({ "type": "halt" })).await;
 
-    // Collect frames until we see halt_requested event, then check the
-    // immediately following session_info.  Because the agent is parked on
-    // the gate, no agent-emitted frames can interleave between
-    // `halt_requested` and the session_info `handle_halt` sends next.
-    let halt_frames = recv_until_type(&mut ws, "halt_requested").await;
-    // session_info with "halt_requested" must follow.
-    let info = recv_json(&mut ws).await;
-    assert_eq!(
-        info["type"], "session_info",
-        "expected session_info after halt_requested; got {info}\n(halt frames: {halt_frames:?})"
-    );
-    assert_eq!(
-        info["turnState"], "halt_requested",
-        "turnState must be halt_requested; got {info}",
-    );
+    // Uniform emission (Phase 2): the HaltRequested *event* now rides the
+    // agent's wire (delivered by the async drain task), while the
+    // `session_info` reflecting the halt is sent directly by `handle_halt`.
+    // The two frames are therefore no longer strictly adjacent/ordered — but
+    // BOTH must arrive, `turn_state` must be `halt_requested`, and (the agent
+    // is parked on the gate) nothing else interleaves.  Assert both, in either
+    // order.
+    let mut saw_event = false;
+    let mut saw_info = false;
+    while !(saw_event && saw_info) {
+        let f = recv_json(&mut ws).await;
+        match f.get("type").and_then(|t| t.as_str()) {
+            Some("halt_requested") => saw_event = true,
+            Some("session_info") if f["turnState"] == "halt_requested" => saw_info = true,
+            _ => {}
+        }
+    }
 
     // Release the gate so the agent reaches the seam and parks (turn_halted),
     // then resume to wind the session down cleanly.

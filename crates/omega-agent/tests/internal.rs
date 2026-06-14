@@ -880,7 +880,7 @@ async fn mid_turn_model_change_snapshots_and_applies_next_turn() {
     let run_cancel = CancellationToken::new();
     let q2 = queue.clone();
     let click = chrono::Utc::now();
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
     q2.push(InputItem::Human {
         content: "first".to_owned(),
     });
@@ -1501,9 +1501,10 @@ async fn tool_selection_drives_request_tools_and_system_prompt() {
 /// `EventSink`, and is NEVER projected into the LLM context.
 ///
 /// End-to-end through the run loop with a REAL monitor: the stderr text must
-/// reach the recording broadcaster (the "WS") and `events.jsonl` (disk), but
-/// must NOT enter `history`, the inbox, or the next turn's LlmRequest (zero
-/// token cost).
+/// reach the WS (the wire, and any installed broadcaster) and `events.jsonl`
+/// (disk), but must NOT enter `history`, the inbox, or the next turn's
+/// LlmRequest (zero token cost) — i.e. delivered for observation, never
+/// projected into the LLM context.
 #[tokio::test]
 async fn monitor_stderr_emitted_to_sink_not_projected() {
     let (mut agent, provider, tmp) = make_test_agent();
@@ -1532,14 +1533,16 @@ async fn monitor_stderr_emitted_to_sink_not_projected() {
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
     let q2 = queue.clone();
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
     q2.push(InputItem::Human {
         content: "watch".to_owned(),
     });
     let seen = pull_to_turn_end(&mut stream).await;
 
-    // The stderr marker must reach the WS (broadcaster) as a MonitorStderr
-    // event — committed out of band, NOT on the run() stream.
+    // Uniform emission (Phase 2): the stderr marker reaches the WS as a
+    // MonitorStderr event by riding the SAME wire as in-turn events (it no
+    // longer takes a separate broadcaster-only path).  So it is both delivered
+    // (on the wire/stream) and broadcast to any installed subscriber.
     poll_until(
         || {
             broadcaster.snapshot().iter().any(
@@ -1550,8 +1553,8 @@ async fn monitor_stderr_emitted_to_sink_not_projected() {
     )
     .await;
     assert!(
-        !seen.contains(&"MonitorStderr"),
-        "stderr is non-projected: it must NOT be yielded on the run() stream; seen={seen:?}"
+        seen.contains(&"MonitorStderr"),
+        "stderr is delivered on the wire to the WS (just never into the LLM context); seen={seen:?}"
     );
 
     // It must NOT be projected: empty-ish history (only the human turn), no
@@ -2042,7 +2045,7 @@ async fn monitor_stderr_emitted_promptly_while_agent_parked() {
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
     let q2 = queue.clone();
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
     q2.push(InputItem::Human {
         content: "watch".to_owned(),
     });
@@ -2522,7 +2525,7 @@ async fn run_loop_parks_after_turn_then_processes_second_message() {
 
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
 
     // --- First message ---
     queue.push(InputItem::Human {
@@ -2583,7 +2586,7 @@ async fn run_loop_streams_multi_cycle_turn_then_parks() {
     provider.push_response(make_terminal_response("end_turn", 5, 5));
 
     let queue = InputQueue::new();
-    let mut stream = agent.run(queue.clone(), CancellationToken::new());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), CancellationToken::new());
     queue.push(InputItem::Human {
         content: "build".to_owned(),
     });
@@ -2619,7 +2622,7 @@ async fn push_human_item_processed_queue_empty_after_drain() {
 
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
 
     // Before push, snapshot must be empty.
     assert_eq!(queue.snapshot().len(), 0, "queue must start empty");
@@ -2662,7 +2665,7 @@ async fn snapshot_reflects_pending_state() {
 
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
 
     // Empty queue — snapshot is empty.
     assert_eq!(queue.snapshot().len(), 0);
@@ -2700,7 +2703,7 @@ async fn two_pushed_items_processed_in_order() {
 
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
 
     // Push first item before the loop starts.
     queue.push(InputItem::Human {
@@ -2755,7 +2758,7 @@ async fn ordinary_multi_cycle_coding_turn_works_through_input_queue() {
 
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
 
     queue.push(InputItem::Human {
         content: "echo hello in the shell".to_owned(),
@@ -3202,7 +3205,7 @@ async fn run_loop_abort_cancels_block_and_returns_to_park() {
 
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
     queue.push(InputItem::Human {
         content: "long".to_owned(),
     });
@@ -3299,7 +3302,7 @@ async fn halt_parks_at_seam_then_queued_message_resumes_with_injection() {
 
     let queue = InputQueue::new();
     let cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), cancel.clone());
     queue.push(InputItem::Human {
         content: "go".to_owned(),
     });
@@ -3362,7 +3365,7 @@ async fn halt_parks_then_explicit_resume_continues_with_no_input() {
 
     let queue = InputQueue::new();
     let cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), cancel.clone());
     queue.push(InputItem::Human {
         content: "go".to_owned(),
     });
@@ -3408,7 +3411,7 @@ async fn abort_while_halted_interrupts_block_and_returns_to_park() {
 
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue.clone(), run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue.clone(), run_cancel.clone());
     queue.push(InputItem::Human {
         content: "go".to_owned(),
     });
@@ -3688,7 +3691,7 @@ async fn u2_monitor_line_injected_at_seam_b_mid_turn() {
     let queue = InputQueue::new();
     let push_handle = queue.clone();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
     push_handle.push(InputItem::Human {
         content: "build it".to_owned(),
     });
@@ -3754,7 +3757,7 @@ async fn u2_monitor_line_injected_at_seam_a_after_park() {
     let queue = InputQueue::new();
     let push_handle = queue.clone();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
 
     push_handle.push(InputItem::Human {
         content: "hello".to_owned(),
@@ -3795,7 +3798,7 @@ async fn u2_monitor_stop_projects_and_wakes_parked_loop() {
     let queue = InputQueue::new();
     let push_handle = queue.clone();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
 
     push_handle.push(InputItem::Human {
         content: "go".to_owned(),
@@ -3847,7 +3850,7 @@ async fn u2_batching_human_and_monitor_one_api_message_two_records() {
     });
 
     {
-        let mut stream = agent.run(queue, run_cancel.clone());
+        let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
         let seen = pull_to_turn_end(&mut stream).await;
         // TWO events: one per item.
         assert!(
@@ -3898,7 +3901,7 @@ async fn u2_headless_terminates_when_idle_no_live_monitor() {
 
     let queue = InputQueue::new();
     let push_handle = queue.clone();
-    let mut stream = agent.run(queue, CancellationToken::new());
+    let mut stream = common::run_stream(&mut agent, queue, CancellationToken::new());
     push_handle.push(InputItem::Human {
         content: "go".to_owned(),
     });
@@ -3922,7 +3925,7 @@ async fn u2_headless_parks_while_a_monitor_is_live() {
     let queue = InputQueue::new();
     let push_handle = queue.clone();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
 
     // A long-lived monitor keeps the session alive even when idle.
     mgr.spawn("sleeper", "sleep 30", None)
@@ -3954,7 +3957,7 @@ async fn u2_real_monitor_stdout_delivered_through_inbox() {
     let mgr = agent.monitor_manager(); // Arc — survives the &mut borrow below.
     let queue = InputQueue::new();
     let run_cancel = CancellationToken::new();
-    let mut stream = agent.run(queue, run_cancel.clone()); // sink attached now
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone()); // sink attached now
 
     // Real monitor: prints one line then exits. stdout + stop both flow
     // through the manager → MonitorSink → inbox.
@@ -3995,7 +3998,7 @@ async fn u2_multiple_monitor_lines_merge_into_one_api_message() {
         lines: vec!["line-2".to_owned()],
     });
 
-    let mut stream = agent.run(queue, run_cancel.clone());
+    let mut stream = common::run_stream(&mut agent, queue, run_cancel.clone());
     let seen = pull_to_turn_end(&mut stream).await;
     let deliveries = seen.iter().filter(|t| **t == "MonitorDelivery").count();
     assert_eq!(

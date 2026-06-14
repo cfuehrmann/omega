@@ -267,6 +267,23 @@ impl Agent {
         self.event_sink.set_broadcaster(broadcaster);
     }
 
+    /// Take the wire receiver carrying this session's events + signals to the
+    /// consumer's drain loop (uniform emission, Phase 2).  Called once per
+    /// session, *before* [`Self::run`], so the run-future's `&mut self` borrow
+    /// does not overlap this `&self` borrow.
+    #[must_use]
+    pub fn take_wire_receiver(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<omega_core::AgentItem> {
+        self.event_sink.take_wire_receiver()
+    }
+
+    /// Close the wire so the consumer's drain loop terminates with the
+    /// session.  Called after [`Self::run`] returns.
+    pub fn close_wire(&self) {
+        self.event_sink.close_wire();
+    }
+
     /// Switch the active thinking-effort level.  Persists an
     /// [`EffortChangedEvent`] and returns it.
     ///

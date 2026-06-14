@@ -117,9 +117,21 @@ impl EventSink {
         rx
     }
 
+    /// Close the wire by dropping the sender, so a draining consumer's
+    /// `recv()` returns `None` once buffered items are consumed.  Called by
+    /// the consumer after `run()` returns, so the drain loop terminates with
+    /// the session instead of parking forever (the sender otherwise lives as
+    /// long as the agent).  Idempotent.
+    pub fn close_wire(&self) {
+        *self
+            .wire_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
     /// Push an [`AgentItem`] onto the wire if active; a no-op otherwise.
     /// A closed receiver is ignored (the session is winding down).
-    fn push_to_wire(&self, item: AgentItem) {
+    pub(crate) fn push_to_wire(&self, item: AgentItem) {
         if let Some(tx) = self
             .wire_tx
             .lock()
@@ -393,6 +405,69 @@ mod tests {
             rec.count(),
             0,
             "commit must not broadcast — in-turn events reach WS via the wire"
+        );
+    }
+
+    /// The wire is a single FIFO channel, so events and signals are delivered
+    /// in exactly the causal order they were emitted — the property the live
+    /// UI relies on (a `Text` signal must land between its surrounding
+    /// response events).
+    #[tokio::test]
+    async fn wire_preserves_event_signal_interleaving_order() {
+        let sink = sink();
+        let mut rx = sink.take_wire_receiver();
+
+        sink.commit(err_event("1")).await;
+        sink.emit_signal(StreamSignal::Text {
+            index: 0,
+            text: "x".to_owned(),
+        });
+        sink.commit(err_event("2")).await;
+
+        assert!(
+            matches!(next(&mut rx).await, AgentItem::Event(_)),
+            "1st: event"
+        );
+        assert!(
+            matches!(next(&mut rx).await, AgentItem::Signal(_)),
+            "2nd: signal"
+        );
+        assert!(
+            matches!(next(&mut rx).await, AgentItem::Event(_)),
+            "3rd: event"
+        );
+    }
+
+    /// `close_wire` must drop the sender so the consumer's drain loop ends with
+    /// the session — but buffered items (e.g. a final `TurnEnd`) must still be
+    /// delivered first, never dropped.  The bounded final read turns a
+    /// `close_wire` no-op mutant into a CAUGHT failure (fast `Err`) rather than
+    /// a hang.
+    #[tokio::test]
+    async fn close_wire_delivers_buffered_items_then_terminates() {
+        let sink = sink();
+        let mut rx = sink.take_wire_receiver();
+
+        sink.commit(err_event("a")).await;
+        sink.commit(err_event("b")).await;
+        sink.close_wire();
+
+        // Buffered items survive the close.
+        assert!(
+            matches!(next(&mut rx).await, AgentItem::Event(_)),
+            "buffered a"
+        );
+        assert!(
+            matches!(next(&mut rx).await, AgentItem::Event(_)),
+            "buffered b"
+        );
+
+        // Then the wire ends (sender dropped).
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv()).await;
+        assert_eq!(
+            ended,
+            Ok(None),
+            "close_wire must drop the sender so the drain loop terminates"
         );
     }
 }
