@@ -63,7 +63,7 @@ use web_sys::HtmlTextAreaElement;
 
 use crate::completion::{accept_completion, at_token_at_cursor, next_highlight, selected_item};
 use crate::event_view::current_status_label;
-use crate::http::get_files;
+use crate::http::{compose_via_editor, get_files};
 use crate::monitors_panel::{MonitorsPanelOpen, running_count, total_fired};
 use crate::picker::PickerOpen;
 use crate::protocol::{ClientFrame, TurnState};
@@ -303,8 +303,10 @@ pub fn Composer() -> impl IntoView {
     // Send ALWAYS enqueues (§15): one user message = one push to the
     // InputQueue. Parked → drained immediately; in-block → queued until
     // the next seam. Works in every turn state.
-    let do_send = move || {
-        let content = draft.get();
+    // Enqueue `content` (§15: one user message = one push to the InputQueue)
+    // and clear the textarea. Shared by the keyboard/Send paths and the
+    // external-editor auto-send path. No-op for blank content.
+    let send_content = move |content: String| {
         if content.trim().is_empty() {
             return;
         }
@@ -313,6 +315,23 @@ pub fn Composer() -> impl IntoView {
             return;
         }
         set_textarea_state(String::new(), 0);
+    };
+
+    let do_send = move || send_content(draft.get());
+
+    // Compose in the operator's configured editor ($OMEGA_EDITOR / $VISUAL /
+    // $EDITOR), seeded with the current draft, then auto-send the result.
+    // The editor launches on the server host (see `editor.rs`); a failure
+    // (no editor configured, non-zero exit) is logged and leaves the draft
+    // untouched so the operator can fall back to typing in the browser.
+    let do_editor = move || {
+        let draft_now = draft.get();
+        spawn_local(async move {
+            match compose_via_editor(&draft_now).await {
+                Ok(content) => send_content(content),
+                Err(err) => leptos::logging::warn!("composer editor failed: {err}"),
+            }
+        });
     };
 
     // Halt: ask the run loop to park at the next seam.
@@ -338,6 +357,7 @@ pub fn Composer() -> impl IntoView {
     };
 
     let on_send_click = move |_| do_send();
+    let on_editor_click = move |_| do_editor();
     let on_halt_click = move |_| do_halt();
     let on_resume_click = move |_| do_resume();
     let on_abort_click = move |_| do_abort();
@@ -507,6 +527,14 @@ pub fn Composer() -> impl IntoView {
                     "▶"
                 </button>
             </Show>
+            <button
+                class="leptos-composer-editor"
+                data-testid="leptos-composer-editor"
+                title="Compose in your editor ($OMEGA_EDITOR), then auto-send"
+                on:click=on_editor_click
+            >
+                "✎ Editor"
+            </button>
             <button
                 class="leptos-composer-primary"
                 data-testid="leptos-composer-primary"

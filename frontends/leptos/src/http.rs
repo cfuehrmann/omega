@@ -21,9 +21,59 @@
 //! pin will track `server_fn` until leptos upgrades to 0.7.
 
 use gloo_net::http::Request;
+use serde::{Deserialize, Serialize};
 
 use crate::context_modal::{ContextRecord, build_hashes_param};
 use crate::sessions::SessionListItem;
+
+/// Request body for `POST /api/compose`.
+#[derive(Serialize)]
+struct ComposeRequest<'a> {
+    /// Current composer draft, used to seed the editor's temp file.
+    draft: &'a str,
+}
+
+/// Response body for `POST /api/compose`.
+#[derive(Deserialize)]
+struct ComposeResponse {
+    /// The text the operator saved in their editor.
+    content: String,
+}
+
+/// `POST /api/compose { draft }` → composed prompt text.
+///
+/// Asks the server to launch the operator's configured editor
+/// (`$OMEGA_EDITOR` → `$VISUAL` → `$EDITOR`), seeded with `draft`, wait for
+/// it to close, and return the edited text. The call blocks for as long as
+/// the editor stays open, so callers must `spawn_local` it rather than
+/// awaiting on a UI-blocking path.
+///
+/// # Errors
+///
+/// Returns `Err(message)` for any network-level failure or when the server
+/// reports the editor could not be launched (no editor configured, non-zero
+/// exit, etc.). The server's plaintext error body is forwarded verbatim so
+/// the operator sees an actionable hint (e.g. the `OMEGA_EDITOR` suggestion).
+#[mutants::skip] // fetch() wrapper; network behaviour covered by e2e harness.
+pub async fn compose_via_editor(draft: &str) -> Result<String, String> {
+    let resp = Request::post("/api/compose")
+        .json(&ComposeRequest { draft })
+        .map_err(|e| format!("POST /api/compose: build failed: {e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("POST /api/compose failed: {e}"))?;
+
+    if !resp.ok() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("POST /api/compose: HTTP {status}: {body}"));
+    }
+
+    resp.json::<ComposeResponse>()
+        .await
+        .map(|r| r.content)
+        .map_err(|e| format!("POST /api/compose: decode failed: {e}"))
+}
 
 /// `GET /api/sessions` → `Vec<SessionListItem>`.
 ///

@@ -694,3 +694,156 @@ async fn serve_function_starts_real_http_listener() {
         "serve() must accept connections"
     );
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/compose — external-editor prompt composition
+// ---------------------------------------------------------------------------
+
+/// `POST /api/compose` launches the configured editor (`OMEGA_EDITOR`) on a
+/// temp file seeded with the request's `draft`, waits for it to exit, and
+/// returns the edited contents.
+///
+/// Run against the real binary (subprocess) so the editor command comes from
+/// the child's own environment — no global `set_var` race with parallel
+/// in-process tests. The fake editor wraps the seeded draft in `EDITED[…]`,
+/// proving both that the draft was written to the file (seeding) and that the
+/// editor's changes flow back to the response.
+#[tokio::test]
+async fn post_compose_runs_configured_editor_and_returns_edited_text() {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let tmp = TempDir::new().expect("tempdir");
+
+    // Fake editor: $1 is the temp file. Replace its contents with a marker
+    // that embeds the seed, so the assertion verifies seeding + round-trip.
+    let editor = tmp.path().join("fake-editor.sh");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\nprintf 'EDITED[%s]' \"$(cat \"$1\")\" > \"$1\"\n",
+    )
+    .expect("write fake editor");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).expect("chmod +x");
+    }
+
+    // Pick a free port, then release it for the child to bind.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let sessions_root = tmp.path().join("sessions");
+    let bin = env!("CARGO_BIN_EXE_omega-server");
+    let mut child = Command::new(bin)
+        .args(["--port", &port.to_string()])
+        .arg("--sessions-root")
+        .arg(&sessions_root)
+        // Hermetic: point HOME + CWD at the empty tempdir so no real
+        // `.env` / `~/.config/omega/.env` leaks an editor var into the test.
+        .current_dir(tmp.path())
+        .env("HOME", tmp.path())
+        .env("ANTHROPIC_API_KEY", "dummy")
+        .env("OMEGA_EDITOR", &editor)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn omega-server");
+
+    let url = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = reqwest::get(format!("{url}/health")).await {
+            if r.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "server did not become ready in 5 s");
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/api/compose"))
+        .json(&serde_json::json!({ "draft": "hello world" }))
+        .send()
+        .await
+        .expect("POST /api/compose");
+    assert_eq!(resp.status().as_u16(), 200, "expected 200 OK");
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_eq!(
+        body["content"].as_str().expect("content field"),
+        "EDITED[hello world]",
+        "content must reflect the seeded draft wrapped by the fake editor",
+    );
+
+    let _ = child.kill().await;
+}
+
+/// `POST /api/compose` with no editor configured responds `500` with an
+/// actionable plaintext error mentioning `OMEGA_EDITOR`.
+#[tokio::test]
+async fn post_compose_without_editor_configured_returns_500() {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let tmp = TempDir::new().expect("tempdir");
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let sessions_root = tmp.path().join("sessions");
+    let bin = env!("CARGO_BIN_EXE_omega-server");
+    // Explicitly clear all three editor vars so the host environment can't
+    // leak one in and make the editor launch succeed.
+    let mut child = Command::new(bin)
+        .args(["--port", &port.to_string()])
+        .arg("--sessions-root")
+        .arg(&sessions_root)
+        // Hermetic: empty HOME + CWD so dotenvy can't re-inject an editor var
+        // from a real `.env` / `~/.config/omega/.env` after the removes below.
+        .current_dir(tmp.path())
+        .env("HOME", tmp.path())
+        .env("ANTHROPIC_API_KEY", "dummy")
+        .env_remove("OMEGA_EDITOR")
+        .env_remove("VISUAL")
+        .env_remove("EDITOR")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn omega-server");
+
+    let url = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = reqwest::get(format!("{url}/health")).await {
+            if r.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "server did not become ready in 5 s");
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/api/compose"))
+        .json(&serde_json::json!({ "draft": "hi" }))
+        .send()
+        .await
+        .expect("POST /api/compose");
+    assert_eq!(resp.status().as_u16(), 500, "expected 500");
+    let text = resp.text().await.expect("text");
+    assert!(
+        text.contains("OMEGA_EDITOR"),
+        "error must mention OMEGA_EDITOR; got: {text:?}",
+    );
+
+    let _ = child.kill().await;
+}

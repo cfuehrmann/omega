@@ -18,6 +18,7 @@
 //! - `/ws`                 — WebSocket upgrade (1e.2)
 
 pub mod cli;
+pub mod editor;
 pub mod router;
 pub mod session;
 pub mod ws_message;

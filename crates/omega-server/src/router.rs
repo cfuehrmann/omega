@@ -28,7 +28,7 @@ use axum::{
     },
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use futures::{SinkExt, StreamExt};
 use omega_agent::{Agent, AgentConfig, InputItem, InputQueue, QueuedItemView};
@@ -181,6 +181,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/ws", get(ws_handler))
         .route("/api/context", get(get_context))
         .route("/api/files", get(get_files))
+        .route("/api/compose", post(post_compose))
         .fallback_service(ServeDir::new(leptos_dir))
         .with_state(state)
 }
@@ -192,6 +193,39 @@ pub fn build_router(state: AppState) -> Router {
 /// `GET /health` — liveness probe.
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
+}
+
+// ---------------------------------------------------------------------------
+// `POST /api/compose` — external-editor prompt composition
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /api/compose`.
+#[derive(Deserialize, Default)]
+pub struct ComposeBody {
+    /// Current composer draft used to seed the editor's temp file.
+    /// Defaults to empty so an absent/`null` body composes from scratch.
+    #[serde(default)]
+    pub draft: String,
+}
+
+/// `POST /api/compose` — launch the operator's configured editor (see
+/// [`crate::editor`]), seeded with `draft`, wait for it to close, and return
+/// the edited text as `{ "content": "…" }`.
+///
+/// Blocks for as long as the editor stays open (the browser issues this as a
+/// background `fetch`). On failure — no editor configured, spawn error,
+/// non-zero exit — responds `500` with the plaintext reason so the UI can
+/// surface an actionable hint.
+async fn post_compose(body: Option<Json<ComposeBody>>) -> Response {
+    let ComposeBody { draft } = body.map_or_else(ComposeBody::default, |Json(b)| b);
+    match crate::editor::compose_with_editor(&draft).await {
+        Ok(content) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "content": content })),
+        )
+            .into_response(),
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------

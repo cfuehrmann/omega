@@ -293,6 +293,19 @@ mutants-process-util:
     mkdir -p {{mutants-tmp}}
     TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/process_util.rs"
 
+# Run cargo-mutants targeted at the external-editor prompt composition helpers
+# (resolve_editor_command precedence OMEGA_EDITOR→VISUAL→EDITOR, split_editor_command).
+# These back the browser "✎ Editor" button / POST /api/compose. The async I/O
+# launcher compose_with_editor is #[mutants::skip] (process/tempfile edge); the
+# pure helpers carry the budget, covered by editor.rs unit tests + the
+# subprocess /api/compose integration tests. Template: mutants-process-util.
+# Uses --in-place to avoid copying the large (incl. leptos wasm) target tree,
+# and `-- --lib` to run only the fast editor.rs unit tests (the subprocess
+# /api/compose integration tests exercise the skipped I/O launcher, not the
+# mutated pure helpers, and would make each mutant run minutes long).
+mutants-compose-editor:
+    cargo mutants -p omega-server --in-place --cap-lints=true --file "crates/omega-server/src/editor.rs" -- --lib
+
 # Run cargo-mutants targeted at the async-monitor runtime (Monitors Phase 1).
 # Mutates the MonitorManager (spawn / stop / shutdown / queue + roster
 # mutations) and runs the omega-tools suite incl. the 9 monitor E2E tests.

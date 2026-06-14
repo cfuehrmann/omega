@@ -28,6 +28,7 @@ omega-tools    = { path = "../omega-tools" }
 tokio-util   = "0.7"          # CancellationToken used to cancel a turn
 futures      = "0.3"          # StreamExt for forwarding agent stream to WS
 chrono       = { version = "0.4", default-features = false, features = ["clock"] }  # ISO timestamps for server_stopped
+tempfile     = "3"            # temp file seeded with the draft for /api/compose external-editor flow
 
 [dev-dependencies]
 assert_cmd          = "2"

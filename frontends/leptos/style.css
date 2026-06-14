@@ -1000,6 +1000,7 @@ main > h1 {
 .leptos-composer-primary,
 .leptos-composer-halt,
 .leptos-composer-resume,
+.leptos-composer-editor,
 .leptos-composer-abort {
   border: 1px solid var(--ctp-surface2);
   background: none;
@@ -1018,10 +1019,15 @@ main > h1 {
 .leptos-composer-primary:disabled,
 .leptos-composer-halt:disabled,
 .leptos-composer-resume:disabled,
+.leptos-composer-editor:disabled,
 .leptos-composer-abort:disabled { opacity: 0.4; cursor: default; }
 
 /* Primary is always Send (blue). */
 .leptos-composer-primary[data-action="send"]:hover:not(:disabled)        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
+
+/* Editor — compose the prompt in $OMEGA_EDITOR, then auto-send (mauve). */
+.leptos-composer-editor        { color: var(--ctp-mauve); }
+.leptos-composer-editor:hover:not(:disabled) { border-color: var(--ctp-mauve); }
 
 /* Symbol buttons are slightly larger than the text Send button. */
 .leptos-composer-halt,
