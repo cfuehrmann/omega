@@ -601,7 +601,24 @@ the chromiumoxide e2e suite guards live wire ordering.
 
 ## STATUS / RESUME-HERE
 
-- **IMPLEMENTATION IN PROGRESS** (slices landed on `develop`):
+- **COMPLETE** (a/b1/b2a/b2b shipped; b3 cleanup shipped in a subsession).
+- **POST-SHIP FLAKE FOUND & FIXED — `0dcc76c`.** Targeted mutation testing
+  (`commit_event`) surfaced it via cargo-mutants' *repeated baseline*: the
+  single pre-commit gate run passed by luck, but the b2b cutover made
+  `run`/`drive_turn` **autonomous** (no pull-backpressure), so the loop now
+  runs straight from the `ToolResult` push to the post-tool-results halt seam
+  instead of suspending at a `yield`. Three halt-seam tests requested halt
+  *after* observing `ToolResult`, which now races the seam and loses under
+  load. Production halt is unaffected (always best-effort-at-next-seam; the
+  server drain never paced the loop). Fix: a one-shot **step gate** on the
+  test `MockProvider` pauses the loop at block 1's LLM call (after
+  `reset_for_turn`, before the seam) — the only deterministic window to set
+  halt. (Pre-setting halt fails: `reset_for_turn` clears a pre-turn halt at
+  turn entry.) Verified 30× halt-loop + 20× full-binary, 0 failures.
+  Mutation coverage of changed logic: `event_sink.rs` 7/7/0; `router.rs`
+  reaction predicates (`is_monitor_event` etc.) 10/10/0; `run_loop.rs`
+  `commit_event` 0 survivors (1 unviable).
+- Slices landed on `develop`:
   - (a) `014dce8` — subscriber registry on `EventSink`.
   - (b1) `99c0dd0` — inert wire + `emit_signal` + `take_wire_receiver`.
   - (b2a) `a545f40` — all loop event-log appends → single `commit` chokepoint.
