@@ -430,20 +430,31 @@ async fn composer_completion_accept() {
     .await
     .expect("completion popup never appeared");
 
-    // Wait for the completion items to settle to the children of rust/.
+    // Wait for the completion items to settle to the children of crates/.
     //
     // Timing race: `fill` types each character individually, so `on_input`
     // fires (and `query_completion` is called) for every prefix: "", "c",
-    // "cr", "cra", "crat", "crate", "crates", "crates/".  The fetch for
-    // prefix "crates" may return first and open the popup with ["crates/"],
-    // before the fetch for prefix "crates/" arrives and replaces it with
-    // the actual children ("crates/omega-agent/", …).  Reading `first`
-    // while the popup still shows the stale ["crates/"] entry causes the
-    // subsequent `format!("@{first}")` assertion to disagree with what
-    // Enter actually accepted (which by that point is the settled item).
+    // "cr", "cra", "crat", "crate", "crates", "crates/".  `query_completion`
+    // discards *stale* fetches (a result whose seq token has been superseded
+    // by a later keystroke), but under heavy load the keystrokes are spaced
+    // far enough apart that each prefix's fetch resolves and is applied in
+    // the gap *before* the next keystroke fires.  So the popup churns through
+    // every intermediate state: "" → root entries (".cargo/", ".git/", …,
+    // "crates/"), the bare-name prefixes → the "crates/" sentinel, and only
+    // the final "crates/" fetch → the actual children ("crates/omega-agent/",
+    // …).  Breaking out of the wait on *any* non-"crates/" item is wrong: an
+    // intermediate root entry like ".cargo/" passes that check, so `first`
+    // captures a value the list later replaces, and the `format!("@{first}")`
+    // assertion then disagrees with what Enter actually accepts.
     //
-    // Solution: poll until no item is exactly "crates/" — which is the
-    // intermediate sentinel — and at least one item is present.
+    // Deterministic settle condition: require the first item to be a *child*
+    // of the typed directory — i.e. its `data-completion` starts with
+    // "crates/" and is not the bare "crates/" sentinel.  Only the final
+    // "crates/" fetch produces such entries (the server returns CWD-relative
+    // paths), so this uniquely identifies the settled state regardless of
+    // ordering.  Once reached, no further fetch fires (typing has stopped;
+    // drill-in only happens on accept), so the list is stable and the
+    // ArrowDown+Enter below deterministically accepts `first`.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let first = loop {
         let candidate: String = h
@@ -453,9 +464,7 @@ async fn composer_completion_accept() {
             )
             .await
             .expect("first data-completion poll");
-        // Intermediate state: popup shows ["rust/"] from the "rust" prefix
-        // query.  Settled state: children such as "rust/.cargo/".
-        if !candidate.is_empty() && candidate != "crates/" {
+        if candidate.starts_with("crates/") && candidate != "crates/" {
             break candidate;
         }
         assert!(
