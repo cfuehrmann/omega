@@ -605,7 +605,8 @@ the chromiumoxide e2e suite guards live wire ordering.
   - (a) `014dce8` — subscriber registry on `EventSink`.
   - (b1) `99c0dd0` — inert wire + `emit_signal` + `take_wire_receiver`.
   - (b2a) `a545f40` — all loop event-log appends → single `commit` chokepoint.
-  - (b2b) **DONE, pending commit** — the atomic cutover: `run`/`drive_turn`
+  - (b2b) `cc0af15` — **the atomic cutover, gate + full e2e browser suite
+    green.** `run`/`drive_turn`
     are now plain `async fn`s (no `stream!`); 37 mechanical `yield`s →
     `commit_event`, 6 `inject_*` bare-yields → `push_to_wire`, signal →
     `emit_signal`; `EventSink::close_wire` added. The 3 consumers (server
@@ -620,11 +621,29 @@ the chromiumoxide e2e suite guards live wire ordering.
     via async wire, info direct) — `halt_emits_session_info_*` relaxed to
     order-independent (both arrive, nothing else interleaves while parked).
     New deterministic tests: wire interleaving order + `close_wire` buffered-
-    then-terminate. Mutation sweep on `event_sink.rs` running.
-  - **Remaining (b3, optional):** retire the now-vestigial broadcaster /
-    subscriber-registry machinery (`WsEventBroadcaster`, `EventSink::emit`/
-    `broadcast`/`add_subscriber`) — nothing in production installs a
-    broadcaster anymore; out-of-band events reach WS via the wire.
+    then-terminate. `event_sink.rs` mutants 7/7/0.
+  - **Remaining (b3, optional cleanup):** retire the now-vestigial
+    broadcaster / subscriber-registry machinery. Nothing in production
+    installs a broadcaster — out-of-band events reach WS via the wire, so
+    every `broadcast` call is a no-op. Scope:
+    - Drop `self.broadcast(&event)` from `EventSink::emit` and
+      `emit_detached`. `emit` then becomes identical to `commit`
+      (append + push-to-wire) — **consider merging them** (keep
+      `emit_detached` distinct: it spawns the append). Out-of-band callers:
+      `mod.rs:241/256` (model/effort), `controls.rs:138/154` (halt).
+    - Remove `broadcast`, `subscribers`, `add_subscriber`, `set_broadcaster`,
+      the `EventBroadcaster` trait (`event_sink.rs`, `lib.rs` re-export),
+      `Agent::set_event_broadcaster` (`lifecycle.rs`), and
+      `WsEventBroadcaster` (`server/session.rs`).
+    - **Test migration (the real work):** the tests that OBSERVE out-of-band
+      events via a recording broadcaster must instead observe the **wire**
+      (out-of-band events now ride it; `run_stream`/`drive` already drain it):
+      `controls.rs` `RecBroadcaster` (halt/resume), `internal.rs`
+      `mid_turn_model_change` + the monitor-stderr tests, and the
+      `event_sink.rs` subscriber-registry tests (`Rec`, the fan-out /
+      set_broadcaster / add_subscriber tests) which become obsolete.
+    - Verify with mutation tests on the trimmed `event_sink.rs`
+      (`just mutants-event-sink`), full gate, and the e2e suite.
 - **Spike COMPLETE (read-only).** This file is the durable record. No
   production code or tests changed.
 - **Two emission paths confirmed** (+ a minor third init-append): Path A

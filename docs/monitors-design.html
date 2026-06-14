@@ -390,12 +390,20 @@ small.path{font-family:ui-monospace,monospace;color:var(--muted)}
   <code>append_record</code> context-append chokepoint, enforcing the strict
   <code>tool_use</code>&harr;<code>tool_result</code> id bijection, with a dedicated
   <code>ConversationInvariantViolated</code> forensic event written before a hard fail on any violation.
-  A <strong>uniform event-emission architecture</strong> (one emitter; observers as projections) now leads
-  what remains, superseding the former &ldquo;Phase B&rdquo;. The evidence-deferred cluster (per-monitor
-  timeout, auto-stop) follows.</p>
+  A <strong>uniform event-emission architecture</strong> (one emitter; observers as projections) has now
+  largely <strong>shipped</strong> (see item 1), superseding the former &ldquo;Phase B&rdquo;; only optional
+  cleanup (b3) remains. The evidence-deferred cluster (per-monitor timeout, auto-stop) follows.</p>
 <ol>
   <li><span class="rank">Uniform event emission &mdash; one emitter, observers as projections.</span>
     <em>(Supersedes the former &ldquo;event sink &mdash; Phase B&rdquo;.)</em>
+    <strong>Status &mdash; SHIPPED, cleanup remaining:</strong> implemented on <code>develop</code> as a single
+    <code>EventSink</code> wire that all producers push to; the run-stream generator is gone
+    (<code>run</code>/<code>drive_turn</code> are plain <code>async fn</code>s), and the server / CLI / test
+    harness drive the loop and drain the wire concurrently (<code>join!</code> + <code>close_wire</code>).
+    Slices <code>a</code> / <code>b1</code> / <code>b2a</code> / <code>b2b</code> landed (Rust gate + full e2e
+    browser suite green); the design record and the remaining optional cleanup (b3 &mdash; retire the now
+    no-op broadcaster machinery) live in <code>docs/uniform-emission-spike.md</code>. The rest of this item is
+    the original design rationale, preserved.
     <strong>Target:</strong> the agent emits each event <em>once</em>, to a single emitter; every observer is a
     <em>projection</em> that subscribes &mdash; <code>events.jsonl</code> the comprehensive, durable, ordered
     projection; the frontend a live, best-effort one; tests subscribe a recorder. This makes
