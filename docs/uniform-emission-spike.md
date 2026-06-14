@@ -436,6 +436,92 @@ as a deliberate opt-out.
 
 ---
 
+## PHASE-2 DESIGN — shared-wire emitter (main-thread, SUPERSEDES §6)
+
+§6's two options both keep the run-stream as the WS event path and so hit the
+wire-double-emit / interleaving-split problems in ADDENDUM B. The design below
+resolves them. **It is the agreed Phase-2 target.**
+
+### Why the two paths exist (corrected)
+The run task owns the agent lock and parks *inside* `run()` for the whole
+session (`router.rs:991`), so the run-stream is *always* being drained. The
+reason out-of-band events cannot use it is **not** "nobody drains while
+parked" — it is that they **originate in concurrent tasks** (`set_model`,
+`deliver_stderr`) that **do not hold the generator and cannot `yield`**. The
+run-stream is single-producer (the loop); out-of-band emitters are *other*
+producers. Two real constraints follow:
+1. **In-turn events + signals must share ONE ordered channel** — live render
+   needs a `Text` signal *between* `LlmResponseStarted`/`LlmResponseEnded`.
+   Splitting them across channels scrambles interleaving. **Load-bearing.**
+2. **Out-of-band events come from other tasks** that cannot yield.
+The dual path is a *response* to (1)+(2); naively routing Path-A through the
+broadcaster breaks both.
+
+### The design: one shared, ordered "wire"; the generator goes away
+All event producers — the loop **and** out-of-band tasks — call one
+`emit(ev)` primitive. Everything else is a subscriber:
+
+```text
+loop (plain async fn) ----\
+                           >-- emit(ev): append-then-push (ordered) --+--> events.jsonl   (events, durable, ordered)
+out-of-band tasks --------/                                           +--> wire -> WS     (events + signals, interleaved)
+(set_model, deliver_stderr)                                          +--> server reactions (turn-state/roster/queue)
+signals: emit_signal(sig) -> wire only (never disk)                  +--> test recorder
+```
+
+- **One emit primitive** — every event producer calls `emit(ev)`; it appends
+  to disk (ordered, awaited) and pushes to the wire. One logical emit per
+  event ⇒ **no-double-emit becomes structural**, not a per-variant convention.
+- **Signals ride the same wire** (`emit_signal`) so event/signal interleaving
+  is preserved on one ordered channel. Signals never hit disk.
+- **`run()` becomes a plain `async fn`** that calls `self.emit(...)` as a side
+  effect and returns a completion handle — **no `stream!`, no returned
+  stream.** This *dissolves* the `&mut self` / `yield`-across-a-fn-boundary
+  tension (§6's "hardest part"): with no `yield`, the generator is dead weight
+  whose only job was handing events to the server. **Net simplification.**
+- **The server subscribes** instead of consuming a returned stream: a
+  wire-forwarder task pushes to WS; the four control-reactions run as
+  subscribers; out-of-band promptness-while-parked is automatic (the wire is
+  always drained by the forwarder).
+
+### Control stays separate — in fact *more* so
+The loop's drive (call LLM, dispatch tools, decide turn end) stays ordinary
+sequential code; `emit` is an **output**, and the loop **never consumes the
+bus to decide what to do next** (its inputs remain the provider stream + the
+inbox). It is a pure producer to the emitter and a consumer of *different*
+streams. There is now **no control *channel* at all** — the loop self-drives
+as sequential code (it already parks on `inbox.pop()` internally; the server
+never drove it). Effects are function calls that cannot reach the wire/disk.
+The one-channel-actor model stays declined. Only observation/UI-reactions
+subscribe, as they always did.
+
+### Decisions to settle before coding
+1. **`run()`'s new signature** — no longer returns `BoxStream<AgentItem>`;
+   headless/CLI/`send_message` callers install a **recorder subscriber**
+   instead of consuming a stream. Biggest blast radius; main test-migration
+   driver (`collect_stream` → recorder).
+2. **Where the emitter lives** — generalise `EventSink` (already owns
+   `EventStore` + swappable broadcaster) into *the* emitter: add the wire
+   channel + a subscriber registry; the loop gets a handle.
+3. **Backpressure / ordering** — bounded wire; disk subscriber awaited &
+   ordered (never lossy), WS best-effort. Concurrent `emit` (loop +
+   out-of-band) needs a mutex around (append, push) to keep disk≈wire order,
+   or an explicit §17 "file order may differ" acceptance (the `emit_detached`
+   stderr case).
+
+### Slices (each gate-green)
+- **(a)** Introduce the emitter + wire + subscriber API **alongside** the
+  current path (no behaviour change).
+- **(b)** Move the server to **subscribe** (WS forward + the four reactions)
+  while the loop still yields — prove wire/run-stream parity.
+- **(c)** Flip the loop to **push + drop the generator**; `run()` becomes a
+  plain async fn.
+- **(d)** Retire the sink's separate path; migrate tests (`collect_stream` →
+  recorder; opportunistic `events.jsonl` assertions where the run-stream no
+  longer carries events).
+
+---
+
 ## STATUS / RESUME-HERE
 
 - **Spike COMPLETE (read-only).** This file is the durable record. No
@@ -462,6 +548,48 @@ as a deliberate opt-out.
   Hardest part = `&mut self` + `stream!` `yield` cannot cross a fn boundary
   (same borrow tension as the seam-typestate work); durable projection must
   stay synchronous & ordered.
+
+## ADDENDUM — two corrections to the forward plan (main-thread review)
+
+The facts above hold. Two forward-plan claims were too optimistic:
+
+### A. Phase 1 is polish, NOT a hard prerequisite
+The "tests-first enabler" framing overstates the coupling. The
+`collect_stream` tests assert on event **order/content**, which a careful
+Phase 2 *preserves* (same events, same order) — they pass unchanged. The
+`RecordingBroadcaster` tests use **presence filtering** (`.snapshot().iter()
+.any(|e| matches!(e, ModelChanged..))`, `internal.rs:924-928`), robust to
+extra broadcasts. So a careful Phase 2 breaks **few or zero** existing tests.
+The events.jsonl migration is worthwhile e2e *polish* but is **not blocking**;
+do it opportunistically inside Phase 2 where Phase 2 actually changes what a
+test can observe (mainly: anything relying on run-stream event *ordering*,
+since the run-stream stops carrying events — see B).
+
+### B. Phase 2 must demix the SERVER too — §6's "server consumer unchanged" is wrong
+WS delivery today is split: **Path-A events reach WS via the server
+forwarding the run-stream** (`router.rs:1001` `WsMessage::Item`); **Path-B
+events reach WS via the sink's `EventBroadcaster`** (direct). If Phase 2
+routes Path-A events through `emit()` *and* `emit` broadcasts, Path-A events
+hit WS **twice** (broadcaster + run-stream forward) = **wire double-emit**.
+So Phase 2 must remove the run-stream as the WS path for events, which forces
+the server's four control-reactions (turn-state, roster, queue, info) to
+**subscribe to the emitter** instead of reading run-stream events.
+
+And it must be the broadcaster, not the run-stream, that becomes the unified
+WS path — because of **promptness while parked**: out-of-band events must
+reach WS when no turn is running (test: `monitor_stderr_emitted_promptly_
+while_agent_parked`; `emit_detached` exists for exactly this). The run-stream
+is only drained *during* a turn, so it structurally cannot deliver parked
+events. Therefore:
+
+> **Unified shape:** the always-on emitter broadcasts to WS + appends to disk;
+> the run-stream is **demoted to Signals + turn-lifecycle only**; the server's
+> control-reactions subscribe to the emitter. This is a change to
+> **omega-server**, not just omega-agent — the demix, not a drop-in.
+
+The Phase-2 *design pass* (always-on emitter; WS + server-reactions as
+subscribers; run-stream → signals+lifecycle) is tracked separately; it is the
+real work and supersedes §6's "keep the consumer unchanged."
 
 ### Recommended Phase-1 step list (crisp)
 1. Promote `read_jsonl` (`defensive.rs:148-153`) into `tests/common/mod.rs`;
