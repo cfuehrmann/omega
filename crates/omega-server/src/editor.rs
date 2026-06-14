@@ -121,10 +121,15 @@ pub async fn compose_with_editor(draft: &str) -> Result<String, String> {
     // operator gets a prompt error they can act on. A correctly wrapped
     // command (`foot nvim`, `alacritty -e hx`, `code --wait`) opens its own
     // terminal/pty and is unaffected.
+    // `kill_on_drop(true)`: if this handler future is ever dropped while the
+    // editor is still open (e.g. server shutdown with the request in flight),
+    // tear the editor down with it instead of leaving an orphan editing an
+    // already-unlinked temp file.
     let status = tokio::process::Command::new(&program)
         .args(&args)
         .arg(&path)
         .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
         .status()
         .await
         .map_err(|e| format!("launch editor '{program}': {e}"))?;
