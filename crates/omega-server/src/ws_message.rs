@@ -89,6 +89,12 @@ pub enum WsMessage {
         /// Always present on the wire as `features` so the UI can display
         /// capability badges (e.g. "REPL on") without re-reading the event log.
         features: FeatureFlags,
+        /// Whether an external editor is configured in the process environment
+        /// (`OMEGA_EDITOR` / `VISUAL` / `EDITOR`).  Omitted from the wire
+        /// when `false`; present as `editorConfigured: true` otherwise.  The
+        /// UI uses this to skip the prompt panel and go directly to the editor
+        /// when the Prompt button is clicked.
+        editor_configured: bool,
     },
     /// Persisted history batch sent on connect / reset / resume.
     /// `streaming` is omitted on the wire when `false` — matches the TS
@@ -223,6 +229,7 @@ impl WsMessage {
                 turn_state,
                 has_pending_changes,
                 features,
+                editor_configured,
             } => {
                 let mut obj = serde_json::Map::with_capacity(9);
                 obj.insert("type".to_owned(), serde_json::Value::from("session_info"));
@@ -244,6 +251,9 @@ impl WsMessage {
                 );
                 if let Some(n) = name {
                     obj.insert("name".to_owned(), serde_json::Value::from(n.clone()));
+                }
+                if *editor_configured {
+                    obj.insert("editorConfigured".to_owned(), serde_json::Value::from(true));
                 }
                 serde_json::Value::Object(obj)
             }
@@ -411,6 +421,7 @@ mod tests {
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
             features: FeatureFlags::default(),
+            editor_configured: false,
         }
         .to_json();
         assert_eq!(v["type"], "session_info");
@@ -420,6 +431,10 @@ mod tests {
         assert_eq!(v["cwd"], "/tmp");
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("name"), "name must be omitted when None");
+        assert!(
+            !obj.contains_key("editorConfigured"),
+            "editorConfigured must be omitted when false"
+        );
         // type, dir, model, effort, cwd, turnState, hasPendingChanges, features = 8
         assert_eq!(obj.len(), 8, "unexpected extra fields: {obj:?}");
         assert_eq!(obj["turnState"], "idle");
@@ -427,6 +442,23 @@ mod tests {
         // features is always present
         assert!(obj.contains_key("features"), "features must be present");
         assert_eq!(obj["features"]["subagents"], false);
+    }
+
+    #[test]
+    fn session_info_editor_configured_true_appears_on_wire() {
+        let v = WsMessage::SessionInfo {
+            dir: "d".to_owned(),
+            model: "m".to_owned(),
+            effort: "e".to_owned(),
+            cwd: "/c".to_owned(),
+            name: None,
+            turn_state: "idle".to_owned(),
+            has_pending_changes: false,
+            features: FeatureFlags::default(),
+            editor_configured: true,
+        }
+        .to_json();
+        assert_eq!(v["editorConfigured"], true);
     }
 
     #[test]
@@ -440,6 +472,7 @@ mod tests {
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
             features: FeatureFlags { subagents: true },
+            editor_configured: false,
         }
         .to_json();
         assert_eq!(v["features"]["subagents"], true);
@@ -456,6 +489,7 @@ mod tests {
             turn_state: "running".to_owned(),
             has_pending_changes: false,
             features: FeatureFlags::default(),
+            editor_configured: false,
         }
         .to_json();
         assert_eq!(v["name"], "my-session");
@@ -475,6 +509,7 @@ mod tests {
             turn_state: "idle".to_owned(),
             has_pending_changes: true,
             features: FeatureFlags::default(),
+            editor_configured: false,
         }
         .to_json();
         assert_eq!(v["hasPendingChanges"], true);
@@ -491,6 +526,7 @@ mod tests {
             turn_state: "running".to_owned(),
             has_pending_changes: false,
             features: FeatureFlags::default(),
+            editor_configured: false,
         }
         .to_json();
         assert_eq!(v["name"], "my-session");
@@ -507,6 +543,7 @@ mod tests {
             turn_state: "idle".to_owned(),
             has_pending_changes: false,
             features: FeatureFlags::default(),
+            editor_configured: false,
         };
         let parsed: serde_json::Value = serde_json::from_str(&m.to_text()).unwrap();
         assert_eq!(parsed, m.to_json());

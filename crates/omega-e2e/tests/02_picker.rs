@@ -369,8 +369,10 @@ async fn picker_copy_at_path_button_copies_to_clipboard() {
     );
 
     // Textarea must be untouched — copy @path never injects text.
+    // The prompt panel is closed here; use optional chaining so the eval
+    // returns "" whether the panel is open or not.
     let textarea: String = h
-        .eval(r#"document.querySelector('[data-testid="leptos-composer-input"]').value"#)
+        .eval(r#"document.querySelector('[data-testid="leptos-prompt-panel-input"]')?.value ?? ''"#)
         .await
         .expect("read textarea");
     assert_eq!(textarea, "", "textarea must be empty after copy @path");

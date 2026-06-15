@@ -994,13 +994,10 @@ main > h1 {
   border-color: var(--user);
 }
 
-/* Composer control buttons (U3 three-controls model: Send / Halt / Resume
- * / Abort). The primary button is always Send; Halt / Resume / Abort are
- * secondary buttons that mount conditionally on turn state. */
-.leptos-composer-primary,
+/* Composer control buttons (U3 three-controls model: Halt / Resume / Abort).
+ * Send has moved into .prompt-panel-send inside the collapsible panel. */
 .leptos-composer-halt,
 .leptos-composer-resume,
-.leptos-composer-editor,
 .leptos-composer-abort {
   border: 1px solid var(--ctp-surface2);
   background: none;
@@ -1016,18 +1013,9 @@ main > h1 {
   flex-shrink: 0;
   transition: border-color 0.15s, color 0.15s;
 }
-.leptos-composer-primary:disabled,
 .leptos-composer-halt:disabled,
 .leptos-composer-resume:disabled,
-.leptos-composer-editor:disabled,
 .leptos-composer-abort:disabled { opacity: 0.4; cursor: default; }
-
-/* Primary is always Send (blue). */
-.leptos-composer-primary[data-action="send"]:hover:not(:disabled)        { border-color: var(--ctp-blue); color: var(--ctp-blue); }
-
-/* Editor — compose the prompt in $OMEGA_EDITOR, then auto-send (mauve). */
-.leptos-composer-editor        { color: var(--ctp-mauve); }
-.leptos-composer-editor:hover:not(:disabled) { border-color: var(--ctp-mauve); }
 
 /* Symbol buttons are slightly larger than the text Send button. */
 .leptos-composer-halt,
@@ -2417,3 +2405,164 @@ main > h1 {
   border-color: var(--ctp-red);
   color: var(--ctp-red);
 }
+
+/* ==========================================================================
+ * Prompt button (bottom bar) — similar look to the Panels button.
+ * Opens/closes the collapsible PromptPanel above the composer row.
+ * ========================================================================== */
+
+.leptos-composer-prompt {
+  background: none;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: var(--radius);
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 10px 5px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Upward-pointing chevron — panel slides up */
+.leptos-composer-prompt::after {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 6px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 5 5 1 9 5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 10px 6px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 5 5 1 9 5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 10px 6px;
+}
+.leptos-composer-prompt:hover {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+/* When the panel is open, highlight the button */
+.leptos-composer-prompt[data-panel-open="true"] {
+  border-color: var(--user);
+  color: var(--user);
+}
+
+/* Draft badge dot — shown inside the button when there is unsent text */
+.prompt-draft-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--user);
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+ * Prompt panel — collapsible composition surface (30 vh).
+ * Positioned between the bottom panels container and the composer bar;
+ * never overlays the event feed.
+ * ========================================================================== */
+
+.prompt-panel {
+  flex-shrink: 0;
+  height: 30vh;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding: 8px max(16px, 2vw) 0;
+  background: var(--bg);
+}
+
+/* Textarea wrapper — fills remaining height, anchors the completion popup */
+.prompt-panel-textarea-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;   /* anchor for the @-completion popup */
+}
+
+/* The textarea itself */
+.prompt-panel-input {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 8px 10px;
+  resize: none;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.prompt-panel-input:hover:not(:focus) { border-color: var(--ctp-blue); }
+.prompt-panel-input:focus             { border-color: var(--user); }
+.prompt-panel-input::placeholder      { color: var(--dim); }
+
+/* "Editor open…" placeholder shown while POST /api/compose is in flight */
+.prompt-panel-editor-notice {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 14px;
+  font-style: italic;
+  color: var(--ctp-mauve);
+  border: 1px solid color-mix(in srgb, var(--ctp-mauve) 40%, transparent);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+/* Action row: Collapse button (left) + Send button (right) */
+.prompt-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+
+/* Collapse button — secondary/muted style, left-aligned */
+.prompt-panel-collapse {
+  background: none;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: var(--radius);
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 4px 10px;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+.prompt-panel-collapse:hover:not(:disabled) {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+.prompt-panel-collapse:disabled { opacity: 0.4; cursor: default; }
+
+/* Send button — prominent primary action, right-aligned */
+.prompt-panel-send {
+  background: none;
+  border: 1px solid var(--ctp-surface2);
+  border-radius: var(--radius);
+  color: var(--ctp-subtext0);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 5px 14px;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+}
+.prompt-panel-send:hover:not(:disabled) {
+  border-color: var(--ctp-blue);
+  color: var(--ctp-blue);
+}
+.prompt-panel-send:disabled { opacity: 0.4; cursor: default; }

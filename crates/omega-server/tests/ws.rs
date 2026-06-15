@@ -755,6 +755,7 @@ async fn replay_with_empty_events_file_yields_only_ready() {
         name: None,
         has_pending_changes: false,
         features: FeatureFlags::default(),
+        editor_configured: false,
     };
     let active = ActiveSession {
         agent: Arc::new(tokio::sync::Mutex::new(agent)),

@@ -67,6 +67,12 @@ pub struct SessionInfoCache {
     /// Forwarded verbatim onto every [`WsMessage::SessionInfo`] frame so
     /// the UI can display capability badges without re-reading the event log.
     pub features: FeatureFlags,
+    /// Whether an external editor is available in the environment at
+    /// session-creation time (i.e. `OMEGA_EDITOR` / `VISUAL` / `EDITOR`
+    /// resolves to a command).  Sent once to the UI so it can skip the
+    /// prompt panel and open the editor directly when the user clicks the
+    /// Prompt button.
+    pub editor_configured: bool,
 }
 
 /// All state belonging to the currently-active session.

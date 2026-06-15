@@ -585,6 +585,7 @@ mod tests {
             turn_state,
             has_pending_changes: false,
             name: None,
+            editor_configured: false,
         })
         .into()
     }

@@ -77,6 +77,15 @@ pub fn split_editor_command(command: &str) -> Option<(String, Vec<String>)> {
     Some((program, parts.collect()))
 }
 
+/// Return `true` when an editor command is available in the current process
+/// environment — i.e. at least one of [`EDITOR_ENV_VARS`] is set and
+/// non-blank.  Pure delegation to [`resolve_editor_command`] so the
+/// precedence logic stays in one place and is not duplicated at call sites.
+#[must_use]
+pub fn is_editor_configured() -> bool {
+    resolve_editor_command(|var| std::env::var(var).ok()).is_some()
+}
+
 /// Launch the configured editor on a temp file seeded with `draft`, wait
 /// for it to exit, and return the edited contents verbatim.
 ///

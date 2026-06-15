@@ -409,6 +409,7 @@ async fn create_active_session(
         name: None,
         has_pending_changes,
         features,
+        editor_configured: crate::editor::is_editor_configured(),
     };
     // §15 (Unified Input Model, U1): human input flows through this inspectable
     // queue to the persistent run task spawned at reset/resume — not by acquiring
@@ -579,6 +580,7 @@ fn cache_into_message(cache: SessionInfoCache, turn_state: String) -> WsMessage 
         turn_state,
         has_pending_changes: cache.has_pending_changes,
         features: cache.features,
+        editor_configured: cache.editor_configured,
     }
 }
 

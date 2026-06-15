@@ -41,12 +41,14 @@ const CONTEXT_MODAL: &str = "[data-testid='leptos-context-modal']";
 const CONTEXT_MODAL_BACKDROP: &str = "[data-testid='leptos-context-modal-backdrop']";
 const DIRTY_MODAL: &str = "[data-testid='leptos-dirty-modal']";
 const DIRTY_MODAL_BACKDROP: &str = "[data-testid='leptos-dirty-modal-backdrop']";
-const COMPOSER: &str = "[data-testid='leptos-composer-input']";
+const PROMPT_BTN: &str = "[data-testid='leptos-composer-prompt']";
+const COMPOSER: &str = "[data-testid='leptos-prompt-panel-input']";
 
 const T: Duration = DEFAULT_TIMEOUT;
 const T_TURN: Duration = Duration::from_secs(20);
 
 async fn send_message(h: &TestHarness, content: &str) {
+    h.click(PROMPT_BTN).await.expect("open prompt panel");
     h.fill(COMPOSER, content).await.expect("fill composer");
     h.press_key(COMPOSER, "Enter")
         .await

@@ -1,43 +1,25 @@
-//! Composer component (Phase 3.4; U3 unified-input rework).
+//! Composer component — the always-visible bottom bar.
 //!
 //! ```text
 //!  <Composer>
-//!   ├─ ModelSelect    (hard-coded models — sends `set_model`)
-//!   ├─ EffortSelect   (sends `set_effort`)
-//!   ├─ <div .textarea-wrap>
-//!   │   ├─ <Show completion_open>
-//!   │   │   └─ <FileCompletionDropdown items=… highlight=… />
-//!   │   └─ <textarea .composer-input on:input on:keydown />
-//!   └─ Three-controls model (§15 unified input):
-//!
-//!        Send    ALWAYS available ⇒ ClientFrame::UserMessage (push to inbox).
-//!                Parked  → drained immediately at the empty-queue seam.
-//!                In-block→ queued; injected at the next seam (batched
-//!                          with monitor deliveries).
-//!        Halt    while Running        ⇒ ClientFrame::Halt   ("stop advancing")
-//!        Resume  while HaltRequested  ⇒ ClientFrame::Resume ("cancel pending halt")
-//!        Abort   while HaltRequested  ⇒ ClientFrame::Abort  (cancel now)
+//!   ├─ Sessions button  (opens session picker)
+//!   ├─ PanelsMenuButton (toggles bottom-panel checkboxes)
+//!   ├─ ModelSelect      (sends `set_model`)
+//!   ├─ EffortSelect     (sends `set_effort`)
+//!   ├─ Prompt button    (opens/triggers the PromptPanel)
+//!   ├─ Turn-control group (Halt / Resume / Abort — conditional on turn state)
+//!   └─ StatusChip       (connected + turn-state label)
 //! ```
 //!
-//! ## Three orthogonal controls
+//! The textarea, Send button, and file-completion popup have moved into
+//! [`crate::prompt_panel::PromptPanel`], which is a collapsible panel
+//! that slides up from above this bar without obscuring the event feed.
 //!
-//! Pause-for-injection is **gone** (U3). Interjecting is just Send: a
-//! queued message lands at the next seam. The two remaining controls are
-//! orthogonal to Send:
-//!
-//! - **Halt** parks the run loop at the next seam so the operator can
-//!   compose a steering message at leisure. Resume happens *either* by
-//!   sending a queued steering message (wakes the park, injected +
-//!   continues) *or* by clicking **Resume** (continue with no new input).
-//! - **Abort** forcefully cancels the in-flight block immediately.
-//!
-//! ## Keyboard shortcuts
-//!
-//! | Key   | State                      | Action                |
-//! |-------|----------------------------|-----------------------|
-//! | `⏎`   | any (non-empty draft)      | Send (enqueue)        |
-//! | `⇧⏎`  | any                        | newline               |
-//! | `⎋`   | completion popup open      | close popup           |
+//! Clicking the **Prompt** button:
+//! - When an external editor is configured (server reports
+//!   `editorConfigured: true`): opens the [`PromptPanel`] and immediately
+//!   triggers the editor via an increment on `PromptPanelState::trigger_editor`.
+//! - Otherwise: just expands the panel so the operator can type.
 //!
 //! ## Pure projection
 //!
@@ -45,27 +27,14 @@
 //! the button-visibility matrix lives. [`status_str`] / [`status_label`]
 //! are the only places the status-chip label mapping lives. All are pure,
 //! mutation-tested, no DOM reads.
-//!
-//! ## Mutation-test carve-out
-//!
-//! Component glue (textarea events, dropdown reactivity, completion popup
-//! positioning, focus management, NodeRef DOM reads, reactive Effects) is
-//! the JS-interop edge — same gap pattern as 3.1's `ws.rs` / 3.2's
-//! `picker.rs` / 3.3's `feed.rs`.
 
-use leptos::ev;
-use leptos::html;
 use leptos::prelude::*;
-use leptos::reactive::owner::LocalStorage;
-use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
-use web_sys::HtmlTextAreaElement;
 
-use crate::completion::{accept_completion, at_token_at_cursor, next_highlight, selected_item};
 use crate::event_view::current_status_label;
-use crate::http::{compose_via_editor, get_files};
 use crate::monitors_panel::{MonitorsPanelOpen, running_count, total_fired};
 use crate::picker::PickerOpen;
+use crate::prompt_panel::PromptPanelState;
 use crate::protocol::{ClientFrame, TurnState};
 use crate::queue_panel::{QueuePanelOpen, pending_count};
 use crate::store::SessionStore;
@@ -151,7 +120,7 @@ pub fn show_halt(turn_state: TurnState) -> bool {
 /// Whether the **Resume** control should render.
 ///
 /// Resume = "carry on with no new input" and is meaningful in two states:
-/// - `HaltRequested`: a halt has been requested but the loop hasn’t parked
+/// - `HaltRequested`: a halt has been requested but the loop hasn't parked
 ///   yet; clicking Resume cancels the pending halt so the agent continues.
 /// - `Halted`: the loop is fully parked; clicking Resume wakes it with no
 ///   new input and the agent carries on from where it stopped.
@@ -176,8 +145,13 @@ pub fn show_abort(turn_state: TurnState) -> bool {
 // Component
 // ---------------------------------------------------------------------------
 
-/// Top-level composer surface. Reads from `SessionStore` (turn_state,
-/// session_info) and `WsClient` (send) via context.
+/// Top-level always-visible bottom bar. Contains session/panel/model/effort
+/// controls, the Prompt trigger button, turn controls, and the status chip.
+///
+/// The textarea, Send button, file completion, and editor invocation all
+/// live in [`crate::prompt_panel::PromptPanel`], which is rendered above
+/// this bar and can be collapsed without losing the draft.
+///
 /// Skipped from mutation testing: all mutations are in reactive signal
 /// callbacks and DOM event handlers; exercised exclusively by the e2e harness.
 #[mutants::skip]
@@ -185,21 +159,8 @@ pub fn show_abort(turn_state: TurnState) -> bool {
 pub fn Composer() -> impl IntoView {
     let store = use_context::<SessionStore>().expect("SessionStore must be provided");
     let ws = use_context::<WsClient>().expect("WsClient must be provided");
-
-    let textarea_ref = NodeRef::<html::Textarea>::new();
-
-    // Draft text. The textarea is the canonical source of truth for
-    // visible text via `prop:value`; we mirror it into `draft` for
-    // the send handler.
-    let draft = RwSignal::new(String::new());
-
-    // File-completion popup state.
-    let completion_items = RwSignal::new(Vec::<String>::new());
-    let completion_highlight = RwSignal::new(-1_i32);
-    let completion_open = RwSignal::new(false);
-    // Stable counter to drop stale fetch results — same pattern as
-    // SessionListStore::fetch_generation in 3.2.
-    let completion_seq: StoredValue<u64, LocalStorage> = StoredValue::new_local(0);
+    let prompt_panel =
+        use_context::<PromptPanelState>().expect("PromptPanelState must be provided");
 
     // Active model + effort, derived from session_info.
     let active_model = Memo::new(move |_| {
@@ -213,169 +174,24 @@ pub fn Composer() -> impl IntoView {
             .with(|si| si.as_ref().map_or_else(String::new, |s| s.effort.clone()))
     });
 
-    #[allow(unused_variables)]
-    let close_completion = move || {
-        completion_open.set(false);
-        completion_items.set(Vec::new());
-        completion_highlight.set(-1);
-    };
+    // ---- turn controls -----------------------------------------------------
 
-    // Fire a /api/files fetch for `prefix`. Stale fetches are
-    // discarded by comparing the seq token at completion time.
-    let query_completion = move |prefix: String| {
-        let next = completion_seq.with_value(|v| v.wrapping_add(1));
-        completion_seq.set_value(next);
-        spawn_local(async move {
-            match get_files(&prefix).await {
-                Ok(items) => {
-                    if completion_seq.with_value(|v| *v) != next {
-                        return; // stale
-                    }
-                    let any = !items.is_empty();
-                    completion_items.set(items);
-                    completion_highlight.set(-1);
-                    completion_open.set(any);
-                }
-                Err(_) => {
-                    if completion_seq.with_value(|v| *v) != next {
-                        return;
-                    }
-                    close_completion();
-                }
-            }
-        });
-    };
-
-    // Read cursor + value from the live textarea. JS-interop edge.
-    let read_textarea = move || -> Option<(String, usize)> {
-        let el = textarea_ref.get()?;
-        let value = el.value();
-        let cursor = el
-            .selection_start()
-            .ok()
-            .flatten()
-            .map_or_else(|| value.len(), |c| c as usize);
-        Some((value, cursor))
-    };
-
-    // Apply a textarea state update. Sets the value + cursor + draft
-    // signal in one shot. JS-interop edge.
-    let set_textarea_state = move |new_text: String, new_cursor: usize| {
-        if let Some(el) = textarea_ref.get() {
-            el.set_value(&new_text);
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-            let cursor_u32 = new_cursor.min(u32::MAX as usize) as u32;
-            let _ = el.set_selection_start(Some(cursor_u32));
-            let _ = el.set_selection_end(Some(cursor_u32));
-        }
-        draft.set(new_text);
-    };
-
-    // Accept the highlighted completion (or do nothing if none).
-    let accept_highlighted = move || {
-        let Some((text, cursor)) = read_textarea() else {
-            close_completion();
-            return;
-        };
-        let item_owned = completion_items.with(|items| {
-            selected_item(items, completion_highlight.get_untracked()).map(str::to_owned)
-        });
-        let Some(item) = item_owned else {
-            close_completion();
-            return;
-        };
-        let Some(out) = accept_completion(&text, cursor, &item) else {
-            close_completion();
-            return;
-        };
-        set_textarea_state(out.new_text, out.new_cursor);
-        if out.drill_in {
-            // Drill into the directory: fetch its children and keep
-            // popup open.
-            query_completion(item);
-        } else {
-            close_completion();
-        }
-    };
-
-    // ---- control handlers ---------------------------------------------------
-
-    // Send ALWAYS enqueues (§15): one user message = one push to the
-    // InputQueue. Parked → drained immediately; in-block → queued until
-    // the next seam. Works in every turn state.
-    // Enqueue `content` (§15: one user message = one push to the InputQueue)
-    // and clear the textarea. Shared by the keyboard and Send-button paths.
-    // No-op for blank content.
-    let send_content = move |content: String| {
-        if content.trim().is_empty() {
-            return;
-        }
-        if let Err(err) = ws.send(&ClientFrame::UserMessage { content }) {
-            leptos::logging::warn!("composer send failed: {err:?}");
-            return;
-        }
-        set_textarea_state(String::new(), 0);
-    };
-
-    let do_send = move || send_content(draft.get());
-
-    // Compose in the operator's configured editor ($OMEGA_EDITOR / $VISUAL /
-    // $EDITOR), seeded with the current draft. The result is dropped into the
-    // textarea for review — NOT sent — so the operator can edit it further or
-    // back out (clear it, or simply not press Send) even after saving in the
-    // editor. The editor launches on the server host (see `editor.rs`); on
-    // failure (no editor configured, non-zero exit) the draft is left
-    // untouched so the operator can fall back to typing in the browser, and
-    // the reason is surfaced in the transport-error banner — otherwise a
-    // misconfigured editor would make the button appear to do nothing.
-    let do_editor = move || {
-        let draft_now = draft.get();
-        spawn_local(async move {
-            match compose_via_editor(&draft_now).await {
-                Ok(content) => {
-                    // Fill the textarea (cursor at end) and focus it; the
-                    // operator reviews and presses Send. `set_selection_*`
-                    // clamps an over-long byte offset to the end.
-                    let cursor = content.len();
-                    set_textarea_state(content, cursor);
-                    if let Some(el) = textarea_ref.get() {
-                        let _ = el.focus();
-                    }
-                }
-                Err(err) => {
-                    leptos::logging::warn!("composer editor failed: {err}");
-                    store
-                        .transport_errors
-                        .update(|v| v.push(format!("Editor: {err}")));
-                }
-            }
-        });
-    };
-
-    // Halt: ask the run loop to park at the next seam.
     let do_halt = move || {
         if let Err(err) = ws.send(&ClientFrame::Halt) {
             leptos::logging::warn!("composer halt failed: {err:?}");
         }
     };
-
-    // Resume: continue a halted loop with no new input ("never mind,
-    // carry on"). The other way to resume is simply Send-ing a steering
-    // message, which wakes the halt park with that input injected.
     let do_resume = move || {
         if let Err(err) = ws.send(&ClientFrame::Resume) {
             leptos::logging::warn!("composer resume failed: {err:?}");
         }
     };
-
     let do_abort = move || {
         if let Err(err) = ws.send(&ClientFrame::Abort) {
             leptos::logging::warn!("composer abort failed: {err:?}");
         }
     };
 
-    let on_send_click = move |_| do_send();
-    let on_editor_click = move |_| do_editor();
     let on_halt_click = move |_| do_halt();
     let on_resume_click = move |_| do_resume();
     let on_abort_click = move |_| do_abort();
@@ -393,76 +209,8 @@ pub fn Composer() -> impl IntoView {
         }
     };
 
-    // ---- textarea event handlers -------------------------------------------
+    // ---- Sessions picker ---------------------------------------------------
 
-    let on_input = move |evt: ev::Event| {
-        let Some(el) = evt
-            .target()
-            .and_then(|t| t.dyn_into::<HtmlTextAreaElement>().ok())
-        else {
-            return;
-        };
-        let text = el.value();
-        let cursor = el
-            .selection_start()
-            .ok()
-            .flatten()
-            .map_or_else(|| text.len(), |c| c as usize);
-        draft.set(text.clone());
-        match at_token_at_cursor(&text, cursor) {
-            Some(token) => query_completion(token.prefix),
-            None => close_completion(),
-        }
-    };
-
-    let on_keydown = move |evt: ev::KeyboardEvent| {
-        let key = evt.key();
-        let shift = evt.shift_key();
-        let popup_open = completion_open.get_untracked();
-        if popup_open {
-            // Popup-scoped keys come first.
-            if key == "Escape" {
-                evt.prevent_default();
-                close_completion();
-                return;
-            }
-            if key == "Enter" {
-                evt.prevent_default();
-                if completion_highlight.get_untracked() >= 0 {
-                    accept_highlighted();
-                } else {
-                    close_completion();
-                }
-                return;
-            }
-            if key == "ArrowDown" || (key == "Tab" && !shift) {
-                evt.prevent_default();
-                let len = completion_items.with_untracked(Vec::len);
-                completion_highlight.update(|h| *h = next_highlight(*h, len, 1));
-                return;
-            }
-            if key == "ArrowUp" || (key == "Tab" && shift) {
-                evt.prevent_default();
-                let len = completion_items.with_untracked(Vec::len);
-                completion_highlight.update(|h| *h = next_highlight(*h, len, -1));
-                return;
-            }
-            // Other keys fall through to the textarea (typing narrows
-            // the prefix; on_input fires next).
-        }
-
-        // ⏎ (no Shift): Send always enqueues — works in every turn state
-        // (parked → drained immediately; in-block → queued for the next
-        // seam). ⇧⏎ falls through to the textarea for a newline.
-        if key == "Enter" && !shift {
-            evt.prevent_default();
-            do_send();
-        }
-    };
-
-    // ---- view --------------------------------------------------------------
-
-    // "Sessions" button toggles the picker (Phase 3.9 TODO-1).
     let picker_open = use_context::<PickerOpen>().expect("PickerOpen must be provided");
     let on_sessions_click = move |_| {
         if picker_open.open.get_untracked() {
@@ -471,6 +219,25 @@ pub fn Composer() -> impl IntoView {
             picker_open.open();
         }
     };
+
+    // ---- Prompt button -----------------------------------------------------
+    //
+    // Opens the collapsible PromptPanel. If the server has an external
+    // editor configured, also fires the editor immediately (via the
+    // trigger_editor counter) so clicking Prompt goes straight to the
+    // editor without a second click.
+
+    let on_prompt_click = move |_| {
+        let editor_configured = store
+            .session_info
+            .with(|si| si.as_ref().is_some_and(|s| s.editor_configured));
+        prompt_panel.open.set(true);
+        if editor_configured {
+            prompt_panel.trigger_editor.update(|v| *v += 1);
+        }
+    };
+
+    // ---- view --------------------------------------------------------------
 
     view! {
         <section
@@ -489,35 +256,18 @@ pub fn Composer() -> impl IntoView {
             <PanelsMenuButton />
             <ModelSelect active=active_model on_change=on_model_change />
             <EffortSelect active=active_effort active_model=active_model on_change=on_effort_change />
-            <div class="leptos-composer-textarea-wrap">
-                <Show
-                    when=move || completion_open.get()
-                    fallback=|| ().into_any()
-                >
-                    <FileCompletionDropdown
-                        items=completion_items
-                        highlight=completion_highlight
-                        on_pick=move |item: String| {
-                            let Some((text, cursor)) = read_textarea() else { return };
-                            let Some(out) = accept_completion(&text, cursor, &item) else { return };
-                            set_textarea_state(out.new_text, out.new_cursor);
-                            if out.drill_in {
-                                query_completion(item);
-                            } else {
-                                close_completion();
-                            }
-                        }
-                    />
+            <button
+                class="leptos-composer-prompt"
+                data-testid="leptos-composer-prompt"
+                data-panel-open=move || prompt_panel.open.get().to_string()
+                title="Open prompt panel (compose your message)"
+                on:click=on_prompt_click
+            >
+                <Show when=move || !prompt_panel.draft.with(|d| d.trim().is_empty()) fallback=|| ()>
+                    <span class="prompt-draft-dot" aria-label="unsent draft" />
                 </Show>
-                <textarea
-                    class="leptos-composer-input"
-                    data-testid="leptos-composer-input"
-                    node_ref=textarea_ref
-                    on:input=on_input
-                    on:keydown=on_keydown
-                    placeholder="Message Omega… (@ for file, Enter to send, Shift+Enter for newline)"
-                />
-            </div>
+                "Prompt"
+            </button>
             <Show when=move || show_halt(store.turn_state.get()) fallback=|| ().into_any()>
                 <button
                     class="leptos-composer-halt"
@@ -545,22 +295,6 @@ pub fn Composer() -> impl IntoView {
                     "▶"
                 </button>
             </Show>
-            <button
-                class="leptos-composer-editor"
-                data-testid="leptos-composer-editor"
-                title="Compose in your editor ($OMEGA_EDITOR), then review & Send"
-                on:click=on_editor_click
-            >
-                "✎ Editor"
-            </button>
-            <button
-                class="leptos-composer-primary"
-                data-testid="leptos-composer-primary"
-                data-action="send"
-                on:click=on_send_click
-            >
-                "Send ⏎"
-            </button>
             <StatusChip />
         </section>
     }
@@ -875,58 +609,6 @@ fn StatusChip() -> impl IntoView {
             data-event-type=event_type
         >
             {text}
-        </div>
-    }
-}
-
-#[component]
-fn FileCompletionDropdown<F>(
-    items: RwSignal<Vec<String>>,
-    highlight: RwSignal<i32>,
-    on_pick: F,
-) -> impl IntoView
-where
-    F: Fn(String) + Copy + Send + Sync + 'static,
-{
-    let each = move || {
-        let v: Vec<(usize, String)> = items.get().into_iter().enumerate().collect();
-        v
-    };
-    let key = |(idx, item): &(usize, String)| (*idx, item.clone());
-    let children = move |(idx, item): (usize, String)| {
-        let item_for_click = item.clone();
-        let item_for_class = item.clone();
-        let item_for_attr = item.clone();
-        view! {
-            <div
-                class=move || {
-                    let mut s = String::from("leptos-composer-completion-item");
-                    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-                    if highlight.get() == idx as i32 {
-                        s.push_str(" leptos-composer-completion-hl");
-                    }
-                    if item_for_class.ends_with('/') {
-                        s.push_str(" leptos-composer-completion-dir");
-                    }
-                    s
-                }
-                data-testid="leptos-composer-completion-item"
-                data-completion=item_for_attr
-                on:mousedown=move |evt: ev::MouseEvent| {
-                    evt.prevent_default(); // keep focus in textarea
-                    on_pick(item_for_click.clone());
-                }
-            >
-                {item}
-            </div>
-        }
-    };
-    view! {
-        <div
-            class="leptos-composer-completion"
-            data-testid="leptos-composer-completion"
-        >
-            <For each=each key=key children=children />
         </div>
     }
 }

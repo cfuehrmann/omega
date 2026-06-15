@@ -41,6 +41,7 @@ pub mod http;
 pub mod markdown;
 pub mod monitors_panel;
 pub mod picker;
+pub mod prompt_panel;
 pub mod protocol;
 pub mod queue_panel;
 pub mod sessions;
@@ -57,6 +58,7 @@ use crate::dirty_modal::DirtyModal;
 use crate::feed::ConversationFeed;
 use crate::monitors_panel::{MonitorsPanel, MonitorsPanelOpen};
 use crate::picker::{PickerOpen, SessionPicker};
+use crate::prompt_panel::{PromptPanel, PromptPanelState};
 use crate::protocol::TurnState;
 use crate::queue_panel::{QueuePanel, QueuePanelOpen};
 use crate::sessions::SessionListStore;
@@ -103,6 +105,10 @@ pub fn App() -> impl IntoView {
     provide_context(usage_panel_open);
     provide_context(monitors_panel_open);
     provide_context(queue_panel_open);
+
+    // Prompt panel state — pre-loads draft from localStorage.
+    let prompt_panel_state = PromptPanelState::new();
+    provide_context(prompt_panel_state);
 
     let ws = WsClient::new(
         ws_url_from_window().unwrap_or_else(|err| {
@@ -178,6 +184,7 @@ pub fn App() -> impl IntoView {
                 <MonitorsPanel />
             </div>
             <Show when=move || session_has_loaded(store.session_info.with(Option::is_some)) fallback=|| ()>
+                <PromptPanel />
                 <Composer />
             </Show>
             <ContextModal />

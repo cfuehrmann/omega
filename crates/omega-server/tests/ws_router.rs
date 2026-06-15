@@ -234,11 +234,19 @@ async fn reset_and_ready(ws: &mut WsClient) -> String {
         .to_owned()
 }
 
-/// Redact volatile JSON fields (time, dir, cwd, contextHash, hasPendingChanges)
-/// so snapshots are stable across runs.
+/// Redact volatile JSON fields (time, dir, cwd, contextHash, hasPendingChanges,
+/// editorConfigured) so snapshots are stable across runs.
+/// `editorConfigured` varies by test-runner environment (editor env-vars).
 fn redact(mut v: serde_json::Value) -> serde_json::Value {
     if let Some(obj) = v.as_object_mut() {
-        for key in &["time", "dir", "cwd", "contextHash", "hasPendingChanges"] {
+        for key in &[
+            "time",
+            "dir",
+            "cwd",
+            "contextHash",
+            "hasPendingChanges",
+            "editorConfigured",
+        ] {
             if obj.contains_key(*key) {
                 obj.insert(
                     (*key).to_owned(),

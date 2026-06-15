@@ -110,6 +110,12 @@ pub struct SessionInfoPayload {
     /// Omitted on the wire when absent (server uses `Option::is_none`).
     #[serde(default)]
     pub name: Option<String>,
+    /// Whether the server has an external editor configured
+    /// (`OMEGA_EDITOR` / `VISUAL` / `EDITOR`).  Omitted on the wire when
+    /// `false`; present as `editorConfigured: true` otherwise.  Used by
+    /// the Prompt button to skip the panel and go straight to the editor.
+    #[serde(default)]
+    pub editor_configured: bool,
 }
 
 /// Body of a `history` frame. The `streaming` flag is omitted on the

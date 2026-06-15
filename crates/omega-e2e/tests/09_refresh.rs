@@ -59,10 +59,13 @@ fn multi_tool_script() -> Vec<MockResponse> {
 }
 
 async fn send_message(h: &TestHarness, content: &str) {
-    h.fill("[data-testid=\"leptos-composer-input\"]", content)
+    h.click("[data-testid=\"leptos-composer-prompt\"]")
+        .await
+        .expect("open prompt panel");
+    h.fill("[data-testid=\"leptos-prompt-panel-input\"]", content)
         .await
         .expect("fill composer");
-    h.press_key("[data-testid=\"leptos-composer-input\"]", "Enter")
+    h.press_key("[data-testid=\"leptos-prompt-panel-input\"]", "Enter")
         .await
         .expect("submit composer");
 }

@@ -24,8 +24,12 @@ use omega_e2e::{MockResponse, TestHarness, ToolUseSpec};
 use serde_json::json;
 
 const COMPOSER: &str = "[data-testid=\"leptos-composer\"]";
-const INPUT: &str = "[data-testid=\"leptos-composer-input\"]";
-const PRIMARY: &str = "[data-testid=\"leptos-composer-primary\"]";
+/// Prompt button in the bottom bar — opens the collapsible prompt panel.
+const PROMPT_BTN: &str = "[data-testid=\"leptos-composer-prompt\"]";
+/// Textarea inside the open prompt panel.
+const INPUT: &str = "[data-testid=\"leptos-prompt-panel-input\"]";
+/// Send button inside the open prompt panel.
+const PRIMARY: &str = "[data-testid=\"leptos-prompt-panel-send\"]";
 const HALT: &str = "[data-testid=\"leptos-composer-halt\"]";
 const RESUME: &str = "[data-testid=\"leptos-composer-resume\"]";
 const ABORT: &str = "[data-testid=\"leptos-composer-abort\"]";
@@ -98,6 +102,15 @@ async fn wait_for_turn_state(h: &TestHarness, expected: &str, timeout: Duration)
         .unwrap_or_else(|e| panic!("turn_state never reached {expected:?}: {e}"));
 }
 
+/// Open the collapsible prompt panel by clicking the Prompt button, then
+/// wait for the textarea to become available.
+async fn open_prompt_panel(h: &TestHarness) {
+    h.click(PROMPT_BTN).await.expect("click Prompt button");
+    h.wait_for_selector(INPUT, Duration::from_secs(3))
+        .await
+        .expect("prompt panel textarea did not appear");
+}
+
 // ---------------------------------------------------------------------------
 // 1. Send — happy path
 // ---------------------------------------------------------------------------
@@ -110,6 +123,7 @@ async fn composer_send_pong() {
     h.reset_calls().await.expect("reset_calls");
     h.load_script(pong_script()).await.expect("load_script");
     h.new_session().await.expect("new_session");
+    open_prompt_panel(&h).await;
 
     // Primary starts as data-action="send".
     let action = h.attr(PRIMARY, "data-action").await.expect("attr");
@@ -140,7 +154,8 @@ async fn composer_send_pong() {
         .expect("read assistant text");
     assert!(body.contains("pong"), "expected 'pong' in: {body:?}");
 
-    // Composer cleared; back to "send".
+    // Re-open panel to verify it was cleared after send.
+    open_prompt_panel(&h).await;
     let value: String = h
         .eval(&format!("document.querySelector('{INPUT}').value"))
         .await
@@ -164,6 +179,7 @@ async fn composer_halt_during_tool() {
         .await
         .expect("load_script");
     h.new_session().await.expect("new_session");
+    open_prompt_panel(&h).await;
 
     h.fill(INPUT, "go halt").await.expect("fill");
     h.click(PRIMARY).await.expect("click send");
@@ -221,6 +237,7 @@ async fn composer_halt_then_steer() {
         .await
         .expect("load_script");
     h.new_session().await.expect("new_session");
+    open_prompt_panel(&h).await;
 
     h.fill(INPUT, "trigger steer").await.expect("fill");
     h.click(PRIMARY).await.expect("click send");
@@ -230,8 +247,10 @@ async fn composer_halt_then_steer() {
     h.click(HALT).await.expect("click halt");
     wait_for_turn_state(&h, "halted", Duration::from_secs(15)).await;
 
-    // Compose a steering message while halted, then Send it. Send ALWAYS
-    // enqueues; the parked halt loop pops it, injects it, and resumes.
+    // Re-open the panel (it was closed after the first send) to compose a
+    // steering message, then Send it. Send ALWAYS enqueues; the parked halt
+    // loop pops it, injects it, and resumes.
+    open_prompt_panel(&h).await;
     h.fill(INPUT, "actually focus on src/web/server.rs")
         .await
         .expect("fill steering message");
@@ -240,7 +259,8 @@ async fn composer_halt_then_steer() {
     // Turn resumes.
     wait_for_turn_state(&h, "running", Duration::from_secs(5)).await;
 
-    // Textarea cleared on send.
+    // Re-open panel to verify it was cleared after send.
+    open_prompt_panel(&h).await;
     let value: String = h
         .eval(&format!("document.querySelector('{INPUT}').value"))
         .await
@@ -295,6 +315,7 @@ async fn composer_halt_then_abort() {
         .await
         .expect("load_script");
     h.new_session().await.expect("new_session");
+    open_prompt_panel(&h).await;
 
     h.fill(INPUT, "go abort").await.expect("fill");
     h.click(PRIMARY).await.expect("click send");
@@ -338,6 +359,7 @@ async fn composer_switch_model_idle() {
 
     // Run one full turn so the bug-prone "stale lastTurnEnd.model"
     // path is exercised.
+    open_prompt_panel(&h).await;
     h.fill(INPUT, "ping").await.expect("fill");
     h.press_key(INPUT, "Enter").await.expect("submit");
     wait_for_turn_state(&h, "idle", Duration::from_secs(10)).await;
@@ -421,7 +443,8 @@ async fn composer_completion_accept() {
     h.load_script(pong_script()).await.expect("load_script");
     h.new_session().await.expect("new_session");
 
-    // Type @crates/ — popup should appear.
+    // Open prompt panel, then type @crates/ — popup should appear.
+    open_prompt_panel(&h).await;
     h.fill(INPUT, "@crates/").await.expect("fill");
     h.wait_for_selector(
         "[data-testid=\"leptos-composer-completion\"]",

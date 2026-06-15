@@ -42,6 +42,7 @@ use omega_web::context_modal::{ContextModal, ContextModalState};
 use omega_web::feed::{EventBlock, MarkdownBody};
 use omega_web::monitors_panel::{MonitorsPanel, MonitorsPanelOpen};
 use omega_web::picker::PickerOpen;
+use omega_web::prompt_panel::PromptPanelState;
 use omega_web::protocol::{InputQueueItem, MonitorRosterEntry, SessionInfoPayload, TurnState};
 use omega_web::queue_panel::{QueuePanel, QueuePanelOpen};
 use omega_web::store::SessionStore;
@@ -840,6 +841,7 @@ mod composer_states {
             turn_state,
             has_pending_changes: false,
             name: None,
+            editor_configured: false,
         }));
         store.turn_state.set(turn_state);
         provide_context(store);
@@ -853,6 +855,8 @@ mod composer_states {
         provide_context(UsagePanelOpen::new());
         provide_context(MonitorsPanelOpen::new());
         provide_context(QueuePanelOpen::new());
+        // Prompt panel state — required by <Composer /> (Prompt button).
+        provide_context(PromptPanelState::new());
     }
 
     #[test]
@@ -1307,5 +1311,36 @@ fn monitors_panel_css_is_defined_in_style_css() {
     assert!(
         css.contains(".bottom-panel"),
         "style.css must define .bottom-panel (shared panel base class)"
+    );
+}
+
+#[test]
+#[cfg(feature = "ssr")]
+fn prompt_panel_css_is_defined_in_style_css() {
+    let manifest =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set during tests");
+    let css_path = std::path::Path::new(&manifest).join("style.css");
+    let css = std::fs::read_to_string(&css_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", css_path.display()));
+
+    assert!(
+        css.contains(".prompt-panel"),
+        "style.css must define .prompt-panel; add the rule or the panel will be unstyled"
+    );
+    assert!(
+        css.contains(".prompt-panel-input"),
+        "style.css must define .prompt-panel-input; add the rule or the textarea will be unstyled"
+    );
+    assert!(
+        css.contains(".prompt-panel-send"),
+        "style.css must define .prompt-panel-send; add the rule or the send button will be unstyled"
+    );
+    assert!(
+        css.contains(".leptos-composer-prompt"),
+        "style.css must define .leptos-composer-prompt; add the rule or the Prompt button will be unstyled"
+    );
+    assert!(
+        css.contains(".prompt-draft-dot"),
+        "style.css must define .prompt-draft-dot; add the rule or the draft badge will be unstyled"
     );
 }

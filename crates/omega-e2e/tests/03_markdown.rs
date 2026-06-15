@@ -346,13 +346,16 @@ async fn md_streaming_overlay_renders_raw_text() {
     .expect("load_script");
 
     h.new_session().await.expect("new_session");
+    h.click("[data-testid=\"leptos-composer-prompt\"]")
+        .await
+        .expect("open prompt panel");
     h.fill(
-        "[data-testid=\"leptos-composer-input\"]",
+        "[data-testid=\"leptos-prompt-panel-input\"]",
         "render streaming",
     )
     .await
     .expect("fill");
-    h.press_key("[data-testid=\"leptos-composer-input\"]", "Enter")
+    h.press_key("[data-testid=\"leptos-prompt-panel-input\"]", "Enter")
         .await
         .expect("submit");
 
