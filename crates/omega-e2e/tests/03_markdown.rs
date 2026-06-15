@@ -42,10 +42,16 @@ async fn run_assistant_turn(h: &TestHarness, markdown: &str) {
     // pollute the assertions.
     h.new_session().await.expect("new_session");
 
-    h.fill("[data-testid=\"leptos-composer-input\"]", "render markdown")
+    h.click("[data-testid=\"leptos-composer-prompt\"]")
         .await
-        .expect("fill composer");
-    h.press_key("[data-testid=\"leptos-composer-input\"]", "Enter")
+        .expect("open prompt panel");
+    h.fill(
+        "[data-testid=\"leptos-prompt-panel-input\"]",
+        "render markdown",
+    )
+    .await
+    .expect("fill composer");
+    h.press_key("[data-testid=\"leptos-prompt-panel-input\"]", "Enter")
         .await
         .expect("submit");
 

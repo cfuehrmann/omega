@@ -222,14 +222,23 @@ pub fn Composer() -> impl IntoView {
 
     // ---- Prompt button -----------------------------------------------------
     //
-    // Always opens the PromptPanel AND fires the editor immediately — same
-    // effect as opening the panel then clicking its "Editor" button. The
-    // button is disabled while the panel is already open to prevent a second
-    // editor from launching.
+    // Always opens the PromptPanel.  Additionally fires the external editor
+    // *only* when the server reports one is configured
+    // (`editorConfigured: true`) — same effect as opening the panel then
+    // clicking its "Editor" button.  When no editor is configured (the e2e
+    // test server, and any operator without $EDITOR/$VISUAL/$OMEGA_EDITOR),
+    // the button just expands the panel for typed input and never touches
+    // `/api/compose`.  The button is disabled while the panel is already
+    // open to prevent a second editor from launching.
 
     let on_prompt_click = move |_| {
         prompt_panel.open.set(true);
-        prompt_panel.trigger_editor.update(|v| *v += 1);
+        let editor_configured = store
+            .session_info
+            .with(|si| si.as_ref().is_some_and(|s| s.editor_configured));
+        if editor_configured {
+            prompt_panel.trigger_editor.update(|v| *v += 1);
+        }
     };
 
     // ---- view --------------------------------------------------------------

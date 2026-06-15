@@ -183,6 +183,25 @@ web-mutants: wasm-setup
     mkdir -p {{mutants-tmp}}
     cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cargo-arg=--target=wasm32-unknown-unknown
 
+# Run cargo-mutants targeted at the retry/backoff loop (retry.rs).
+# Covers compute_backoff (Retry-After vs. exponential), the give-up
+# predicate (max_attempts: Option<u32> — None = retry indefinitely), and
+# the LlmRetry event construction. Exercised via tests/retry.rs through a
+# real AnthropicProvider + wiremock. Template: mutants-system-prompt-guard.
+# Uses --in-place to avoid copying the large (incl. leptos wasm) target tree.
+mutants-retry:
+    cargo mutants -p omega-core --in-place --cap-lints=true --file "crates/omega-core/src/retry.rs"
+
+# Run cargo-mutants targeted at LlmError::is_retryable / retry_after / status
+# in types.rs. Verifies the "any 5xx + 429 (minus long-context) is retryable"
+# classification that decides which "Anthropic can't serve" situations are
+# retried. Exercised via tests/retry.rs. Template: mutants-system-prompt-guard.
+# Uses --in-place to avoid copying the large (incl. leptos wasm) target tree.
+mutants-llm-error-retryable:
+    cargo mutants -p omega-core --in-place --cap-lints=true \
+        --file "crates/omega-core/src/types.rs" \
+        -F "is_retryable|retry_after|fn status"
+
 # Run cargo-mutants targeted at the system-prompt-path guard only.
 # Mutates only omega-tools/src/lib.rs (where the guard logic lives)
 # and runs the fast omega-tools test suite (no network, no subprocesses).

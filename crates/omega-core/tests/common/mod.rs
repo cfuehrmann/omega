@@ -79,7 +79,20 @@ pub fn id_redactor() -> IdRedactor {
 #[must_use]
 pub fn fast_retry_config(max_attempts: u32) -> RetryConfig {
     RetryConfig {
-        max_attempts,
+        max_attempts: Some(max_attempts),
+        initial_backoff: Duration::from_millis(1),
+        max_backoff: Duration::from_millis(16),
+        jitter: false,
+    }
+}
+
+/// Like [`fast_retry_config`] but with `max_attempts: None` — the
+/// production "retry indefinitely" mode.  Lets a test prove the loop
+/// keeps going well past any old finite cap.
+#[must_use]
+pub fn indefinite_fast_retry_config() -> RetryConfig {
+    RetryConfig {
+        max_attempts: None,
         initial_backoff: Duration::from_millis(1),
         max_backoff: Duration::from_millis(16),
         jitter: false,
@@ -91,7 +104,7 @@ pub fn fast_retry_config(max_attempts: u32) -> RetryConfig {
 #[must_use]
 pub fn fast_retry_config_with_jitter(max_attempts: u32) -> RetryConfig {
     RetryConfig {
-        max_attempts,
+        max_attempts: Some(max_attempts),
         initial_backoff: Duration::from_millis(1),
         max_backoff: Duration::from_millis(16),
         jitter: true,

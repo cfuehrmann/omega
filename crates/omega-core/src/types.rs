@@ -263,7 +263,14 @@ impl LlmError {
                 {
                     return false;
                 }
-                matches!(*status, 429 | 500 | 503 | 529)
+                // Any server-side "can't serve" status is retryable, whatever
+                // the exact code: every 5xx (500 api_error, 502 bad gateway,
+                // 503 unavailable, 504 timeout_error, 529 overloaded_error,
+                // the Cloudflare 52x family, …) plus 429 rate-limiting (which
+                // is transient and carries Retry-After).  Client-side 4xx
+                // other than 429 (400/401/403/404/413) are our fault and the
+                // same request will fail again — those stay terminal.
+                *status >= 500 || *status == 429
             }
             Self::Stream { message } | Self::Other { message } => {
                 // Anthropic delivers several error types as payload-only

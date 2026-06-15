@@ -186,7 +186,12 @@ async fn composer_halt_during_tool() {
 
     wait_for_turn_state(&h, "running", Duration::from_secs(10)).await;
 
-    // Primary is ALWAYS "send" now; Halt is a secondary button while running.
+    // The panel collapsed on send; re-open it to confirm its Send button
+    // never morphs into a Halt control. Halt is a separate, always-visible
+    // bottom-bar button while running. The panel stays open from here on (it
+    // pushes the feed up and never overlays the bottom bar), so the
+    // halted-state check below reads the same Send button without re-opening.
+    open_prompt_panel(&h).await;
     let action = h.attr(PRIMARY, "data-action").await.expect("attr");
     assert_eq!(action.as_deref(), Some("send"));
     h.wait_for_selector(HALT, Duration::from_secs(2))
@@ -198,8 +203,8 @@ async fn composer_halt_during_tool() {
     // Parks at the next seam (after the in-flight tool result).
     wait_for_turn_state(&h, "halted", Duration::from_secs(15)).await;
 
-    // In Halted: primary stays "send"; Resume + Abort are the secondary
-    // controls.
+    // In Halted: the panel (still open) keeps its Send button; Resume +
+    // Abort are the secondary controls in the bottom bar.
     let action = h.attr(PRIMARY, "data-action").await.expect("attr");
     assert_eq!(action.as_deref(), Some("send"));
     h.wait_for_selector(RESUME, Duration::from_secs(2))

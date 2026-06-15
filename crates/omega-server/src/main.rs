@@ -74,13 +74,10 @@ async fn main() -> std::io::Result<()> {
     // `clear_thinking_20251015`, and `compact_20260112` edit types.
     .with_beta("compact-2026-01-12")
     .with_beta("context-management-2025-06-27");
-    let provider = Arc::new(RetryingProvider::new(
-        inner,
-        RetryConfig {
-            max_attempts: 4,
-            ..RetryConfig::default()
-        },
-    ));
+    // Indefinite retry: ride out Anthropic outages for as long as they
+    // last (each attempt emits an LlmRetry event to UI + events.jsonl).
+    // The default `max_attempts: None` does exactly this.
+    let provider = Arc::new(RetryingProvider::new(inner, RetryConfig::default()));
 
     let state = AppState::new(
         provider,

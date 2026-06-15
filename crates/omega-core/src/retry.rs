@@ -2,15 +2,22 @@
 //!
 //! Mirrors the TypeScript agent's retry loop (see `src/agent.ts`):
 //!
-//! - Retry on transient errors (HTTP 429, 500, 503, 529; Anthropic SSE
-//!   `overloaded_error` events; transport-level failures).
+//! - Retry on any "Anthropic can't serve" condition: HTTP 429 plus any
+//!   5xx status (500/502/503/504/529/Cloudflare 52x/…), Anthropic SSE
+//!   `overloaded_error` / `api_error` events, and transport-level
+//!   failures.  See [`crate::LlmError::is_retryable`].
 //! - Honour the `Retry-After` header when the provider sets one.
 //! - Otherwise back off exponentially with ±10 % jitter, capped at
 //!   `max_backoff`.
 //! - Emit an [`OmegaEvent::LlmRetry`] before each retry, carrying any
 //!   text / thinking fragments already streamed to the UI so the client
 //!   can roll back its in-flight assistant bubble.
-//! - After `max_attempts` retries, the last error propagates to the
+//! - Retry indefinitely by default (`max_attempts: None`): a server-side
+//!   "can't serve" condition is retried for as long as it persists, one
+//!   attempt per `max_backoff` once the exponential ramp saturates, with
+//!   an [`OmegaEvent::LlmRetry`] emitted before each attempt.  A bounded
+//!   `max_attempts: Some(n)` caps the loop (used by tests and the
+//!   one-shot CLI); when the cap is hit the last error propagates to the
 //!   caller (which then emits an [`OmegaEvent::LlmError`]).
 
 use std::sync::Arc;
@@ -33,10 +40,13 @@ use crate::types::{AgentItem, LlmError, LlmRequest};
 /// Knobs for [`RetryingProvider`].
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
-    /// Maximum total attempts including the initial one.  Set to a
-    /// small finite value in tests; production typically uses 32 or
-    /// higher (overload retries can run for many minutes).
-    pub max_attempts: u32,
+    /// Maximum total attempts including the initial one.  `None` retries
+    /// indefinitely — the production default, so a server-side outage is
+    /// ridden out for as long as it lasts (cancellation is the escape
+    /// hatch).  `Some(n)` caps the loop: tests use small values, and the
+    /// one-shot CLI bounds it via `OMEGA_RETRY_MAX_ATTEMPTS` so it can't
+    /// hang forever when Anthropic is down.
+    pub max_attempts: Option<u32>,
     /// Backoff for the first retry.  Each subsequent retry doubles.
     pub initial_backoff: Duration,
     /// Cap on the exponentially-growing backoff.
@@ -48,7 +58,7 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_attempts: 32,
+            max_attempts: None,
             initial_backoff: Duration::from_millis(500),
             max_backoff: Duration::from_mins(1),
             jitter: true,
@@ -132,7 +142,8 @@ fn retry_loop<P: Provider + ?Sized + 'static>(
                 // longer needed.
                 drop(stream);
                 let next_attempt = s.attempt + 1;
-                if !err.is_retryable() || next_attempt >= s.config.max_attempts {
+                let capped = s.config.max_attempts.is_some_and(|m| next_attempt >= m);
+                if !err.is_retryable() || capped {
                     s.done = true;
                     Some((Err(err), s))
                 } else {

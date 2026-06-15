@@ -844,6 +844,15 @@ fn spawn_mock_server(main_port: u16, ctrl_port: u16, sessions_root: &Path) -> Re
         // sees real subdirectories (e.g. `rust/`, `frontends/`).
         .current_dir(workspace_root())
         .env("OMEGA_ALLOW_DIRTY", "1")
+        // Hard guarantee: no e2e test may ever launch the operator's real
+        // editor. The mock server hosts the production `/api/compose`
+        // route, which spawns `$OMEGA_EDITOR` / `$VISUAL` / `$EDITOR` on
+        // the server host. Strip those from the child's environment so
+        // `is_editor_configured()` reports false and `compose_with_editor`
+        // returns an error string instead of opening a window.
+        .env_remove("OMEGA_EDITOR")
+        .env_remove("VISUAL")
+        .env_remove("EDITOR")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

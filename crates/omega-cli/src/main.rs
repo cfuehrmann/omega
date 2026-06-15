@@ -211,10 +211,17 @@ async fn run(
             RetryConfig::default().initial_backoff,
             Duration::from_millis,
         );
+    // OMEGA_RETRY_MAX_ATTEMPTS: caps the retry loop. Unset (production)
+    // means `None` — retry indefinitely, riding out Anthropic outages
+    // until they clear or the user Ctrl-C's. Set to a finite value to keep
+    // retry tests from hanging when every attempt fails.
+    let max_attempts = std::env::var("OMEGA_RETRY_MAX_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok());
     let provider = Arc::new(RetryingProvider::new(
         anthropic,
         RetryConfig {
-            max_attempts: 4,
+            max_attempts,
             initial_backoff,
             ..RetryConfig::default()
         },

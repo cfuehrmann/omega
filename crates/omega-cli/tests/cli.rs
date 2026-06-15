@@ -395,14 +395,17 @@ async fn tool_use_then_text() {
 // 5. Retry exhaustion (terminal after max_attempts)
 // ---------------------------------------------------------------------------
 
-/// Mock returns four retryable HTTP 500s, then a text response. With
-/// `max_attempts: 4` (production wiring) the retry loop gives up on the
-/// 4th attempt, the agent emits `AgentError` + `TurnInterrupted{Error}`,
-/// the CLI exits non-zero. Kills:
+/// Mock returns four retryable HTTP 500s, then a text response. The
+/// production default is `max_attempts: None` (retry indefinitely), so
+/// this test sets `OMEGA_RETRY_MAX_ATTEMPTS=4` to bound the loop —
+/// otherwise it would retry the 500s forever and never terminate. With
+/// the cap of 4 the retry loop gives up on the 4th attempt, the agent
+/// emits `AgentError` + `TurnInterrupted{Error}`, and the CLI exits
+/// non-zero. Kills:
 ///
 /// - `delete field max_attempts from struct RetryConfig expression`
-///   (deleting the field falls through to the 32-default; the 5th
-///   attempt would succeed and exit code/stderr would change).
+///   (deleting the field falls through to the `None` default → retry
+///   forever; the test would hang instead of terminating).
 /// - `delete field initial_backoff from struct RetryConfig expression`
 ///   (deleting the field falls through to the 500 ms default; we read
 ///   `wait_ms` from the persisted `llm_retry` events to verify the
@@ -434,6 +437,7 @@ async fn retry_exhaustion_emits_agent_error_and_turn_interrupted() {
         .env("ANTHROPIC_API_KEY", "sk-test")
         .env("ANTHROPIC_BASE_URL", &mock.base_url)
         .env("OMEGA_RETRY_INITIAL_MS", "1")
+        .env("OMEGA_RETRY_MAX_ATTEMPTS", "4")
         .current_dir(temp.path())
         .args([
             "run",

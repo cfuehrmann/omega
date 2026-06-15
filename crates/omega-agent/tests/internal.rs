@@ -65,6 +65,16 @@
 //!    `docs/monitors-design.html` by construction.  This is a string-scan
 //!    assertion and is not suitable for mutation testing; that is noted in
 //!    the Justfile recipe `mutants-a1-guard`.
+//!
+//! 5. **Provider-error event persistence.** When the provider stream
+//!    surfaces a terminal `LlmError` (a non-retryable "can't serve"
+//!    status) or a mid-stream `LlmRetry`, the agent must emit that event
+//!    onto BOTH the wire (what the UI renders) AND `events.jsonl` (the
+//!    on-disk log).  Provoking a chosen provider error verbatim needs
+//!    in-process injection via `MockProvider`; the HTTP/SSE fake can't
+//!    target a specific terminal status as cleanly.  These two tests pin
+//!    the emit→UI→disk invariant so the two channels can't silently
+//!    diverge.
 
 #![allow(
     clippy::expect_used,
@@ -89,7 +99,7 @@ use omega_types::events::MonitorStopReason;
 use omega_types::events::ToolResultEvent;
 use omega_types::events::{
     ContextCompactedEvent, HarnessRecoveryKind, LlmResponseEndedEvent, LlmResponseUsage,
-    UsageIteration,
+    LlmRetryEvent, UsageIteration,
 };
 use omega_types::{FeatureFlags, OmegaEvent, StreamSignal};
 use serde_json::{Value, json};
@@ -4026,6 +4036,85 @@ async fn u2_multiple_monitor_lines_merge_into_one_api_message() {
         "merged message must carry BOTH lines; got: {txt}"
     );
     run_cancel.cancel();
+}
+
+// ---------------------------------------------------------------------------
+// 5. Provider-error event persistence (emit → UI wire → events.jsonl)
+// ---------------------------------------------------------------------------
+
+/// A terminal `LlmError` (here a non-retryable HTTP 400 — retryable
+/// statuses retry indefinitely and never reach this terminal path) must
+/// land on BOTH the wire (what the UI renders) AND `events.jsonl`.  This
+/// pins the invariant that the UI can never show a provider error that
+/// isn't also durably recorded on disk.
+#[tokio::test]
+async fn terminal_llm_error_reaches_wire_and_events_jsonl() {
+    let (mut agent, provider, tmp) = make_test_agent();
+    provider.push_response(vec![Err(LlmError::Http {
+        status: 400,
+        body: "bad request".to_owned(),
+        retry_after: None,
+    })]);
+
+    let items = collect_stream(drive(&mut agent, "hi".to_owned(), CancellationToken::new())).await;
+
+    // Wire: the UI sees the LlmError event.
+    assert!(
+        tags(&items).contains(&"LlmError"),
+        "LlmError missing from the wire (UI): {:?}",
+        tags(&items)
+    );
+
+    // Disk: the SAME event is persisted to events.jsonl with its status.
+    let events = read_events_jsonl(&tmp.path().join("events.jsonl"));
+    let llm_error = events
+        .iter()
+        .find(|e| e["type"] == "llm_error")
+        .expect("llm_error must be persisted to events.jsonl, not only shown in the UI");
+    assert_eq!(
+        llm_error["httpStatus"], 400,
+        "persisted llm_error must carry the originating status"
+    );
+}
+
+/// An `LlmRetry` event emitted mid-stream by the retry layer (modelled
+/// here by injecting the event directly) must likewise reach BOTH the
+/// wire AND `events.jsonl` — so a UI showing "retrying…" is always backed
+/// by a durable record of every attempt.
+#[tokio::test]
+async fn llm_retry_reaches_wire_and_events_jsonl() {
+    let (mut agent, provider, tmp) = make_test_agent();
+    let mut script = vec![Ok(AgentItem::event(OmegaEvent::LlmRetry(LlmRetryEvent {
+        time: "2024-01-01T00:00:00.000Z".to_owned(),
+        attempt: 1,
+        http_status: Some(529),
+        wait_ms: 1000,
+        error: "overloaded_error".to_owned(),
+        retry_at: None,
+        error_body: None,
+        reason: None,
+    })))];
+    // The retry is followed by a successful response that ends the turn.
+    script.extend(make_terminal_response("end_turn", 5, 2));
+    provider.push_response(script);
+
+    let items = collect_stream(drive(&mut agent, "hi".to_owned(), CancellationToken::new())).await;
+
+    // Wire: the UI sees the LlmRetry event.
+    assert!(
+        tags(&items).contains(&"LlmRetry"),
+        "LlmRetry missing from the wire (UI): {:?}",
+        tags(&items)
+    );
+
+    // Disk: the SAME event is persisted to events.jsonl.
+    let events = read_events_jsonl(&tmp.path().join("events.jsonl"));
+    let retry = events
+        .iter()
+        .find(|e| e["type"] == "llm_retry")
+        .expect("llm_retry must be persisted to events.jsonl, not only shown in the UI");
+    assert_eq!(retry["httpStatus"], 529);
+    assert_eq!(retry["waitMs"], 1000);
 }
 
 // NOTE (§17, Phase A): the former `u2_monitor_stderr_event_not_queued_not_projected`

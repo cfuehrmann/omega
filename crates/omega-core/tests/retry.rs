@@ -33,8 +33,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
 use common::{
-    fast_retry_config, fast_retry_config_with_jitter, minimal_anthropic_sse, minimal_ollama_ndjson,
-    simple_request, sse_body,
+    fast_retry_config, fast_retry_config_with_jitter, indefinite_fast_retry_config,
+    minimal_anthropic_sse, minimal_ollama_ndjson, simple_request, sse_body,
 };
 
 // ---------------------------------------------------------------------------
@@ -192,6 +192,42 @@ async fn retries_a_529_then_succeeds() {
 }
 
 // ---------------------------------------------------------------------------
+// Any 5xx "can't serve" status is retried (not just the enumerated few)
+// ---------------------------------------------------------------------------
+
+/// Anthropic (or its Cloudflare front) can fail to serve with a variety of
+/// 5xx codes beyond the originally-enumerated 500/503/529 — e.g. 502 (bad
+/// gateway), 504 (`timeout_error` per Anthropic's error docs), and the
+/// Cloudflare 52x family.  Every server-side "can't serve" status must be
+/// retried.  Parameterised over a representative sample.
+#[tokio::test]
+async fn retries_assorted_5xx_then_succeeds() {
+    for status in [502_u16, 504, 520, 522, 530] {
+        let server = MockServer::start().await;
+        mount_anthropic_http_error(&server, status, "upstream unavailable", None, 1).await;
+        mount_anthropic_success(&server, u64::MAX).await;
+
+        let provider = anthropic_with_retry(&server, 3);
+        let items = collect_all(&provider, anthropic_request()).await;
+
+        let retries = retry_events(&items);
+        assert_eq!(retries.len(), 1, "status {status} must be retried once");
+        assert_eq!(retries[0].http_status, Some(status));
+
+        let response_count = items
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .filter_map(AgentItem::as_event)
+            .filter(|e| matches!(e, OmegaEvent::LlmResponseEnded(_)))
+            .count();
+        assert_eq!(
+            response_count, 1,
+            "status {status} must recover after retry"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Provider-agnostic check: same retry behaviour through Ollama.
 // ---------------------------------------------------------------------------
 
@@ -297,26 +333,84 @@ async fn does_not_retry_context_too_long_429() {
 #[tokio::test]
 async fn gives_up_after_max_attempts() {
     let server = MockServer::start().await;
-    // Always 529 — every attempt fails.
+    // 529 for the first 20 calls, then a success backstop. With a working
+    // cap of 3 the loop gives up after the 3rd 529 (2 retries) and NEVER
+    // reaches the success. The backstop exists only so that a mutant which
+    // breaks loop termination (e.g. the attempt increment or the give-up
+    // condition) terminates against the success and fails the assertions
+    // below — rather than spinning forever and showing up as a mutation
+    // *timeout* instead of a clean *catch*.
     mount_anthropic_http_error(
         &server,
         529,
         r#"{"type":"error","error":{"type":"overloaded_error"}}"#,
         None,
-        u64::MAX,
+        20,
     )
     .await;
+    mount_anthropic_success(&server, u64::MAX).await;
 
     let provider = anthropic_with_retry(&server, 3);
     let items = collect_all(&provider, anthropic_request()).await;
 
     // 3 attempts total: initial + 2 retries → 2 LlmRetry events.
-    assert_eq!(retry_events(&items).len(), 2);
-    // Final item is the terminal HTTP error.
-    assert!(matches!(
-        items.last(),
-        Some(Err(LlmError::Http { status: 529, .. }))
-    ));
+    assert_eq!(
+        retry_events(&items).len(),
+        2,
+        "must give up after exactly 2 retries (never reaching the success backstop)"
+    );
+    // Final item is the terminal HTTP error — the loop gave up, it did not
+    // recover via the backstop.
+    assert!(
+        matches!(items.last(), Some(Err(LlmError::Http { status: 529, .. }))),
+        "final item must be the terminal 529, not a recovered success: {items:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Indefinite retry: `max_attempts: None` never gives up on a retryable error
+// ---------------------------------------------------------------------------
+
+/// With the production default (`max_attempts: None`) the loop keeps
+/// retrying a server-side failure for as long as it persists — well past
+/// any old finite cap (the wiring used to give up after 4).  Mount ten
+/// consecutive 529s, then success: the loop must emit ten `LlmRetry`
+/// events and recover, never surfacing a terminal error.
+#[tokio::test]
+async fn retries_indefinitely_past_old_cap() {
+    let server = MockServer::start().await;
+    mount_anthropic_http_error(
+        &server,
+        529,
+        r#"{"type":"error","error":{"type":"overloaded_error"}}"#,
+        None,
+        10,
+    )
+    .await;
+    mount_anthropic_success(&server, u64::MAX).await;
+
+    let provider = RetryingProvider::new(
+        AnthropicProvider::new("test-key").with_base_url(server.uri()),
+        indefinite_fast_retry_config(),
+    );
+    let items = collect_all(&provider, anthropic_request()).await;
+
+    assert_eq!(
+        retry_events(&items).len(),
+        10,
+        "all ten failures must be retried (no finite cap)"
+    );
+    assert!(
+        items.iter().all(Result::is_ok),
+        "recovery means no terminal error surfaces: {items:?}"
+    );
+    let response_count = items
+        .iter()
+        .filter_map(|r| r.as_ref().ok())
+        .filter_map(AgentItem::as_event)
+        .filter(|e| matches!(e, OmegaEvent::LlmResponseEnded(_)))
+        .count();
+    assert_eq!(response_count, 1, "the 11th attempt succeeds");
 }
 
 // ---------------------------------------------------------------------------
