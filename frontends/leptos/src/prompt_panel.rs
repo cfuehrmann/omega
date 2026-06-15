@@ -308,30 +308,36 @@ pub fn PromptPanel() -> impl IntoView {
         save_draft(&text);
     });
 
-    // On mount: populate the textarea from state.draft and focus it.
-    // Uses spawn_local so the DOM node is guaranteed to exist by the time
-    // the closure runs.  No reactive reads → runs exactly once per mount,
-    // which is what we want (the panel is inside <Show when=open>, so it
-    // is fully unmounted/remounted on each open/close cycle).
-    Effect::new(move |_: Option<()>| {
-        let draft = state.draft.get_untracked();
-        let cursor = draft.len();
-        spawn_local(async move {
-            if let Some(el) = textarea_ref.get_untracked() {
-                el.set_value(&draft);
-                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                let cursor_u32 = cursor.min(u32::MAX as usize) as u32;
-                let _ = el.set_selection_start(Some(cursor_u32));
-                let _ = el.set_selection_end(Some(cursor_u32));
-                let _ = el.focus();
-            }
-        });
+    // Populate the textarea from state.draft and focus it whenever the
+    // panel transitions from closed to open.  The PromptPanel component is
+    // mounted once (when the session loads) while the <Show when=open>
+    // *inside* the view controls DOM visibility — so we must track
+    // state.open as a reactive dep rather than relying on a one-shot
+    // "mount" effect (which would fire when open is still false).
+    Effect::new(move |prev: Option<bool>| {
+        let open = state.open.get(); // tracked
+        if open && prev != Some(true) {
+            // Panel just became visible.  spawn_local defers past the
+            // current reactive flush so the <Show> has already added the
+            // textarea to the DOM by the time the closure runs.
+            let draft = state.draft.get_untracked();
+            let cursor = draft.len();
+            spawn_local(async move {
+                if let Some(el) = textarea_ref.get_untracked() {
+                    el.set_value(&draft);
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                    let cursor_u32 = cursor.min(u32::MAX as usize) as u32;
+                    let _ = el.set_selection_start(Some(cursor_u32));
+                    let _ = el.set_selection_end(Some(cursor_u32));
+                    let _ = el.focus();
+                }
+            });
+        }
+        open
     });
 
     // Re-focus the textarea after the external editor closes.  Only fires
-    // when editor_in_flight transitions true → false; the initial run
-    // (prev = None) is intentionally a no-op because the mount effect
-    // above already handles the initial focus.
+    // when editor_in_flight transitions true → false.
     Effect::new(move |prev: Option<bool>| {
         let in_flight = state.editor_in_flight.get();
         if prev == Some(true) && !in_flight {
