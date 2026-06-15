@@ -131,6 +131,7 @@ pub async fn execute_tool(
         }
         "write_file" => tools::write_file::execute(input, cancel).await,
         "edit_file" => tools::edit_file::execute(input, cancel).await,
+        "multi_edit_file" => tools::multi_edit_file::execute(input, cancel).await,
         "list_files" => tools::list_files::execute(input, cancel).await,
         "run_command" => tools::run_command::execute(input, cancel, ctx).await,
         "grep_files" => tools::grep_files::execute(input, cancel).await,

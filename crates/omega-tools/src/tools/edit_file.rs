@@ -1,117 +1,75 @@
-//! `edit_file` — apply an ordered list of exact-match replacements.
+//! `edit_file` — replace a single snippet in a file.
 //!
-//! Each replacement must match exactly once in the file (at the point where
-//! it is applied); ambiguous or missing matches are rejected with a helpful
-//! error message.
+//! The model supplies `old_text` (the snippet to find) and `new_text` (its
+//! replacement).  Matching goes through the shared fuzzy cascade in
+//! [`crate::tools::text_match`], which tolerates whitespace, indentation and
+//! escaping drift while still requiring the match to resolve to a single
+//! region (unless `replace_all` is set).
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+
+use crate::tools::text_match::{self, ReplaceError};
 
 pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Result<String, String> {
     let path = input["path"]
         .as_str()
         .ok_or("edit_file: path is required")?;
+    let old_text = input["old_text"]
+        .as_str()
+        .ok_or("edit_file: old_text is required")?;
+    let new_text = input["new_text"]
+        .as_str()
+        .ok_or("edit_file: new_text is required")?;
+    let replace_all = input["replace_all"].as_bool().unwrap_or(false);
 
-    let replacements = input["replacements"]
-        .as_array()
-        .ok_or("edit_file requires a non-empty replacements array.")?;
-
-    if replacements.is_empty() {
-        return Err("edit_file requires a non-empty replacements array.".into());
-    }
-
-    let mut content = tokio::fs::read_to_string(path)
+    let content = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| format!("edit_file: {e}"))?;
 
-    let total = replacements.len();
-    let mut summaries: Vec<String> = Vec::with_capacity(total);
+    let result = text_match::replace(&content, old_text, new_text, replace_all)
+        .map_err(|e| format_replace_error("edit_file", e, path, ""))?;
 
-    for (i, rep) in replacements.iter().enumerate() {
-        let label = if total > 1 {
-            format!(" (replacement {}/{total})", i + 1)
-        } else {
-            String::new()
-        };
-
-        let old_text = rep["old_text"]
-            .as_str()
-            .ok_or_else(|| format!("edit_file: replacement {}/{total} missing old_text", i + 1))?;
-        let new_text = rep["new_text"]
-            .as_str()
-            .ok_or_else(|| format!("edit_file: replacement {}/{total} missing new_text", i + 1))?;
-
-        // Count byte-level occurrences matching the TypeScript indexOf+1 step.
-        let count = count_occurrences(content.as_bytes(), old_text.as_bytes());
-
-        match count {
-            0 => {
-                return Err(format!(
-                    "old_text not found in {path}{label}. Make sure it matches exactly \
-                     (including whitespace)."
-                ));
-            }
-            1 => {} // proceed
-            n => {
-                return Err(format!(
-                    "old_text found {n} times in {path}{label}. It must appear exactly once. \
-                     Use a larger/more unique snippet."
-                ));
-            }
-        }
-
-        // Perform the first (and only) occurrence replacement.
-        let pos = content.find(old_text).ok_or_else(|| {
-            format!("edit_file: internal error – old_text disappeared in {path}{label}")
-        })?;
-        content.replace_range(pos..pos + old_text.len(), new_text);
-
-        let old_lines = old_text.split('\n').count();
-        let new_lines = new_text.split('\n').count();
-        summaries.push(format!(
-            "replaced {old_lines} line(s) with {new_lines} line(s)"
-        ));
-    }
-
-    tokio::fs::write(path, &content)
+    tokio::fs::write(path, &result.content)
         .await
         .map_err(|e| format!("edit_file: failed to write {path}: {e}"))?;
 
-    if summaries.len() == 1 {
-        Ok(format!("edit_file: {path} — {}", summaries[0]))
+    Ok(format!(
+        "edit_file: {path} — {}",
+        summarize(old_text, new_text, result.count, replace_all)
+    ))
+}
+
+/// Human-readable summary of one applied replacement.
+pub(crate) fn summarize(old_text: &str, new_text: &str, count: usize, replace_all: bool) -> String {
+    let old_lines = old_text.split('\n').count();
+    let new_lines = new_text.split('\n').count();
+    if replace_all && count != 1 {
+        format!("replaced {old_lines} line(s) with {new_lines} line(s) at {count} occurrences")
     } else {
-        let lines_text: String = summaries
-            .iter()
-            .enumerate()
-            .map(|(i, s)| format!("  {}. {s}", i + 1))
-            .collect::<Vec<_>>()
-            .join("\n");
-        Ok(format!(
-            "edit_file: {path} — {} replacements applied:\n{lines_text}",
-            summaries.len()
-        ))
+        format!("replaced {old_lines} line(s) with {new_lines} line(s)")
     }
 }
 
-/// Count non-overlapping-from-start occurrences of `needle` in `haystack`,
-/// advancing by 1 byte after each found position (matching TypeScript's
-/// `indexOf(needle, pos + 1)` behaviour).  Returns early once count exceeds 1.
-fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
-    if needle.is_empty() {
-        return 0;
+/// Map a [`ReplaceError`] to an actionable message.  `label` is an optional
+/// suffix such as `" (edit 2/3)"` used by `multi_edit_file`.
+pub(crate) fn format_replace_error(
+    tool: &str,
+    err: ReplaceError,
+    path: &str,
+    label: &str,
+) -> String {
+    match err {
+        ReplaceError::Identical => format!(
+            "{tool}: old_text and new_text are identical in {path}{label}; nothing to change."
+        ),
+        ReplaceError::NotFound => format!(
+            "{tool}: old_text not found in {path}{label}. Whitespace and indentation drift is \
+             tolerated, but the snippet must be present — copy it from the current file contents."
+        ),
+        ReplaceError::Ambiguous => format!(
+            "{tool}: old_text matches multiple locations in {path}{label}. Provide a larger, \
+             unique snippet, or pass \"replace_all\": true to change every occurrence."
+        ),
     }
-    let mut count = 0usize;
-    let mut i = 0usize;
-    while i + needle.len() <= haystack.len() {
-        if haystack[i..].starts_with(needle) {
-            count += 1;
-            if count > 1 {
-                break;
-            }
-            i += 1;
-        } else {
-            i += 1;
-        }
-    }
-    count
 }

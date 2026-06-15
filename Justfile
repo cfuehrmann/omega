@@ -764,3 +764,20 @@ mutants-ws-event-broadcaster:
         --file "crates/omega-server/src/session.rs" \
         --file "crates/omega-server/src/router.rs" \
         --re 'WsEventBroadcaster|handle_set_model|handle_set_effort|set_ws_tx|send_via_ws_tx'
+
+# Run cargo-mutants targeted at the redesigned file-editing tools:
+# - text_match.rs: the opencode-style fuzzy-match cascade (the 9 replacers +
+#   the replace() driver that resolves old_text → a single region or reports
+#   NotFound/Ambiguous).
+# - edit_file.rs: the flat single-edit tool (old_text→new_text, replace_all)
+#   plus the shared summarize()/format_replace_error() helpers.
+# - multi_edit_file.rs: sequential + atomic batch edits to one file.
+# All exercised via execute_tool in tests/file_tools.rs, plus the pure-function
+# carve-out unit tests in text_match.rs. All mutations must be CAUGHT or
+# UNVIABLE — no survivors. Template: mutants-system-prompt-guard (see AGENTS.md).
+mutants-edit-tools:
+    mkdir -p {{mutants-tmp}}
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+        --file "crates/omega-tools/src/tools/text_match.rs" \
+        --file "crates/omega-tools/src/tools/edit_file.rs" \
+        --file "crates/omega-tools/src/tools/multi_edit_file.rs"

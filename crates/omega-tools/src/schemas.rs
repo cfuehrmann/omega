@@ -44,6 +44,7 @@ pub fn tool_definitions(tool_selection: &[String]) -> Vec<ToolDefinition> {
             "write_file" => write_file(),
             "run_command" => run_command(),
             "edit_file" => edit_file(),
+            "multi_edit_file" => multi_edit_file(),
             "list_files" => list_files(),
             "web_search" => web_search(),
             "fetch_url" => fetch_url(shell_tools_present),
@@ -146,35 +147,61 @@ fn run_command() -> ToolDefinition {
 }
 
 fn edit_file() -> ToolDefinition {
-    let replacement: Value = json!({
+    ToolDefinition {
+        name: "edit_file".into(),
+        description: "Replace a single snippet in a file. Provide old_text (the text to find) \
+                      and new_text (its replacement). Prefer this over rewriting a whole file \
+                      with write_file. old_text should be copied from the current file contents; \
+                      minor whitespace/indentation drift is tolerated, but by default it must \
+                      resolve to exactly ONE location \u{2014} include enough surrounding context to \
+                      make it unique. Set replace_all to change every occurrence (e.g. renaming \
+                      a variable). To make SEVERAL edits to the same file in one shot, use \
+                      multi_edit_file instead."
+            .into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "path":     { "type": "string",  "description": "Path to the file (absolute or relative to cwd)" },
+                "old_text": { "type": "string",  "description": "Text to find. Copy it from the file; must resolve to exactly one location unless replace_all is set." },
+                "new_text": { "type": "string",  "description": "Text to replace old_text with" },
+                "replace_all": { "type": "boolean", "description": "Replace every occurrence instead of requiring a unique match (optional, default false)" },
+            },
+            "required": ["path", "old_text", "new_text"],
+        }),
+    }
+}
+
+fn multi_edit_file() -> ToolDefinition {
+    let edit: Value = json!({
         "type": "object",
         "properties": {
-            "old_text": { "type": "string", "description": "Exact text to find (must match exactly, must appear once)" },
-            "new_text": { "type": "string", "description": "Text to replace old_text with" },
+            "old_text": { "type": "string",  "description": "Text to find (copied from the file as it stands after the preceding edits)" },
+            "new_text": { "type": "string",  "description": "Text to replace old_text with" },
+            "replace_all": { "type": "boolean", "description": "Replace every occurrence for this edit (optional, default false)" },
         },
         "required": ["old_text", "new_text"],
     });
 
     ToolDefinition {
-        name: "edit_file".into(),
-        description: "Edit a file by replacing exact text. The old_text must match exactly \
-                      (including whitespace and indentation). Use this for surgical edits \
-                      instead of rewriting entire files with write_file. Each old_text must \
-                      appear exactly once in the file. For multiple edits to the same file, \
-                      pass a `replacements` array \u{2014} this is faster and avoids round-trips. \
-                      Always pass ALL changes to a file in a single call."
+        name: "multi_edit_file".into(),
+        description: "Apply an ordered sequence of edits to a SINGLE file in one call. Each edit \
+                      is {old_text, new_text, replace_all?} and is applied to the result of the \
+                      previous one, so later edits must reference text as it will read after the \
+                      earlier edits. The whole sequence is atomic: if any edit fails to match, \
+                      the file is left untouched. Use this instead of calling edit_file \
+                      repeatedly on the same file. For a single change, use edit_file."
             .into(),
         input_schema: json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Path to the file (absolute or relative to cwd)" },
-                "replacements": {
+                "path":  { "type": "string", "description": "Path to the file (absolute or relative to cwd)" },
+                "edits": {
                     "type": "array",
-                    "items": replacement,
-                    "description": "One or more replacements to apply in order. Each old_text must appear exactly once in the file. Pass all changes to this file together \u{2014} never call edit_file on the same file twice in a row.",
+                    "items": edit,
+                    "description": "Edits to apply in order. Each old_text must resolve to one location (unless replace_all) in the file as it reads when that edit runs.",
                 },
             },
-            "required": ["path", "replacements"],
+            "required": ["path", "edits"],
         }),
     }
 }
@@ -527,17 +554,17 @@ mod tests {
     }
 
     #[test]
-    fn thirteen_tools_for_default_selection() {
+    fn fourteen_tools_for_default_selection() {
         let names: Vec<String> = tool_definitions(&sel_default())
             .into_iter()
             .map(|d| d.name)
             .collect();
         assert_eq!(names, sel_default());
-        assert_eq!(names.len(), 13);
+        assert_eq!(names.len(), 14);
     }
 
     #[test]
-    fn fourteen_tools_for_default_plus_python_repl() {
+    fn fifteen_tools_for_default_plus_python_repl() {
         let names: Vec<String> = tool_definitions(&sel_default_plus_repl())
             .into_iter()
             .map(|d| d.name)
@@ -545,7 +572,7 @@ mod tests {
         let mut expected = sel_default();
         expected.push("python_repl".into());
         assert_eq!(names, expected);
-        assert_eq!(names.len(), 14);
+        assert_eq!(names.len(), 15);
     }
 
     #[test]

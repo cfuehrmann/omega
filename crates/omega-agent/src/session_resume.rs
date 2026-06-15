@@ -80,7 +80,7 @@ fn primary_tool_arg(name: &str, input: &serde_json::Value) -> String {
         return "(none)".to_owned();
     }
     match name {
-        "read_file" | "write_file" | "edit_file" | "list_files" => input
+        "read_file" | "write_file" | "edit_file" | "multi_edit_file" | "list_files" => input
             .get("path")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("")
@@ -600,6 +600,7 @@ mod tests {
         assert_eq!(primary_tool_arg("read_file", &inp), "src/main.rs");
         assert_eq!(primary_tool_arg("write_file", &inp), "src/main.rs");
         assert_eq!(primary_tool_arg("edit_file", &inp), "src/main.rs");
+        assert_eq!(primary_tool_arg("multi_edit_file", &inp), "src/main.rs");
         assert_eq!(primary_tool_arg("list_files", &inp), "src/main.rs");
     }
 

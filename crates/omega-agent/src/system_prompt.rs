@@ -193,7 +193,7 @@ fn read_existing(path: &Path) -> Option<String> {
 /// session (in canonical order).  Three booleans are derived from it by
 /// membership test:
 ///
-/// * `has_file_tools` — any of the six file-op tools is present.
+/// * `has_file_tools` — any of the seven file-op tools is present.
 /// * `has_shell_tools` — any of the three shell-execution tools is present.
 /// * `has_python_repl` — `python_repl` is present.
 ///
@@ -222,7 +222,13 @@ pub fn build_system_blocks(
     let has_file_tools = tool_selection.iter().any(|n| {
         matches!(
             n.as_str(),
-            "read_file" | "write_file" | "edit_file" | "find_files" | "grep_files" | "list_files"
+            "read_file"
+                | "write_file"
+                | "edit_file"
+                | "multi_edit_file"
+                | "find_files"
+                | "grep_files"
+                | "list_files"
         )
     });
     let has_shell_tools = tool_selection
@@ -353,7 +359,7 @@ pub fn repl_addendum() -> String {
 /// that gets cached whenever any tool category is absent.
 ///
 /// The heading is always `## Reduced toolset`.  Then:
-/// - If the six file-op tools are absent (`!has_file_tools`): a paragraph
+/// - If the seven file-op tools are absent (`!has_file_tools`): a paragraph
 ///   explains the removed file-op tools and how to replace them.
 /// - If the three shell-execution tools are absent (`!has_shell_tools`):
 ///   a paragraph explains the removed shell-execution tools and shows the
@@ -370,7 +376,7 @@ pub fn reduced_toolset_addendum(has_file_tools: bool, has_shell_tools: bool) -> 
         // Both categories absent: run_command is also removed, so do not suggest it.
         sections.push(
             "This session does not expose `read_file`, `write_file`, `edit_file`, \
-`find_files`, `grep_files`, or `list_files`.
+`multi_edit_file`, `find_files`, `grep_files`, or `list_files`.
 \
 For file operations, use `python_repl` — idiomatic Python \
 (`pathlib`, `open`, `re`, `os`)."
@@ -381,7 +387,7 @@ For file operations, use `python_repl` — idiomatic Python \
         // Text is intentionally neutral: experiment measures which the LLM picks.
         sections.push(
             "This session does not expose `read_file`, `write_file`, `edit_file`, \
-`find_files`, `grep_files`, or `list_files`.
+`multi_edit_file`, `find_files`, `grep_files`, or `list_files`.
 For any of these operations, use either:
 
 - `python_repl` — idiomatic Python (`pathlib`, `open`, `re`, `os`).
@@ -505,9 +511,9 @@ existing files: always prefer `edit_file` over a full rewrite.",
 /// `headless` drops the two sections that require an interactive human UI:
 /// output-format rendering guidance and the discussion-before-acting policy.
 ///
-/// `file_tools` controls whether guidance referencing the six file-op tools
-/// (`read_file`, `write_file`, `edit_file`, `find_files`, `grep_files`,
-/// `list_files`) is included.  Pass `false` when those tools are absent from
+/// `file_tools` controls whether guidance referencing the seven file-op tools
+/// (`read_file`, `write_file`, `edit_file`, `multi_edit_file`, `find_files`,
+/// `grep_files`, `list_files`) is included.  Pass `false` when those tools are absent from
 /// the toolset so that the model receives consistent instructions that
 /// match the actual toolset.
 ///
@@ -632,9 +638,14 @@ Check for a task runner and use it to discover available commands\n\
     // edit_file workflow guidance — omitted when that tool is absent.
     if file_tools {
         s.push_str(
-            "For `edit_file`: read or grep the file first to identify **all** needed\n\
-changes, then apply them in a single call with `replacements`. Never call\n\
-`edit_file` on the same file twice in a row — that is always a mistake.\n",
+            "For editing files: `edit_file` replaces one occurrence of `old_text`\n\
+with `new_text` in a single file — pass `replace_all: true` to change every\n\
+occurrence. Use `multi_edit_file` to make several edits to one file in one\n\
+call; its `edits` apply sequentially (each sees the previous result) and\n\
+atomically (if any edit fails, the file is left untouched). Read or grep the\n\
+file first so `old_text` matches the current contents; whitespace and\n\
+indentation drift is tolerated, but pick a snippet unique enough to match one\n\
+place.\n",
         );
     }
 
@@ -852,6 +863,7 @@ mod tests {
             "write_file",
             "run_command",
             "edit_file",
+            "multi_edit_file",
             "list_files",
             "web_search",
             "fetch_url",
@@ -879,6 +891,7 @@ mod tests {
             "write_file",
             "run_command",
             "edit_file",
+            "multi_edit_file",
             "list_files",
             "web_search",
             "fetch_url",
@@ -907,6 +920,7 @@ mod tests {
             "read_file",
             "write_file",
             "edit_file",
+            "multi_edit_file",
             "list_files",
             "web_search",
             "fetch_url",
@@ -1198,13 +1212,14 @@ mod tests {
     }
 
     #[test]
-    fn no_file_tools_block_names_all_six_removed_tools() {
+    fn no_file_tools_block_names_all_removed_tools() {
         // This tests the fileops-only configuration (shell tools present).
         let content = reduced_toolset_addendum(false, true);
         for tool in &[
             "read_file",
             "write_file",
             "edit_file",
+            "multi_edit_file",
             "find_files",
             "grep_files",
             "list_files",
@@ -1343,10 +1358,11 @@ mod tests {
     // When file tools present, the assembled prompt must still
     // contain the existing file-tool guidance.
 
-    const FILE_TOOLS: [&str; 6] = [
+    const FILE_TOOLS: [&str; 7] = [
         "read_file",
         "write_file",
         "edit_file",
+        "multi_edit_file",
         "find_files",
         "grep_files",
         "list_files",

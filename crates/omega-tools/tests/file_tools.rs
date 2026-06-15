@@ -4,7 +4,8 @@
 )]
 
 //! Integration tests for the file-system tools:
-//! read_file, write_file, edit_file, list_files, grep_files, find_files.
+//! read_file, write_file, edit_file, multi_edit_file, list_files, grep_files,
+//! find_files.
 //!
 //! All I/O goes to a unique temporary directory created per test so tests can
 //! run in parallel without conflicts.
@@ -284,7 +285,8 @@ async fn edit_file_basic_replacement() {
         "edit_file",
         json!({
             "path": path.to_str().unwrap(),
-            "replacements": [{ "old_text": "world", "new_text": "Rust" }]
+            "old_text": "world",
+            "new_text": "Rust"
         }),
     )
     .await
@@ -292,28 +294,6 @@ async fn edit_file_basic_replacement() {
 
     assert!(out.contains("edit"), "got: {out}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "Hello, Rust!");
-}
-
-#[tokio::test]
-async fn edit_file_multiple_replacements() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("multi.txt");
-    std::fs::write(&path, "foo bar baz").unwrap();
-
-    exec(
-        "edit_file",
-        json!({
-            "path": path.to_str().unwrap(),
-            "replacements": [
-                { "old_text": "foo", "new_text": "FOO" },
-                { "old_text": "baz", "new_text": "BAZ" }
-            ]
-        }),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "FOO bar BAZ");
 }
 
 #[tokio::test]
@@ -326,7 +306,8 @@ async fn edit_file_not_found_returns_error() {
         "edit_file",
         json!({
             "path": path.to_str().unwrap(),
-            "replacements": [{ "old_text": "MISSING", "new_text": "x" }]
+            "old_text": "MISSING",
+            "new_text": "x"
         }),
     )
     .await
@@ -335,7 +316,7 @@ async fn edit_file_not_found_returns_error() {
 }
 
 #[tokio::test]
-async fn edit_file_duplicate_returns_error() {
+async fn edit_file_ambiguous_returns_error_unless_replace_all() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("dup.txt");
     std::fs::write(&path, "aa bb aa").unwrap();
@@ -344,15 +325,105 @@ async fn edit_file_duplicate_returns_error() {
         "edit_file",
         json!({
             "path": path.to_str().unwrap(),
-            "replacements": [{ "old_text": "aa", "new_text": "zz" }]
+            "old_text": "aa",
+            "new_text": "zz"
         }),
     )
     .await
     .unwrap_err();
     assert!(
-        err.contains("2 times") || err.contains("exactly once"),
-        "got: {err}"
+        err.contains("multiple locations"),
+        "ambiguous match must be rejected: {err}"
     );
+    // File must be untouched after the rejected edit.
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "aa bb aa");
+}
+
+#[tokio::test]
+async fn edit_file_replace_all_changes_every_occurrence() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("all.txt");
+    std::fs::write(&path, "aa bb aa cc aa").unwrap();
+
+    let out = exec(
+        "edit_file",
+        json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "aa",
+            "new_text": "zz",
+            "replace_all": true
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "zz bb zz cc zz");
+    assert!(out.contains("3 occurrences"), "got: {out}");
+}
+
+#[tokio::test]
+async fn edit_file_replace_all_with_single_occurrence_omits_count() {
+    // replace_all is set but the snippet occurs once: the summary must NOT
+    // mention an occurrence count (it would read awkwardly as "at 1
+    // occurrences"). Pins the `replace_all && count != 1` guard.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("one.txt");
+    std::fs::write(&path, "unique line here").unwrap();
+
+    let out = exec(
+        "edit_file",
+        json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "unique",
+            "new_text": "changed",
+            "replace_all": true
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "changed line here");
+    assert!(!out.contains("occurrence"), "got: {out}");
+}
+
+#[tokio::test]
+async fn edit_file_tolerates_indentation_drift() {
+    // The model's old_text has different leading indentation than the file;
+    // the fuzzy cascade should still locate and replace the line.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("indent.txt");
+    std::fs::write(&path, "fn main() {\n        let x = 1;\n}\n").unwrap();
+
+    exec(
+        "edit_file",
+        json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "let x = 1;",
+            "new_text": "let x = 2;"
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "fn main() {\n        let x = 2;\n}\n"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_missing_old_text_arg_returns_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f.txt");
+    std::fs::write(&path, "hello").unwrap();
+
+    let err = exec(
+        "edit_file",
+        json!({ "path": path.to_str().unwrap(), "new_text": "x" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("old_text is required"), "got: {err}");
 }
 
 // ---------------------------------------------------------------------------
@@ -599,105 +670,122 @@ async fn read_file_multibyte_char_at_boundary_is_trimmed_cleanly() {
 }
 
 // ---------------------------------------------------------------------------
-// edit_file — format and count_occurrences boundary conditions
+// multi_edit_file
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn edit_file_single_replacement_uses_simple_format() {
-    // With one replacement the output must NOT use the numbered-list format.
-    // Kills the `== → !=` mutation on `if summaries.len() == 1`.
+async fn multi_edit_file_applies_all_edits() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("f.txt");
-    std::fs::write(&path, "hello world").unwrap();
+    let path = dir.path().join("multi.txt");
+    std::fs::write(&path, "foo bar baz").unwrap();
 
     let out = exec(
-        "edit_file",
+        "multi_edit_file",
         json!({
             "path": path.to_str().unwrap(),
-            "replacements": [{"old_text": "hello", "new_text": "hi"}]
+            "edits": [
+                { "old_text": "foo", "new_text": "FOO" },
+                { "old_text": "baz", "new_text": "BAZ" }
+            ]
         }),
     )
     .await
     .unwrap();
-    assert!(
-        !out.contains("replacements applied:"),
-        "single replacement must use simple format, not numbered list: {out}"
-    );
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "FOO bar BAZ");
+    assert!(out.contains("2 edit(s) applied"), "got: {out}");
 }
 
 #[tokio::test]
-async fn edit_file_single_replacement_error_has_no_index_label() {
-    // When the replacement is not found and total==1, the error must NOT contain
-    // "(replacement 1/1)".  Kills the `> → >=` mutation on `if total > 1` which
-    // would add that label even for single replacements.
+async fn multi_edit_file_applies_edits_sequentially() {
+    // The second edit must see the result of the first: it targets text that
+    // only exists after edit 1 has run.
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("f.txt");
-    std::fs::write(&path, "hello world").unwrap();
+    let path = dir.path().join("seq.txt");
+    std::fs::write(&path, "alpha").unwrap();
 
-    let err = exec(
-        "edit_file",
+    exec(
+        "multi_edit_file",
         json!({
             "path": path.to_str().unwrap(),
-            "replacements": [{"old_text": "MISSING_TEXT", "new_text": "x"}]
+            "edits": [
+                { "old_text": "alpha", "new_text": "beta" },
+                { "old_text": "beta", "new_text": "gamma" }
+            ]
         }),
     )
     .await
-    .unwrap_err();
-    assert!(
-        !err.contains("replacement 1/1"),
-        "single replacement error must not include index label: {err}"
-    );
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "gamma");
 }
 
 #[tokio::test]
-async fn edit_file_multi_replacement_error_label_includes_index() {
-    // With two replacements the error for the second one must include "(replacement 2/2)".
-    // Kills the `> → ==`, `> → <`, and `> → >=` mutations on `if total > 1`.
+async fn multi_edit_file_is_atomic_on_failure() {
+    // If a later edit fails to match, the file must be left untouched —
+    // the earlier successful edits are not persisted.
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("f.txt");
+    let path = dir.path().join("atomic.txt");
     std::fs::write(&path, "foo bar").unwrap();
 
     let err = exec(
-        "edit_file",
+        "multi_edit_file",
         json!({
             "path": path.to_str().unwrap(),
-            "replacements": [
-                {"old_text": "foo", "new_text": "FOO"},
-                {"old_text": "MISSING", "new_text": "x"}
+            "edits": [
+                { "old_text": "foo", "new_text": "FOO" },
+                { "old_text": "MISSING", "new_text": "x" }
             ]
         }),
     )
     .await
     .unwrap_err();
+
     assert!(
-        err.contains("replacement 2/2"),
-        "error for second replacement must include label: {err}"
+        err.contains("edit 2/2"),
+        "error must name the failing edit: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "foo bar",
+        "file must be untouched when any edit fails"
     );
 }
 
 #[tokio::test]
-async fn edit_file_count_occurrences_exits_early_at_two() {
-    // "aaaaa" contains "aaa" at step-1 positions 0, 1, 2 (three matches).
-    // count_occurrences breaks after count reaches 2; so the error must say
-    // "found 2 times", not "found 3 times".
-    // Kills the `> → <` mutation on `if count > 1 { break }`.
+async fn multi_edit_file_empty_edits_returns_error() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("f.txt");
-    std::fs::write(&path, "aaaaa").unwrap();
+    let path = dir.path().join("empty.txt");
+    std::fs::write(&path, "x").unwrap();
 
     let err = exec(
-        "edit_file",
-        json!({
-            "path": path.to_str().unwrap(),
-            "replacements": [{"old_text": "aaa", "new_text": "x"}]
-        }),
+        "multi_edit_file",
+        json!({ "path": path.to_str().unwrap(), "edits": [] }),
     )
     .await
     .unwrap_err();
-    assert!(
-        err.contains("found 2 times"),
-        "count_occurrences must exit early at 2; got: {err}"
-    );
+    assert!(err.contains("non-empty array"), "got: {err}");
+}
+
+#[tokio::test]
+async fn multi_edit_file_per_edit_replace_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ra.txt");
+    std::fs::write(&path, "a a a").unwrap();
+
+    exec(
+        "multi_edit_file",
+        json!({
+            "path": path.to_str().unwrap(),
+            "edits": [
+                { "old_text": "a", "new_text": "b", "replace_all": true }
+            ]
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "b b b");
 }
 
 // ---------------------------------------------------------------------------

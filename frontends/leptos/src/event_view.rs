@@ -697,12 +697,25 @@ pub fn tool_call_preview(name: &str, input: &serde_json::Value) -> String {
 
         "edit_file" => {
             let path = s(input, "path");
+            if input
+                .get("replace_all")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                format!("{path}  (replace all)")
+            } else {
+                path.to_owned()
+            }
+        }
+
+        "multi_edit_file" => {
+            let path = s(input, "path");
             let n = input
-                .get("replacements")
+                .get("edits")
                 .and_then(|v| v.as_array())
                 .map_or(0, |a| a.len());
             let plural = if n == 1 { "" } else { "s" };
-            format!("{path}  ({n} replacement{plural})")
+            format!("{path}  ({n} edit{plural})")
         }
 
         // ── search ─────────────────────────────────────────────────────────
@@ -2197,30 +2210,56 @@ mod tests {
 
     #[wasm_bindgen_test]
     #[test]
-    fn preview_edit_file_one_replacement() {
+    fn preview_edit_file_shows_path() {
         let input = serde_json::json!({
             "path": "foo.rs",
-            "replacements": [{"old_text": "a", "new_text": "b"}]
+            "old_text": "a",
+            "new_text": "b"
+        });
+        assert_eq!(tool_call_preview("edit_file", &input), "foo.rs");
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_edit_file_replace_all() {
+        let input = serde_json::json!({
+            "path": "foo.rs",
+            "old_text": "a",
+            "new_text": "b",
+            "replace_all": true
         });
         assert_eq!(
             tool_call_preview("edit_file", &input),
-            "foo.rs  (1 replacement)",
+            "foo.rs  (replace all)",
         );
     }
 
     #[wasm_bindgen_test]
     #[test]
-    fn preview_edit_file_many_replacements() {
+    fn preview_multi_edit_file_one_edit() {
+        let input = serde_json::json!({
+            "path": "foo.rs",
+            "edits": [{"old_text": "a", "new_text": "b"}]
+        });
+        assert_eq!(
+            tool_call_preview("multi_edit_file", &input),
+            "foo.rs  (1 edit)",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    #[test]
+    fn preview_multi_edit_file_many_edits() {
         let input = serde_json::json!({
             "path": "bar.rs",
-            "replacements": [
+            "edits": [
                 {"old_text": "a", "new_text": "b"},
                 {"old_text": "c", "new_text": "d"}
             ]
         });
         assert_eq!(
-            tool_call_preview("edit_file", &input),
-            "bar.rs  (2 replacements)",
+            tool_call_preview("multi_edit_file", &input),
+            "bar.rs  (2 edits)",
         );
     }
 

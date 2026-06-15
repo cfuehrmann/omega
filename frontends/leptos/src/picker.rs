@@ -88,6 +88,7 @@ const TOOL_CATEGORIES: &[ToolCategory] = &[
             "read_file",
             "write_file",
             "edit_file",
+            "multi_edit_file",
             "find_files",
             "grep_files",
             "list_files",
