@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>File-Editing Tool — Error Analysis &amp; Redesign</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#f9f9fb; --surface:#ffffff; --border:#e1e4e8; --text:#1a1a2e;
+  --muted:#6a737d; --accent:#0550ae; --accent-bg:#dbeafe;
+  --callout-bg:#eff6ff; --callout-border:#3b82f6;
+  --warn-bg:#fff8dc; --warn-border:#e6c600;
+  --ok-bg:#dcfce7; --ok-border:#16a34a;
+  --bar:#3b82f6; --bar-track:#e8ebef;
+  --content-max:860px; font-size:16px; color-scheme:light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0d1117; --surface:#161b22; --border:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --accent:#58a6ff; --accent-bg:#1c2d48;
+    --callout-bg:#0d1f33; --callout-border:#1f6feb;
+    --warn-bg:#2d2200; --warn-border:#d29922;
+    --ok-bg:#0f2e16; --ok-border:#3fb950;
+    --bar:#1f6feb; --bar-track:#21262d; color-scheme:dark;
+  }
+  code { background:#21262d !important; border-color:var(--border) !important; color:#e6edf3; }
+  pre { background:#161b22 !important; }
+  tbody tr:nth-child(even) { background:#10151c; }
+}
+body {
+  font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background:var(--bg); color:var(--text); line-height:1.65;
+  max-width:var(--content-max); margin:0 auto; padding:2.5rem 1.5rem;
+}
+h1 { font-size:2rem; font-weight:700; line-height:1.2; margin-bottom:0.4rem; }
+.doc-meta { font-size:0.83rem; color:var(--muted); margin-bottom:2.5rem; padding-bottom:1.25rem; border-bottom:1px solid var(--border); }
+h2 { font-size:1.35rem; font-weight:700; margin-top:2.5rem; margin-bottom:0.75rem; padding-bottom:0.35rem; border-bottom:1px solid var(--border); }
+h3 { font-size:1.02rem; font-weight:600; margin-top:1.6rem; margin-bottom:0.5rem; }
+p { margin-bottom:0.85rem; }
+ul, ol { padding-left:1.4rem; margin-bottom:0.85rem; }
+li { margin-bottom:0.35rem; }
+code { font-family:"SFMono-Regular", Consolas, Menlo, monospace; font-size:0.87em; background:#f3f4f6; border:1px solid var(--border); border-radius:3px; padding:0.1em 0.35em; }
+pre { background:#f6f8fa; border:1px solid var(--border); border-radius:6px; padding:1rem 1.2rem; overflow-x:auto; margin-bottom:1rem; font-size:0.85rem; }
+pre code { background:none; border:none; padding:0; }
+a { color:var(--accent); }
+table { border-collapse:collapse; width:100%; margin:1rem 0 1.4rem; font-size:0.9rem; }
+th, td { text-align:left; padding:0.5rem 0.7rem; border:1px solid var(--border); vertical-align:top; }
+th { background:var(--accent-bg); font-weight:600; }
+tbody tr:nth-child(even) { background:#f3f4f6; }
+td.num, th.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.callout { border-left:4px solid var(--callout-border); background:var(--callout-bg); border-radius:0 6px 6px 0; padding:0.85rem 1.1rem; margin:1.2rem 0; }
+.callout.rec  { border-color:var(--ok-border);   background:var(--ok-bg); }
+.callout.warn { border-color:var(--warn-border); background:var(--warn-bg); }
+.callout-title { font-weight:700; font-size:0.82rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem; color:var(--accent); }
+.callout.rec  .callout-title { color:var(--ok-border); }
+.callout.warn .callout-title { color:var(--warn-border); }
+.bar-row { display:flex; align-items:center; gap:0.6rem; margin:0.35rem 0; font-size:0.85rem; }
+.bar-label { flex:0 0 230px; }
+.bar-track { flex:1; background:var(--bar-track); border-radius:4px; height:1.05rem; position:relative; overflow:hidden; }
+.bar-fill { background:var(--bar); height:100%; border-radius:4px; }
+.bar-pct { flex:0 0 92px; text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; }
+.tag { display:inline-block; font-size:0.72rem; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; padding:0.12em 0.5em; border-radius:999px; background:var(--accent-bg); color:var(--accent); vertical-align:middle; }
+.tag.done { background:var(--ok-bg); color:var(--ok-border); }
+.tag.todo { background:var(--warn-bg); color:var(--warn-border); }
+.tag.no   { background:#fde2e2; color:#c0392b; }
+@media (prefers-color-scheme: dark) { .tag.no { background:#3a1414; color:#f78a8a; } }
+hr.soft { border:none; border-top:1px solid var(--border); margin:2rem 0; }
+.toc { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1rem 1.3rem; margin:1.5rem 0; font-size:0.9rem; }
+.toc ol { margin-bottom:0; }
+small.note { color:var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>File-Editing Tool — Error Analysis &amp; Redesign</h1>
+<p class="doc-meta">
+  Status: <strong>Analysis complete · design decided · implementation not started</strong> ·
+  Scope: reduce the LLM error rate when editing files in Omega ·
+  Source data: all <code>events.jsonl</code> logs under <code>.omega/sessions/</code> (335 sessions) ·
+  Comparison agents: Claude Code, opencode, forgecode, pi-mono.
+</p>
+
+<div class="callout">
+  <div class="callout-title">In one sentence</div>
+  <p>
+    Omega's single <code>edit_file</code> tool fails on <strong>6.8 %</strong> of
+    calls; three-quarters of those failures are inexact <code>old_text</code>
+    matches and one-sixth are malformed calls induced by the mandatory
+    array-of-objects schema. We will split it into a flat single-edit tool plus a
+    separate multi-edit tool, add an optional <code>replace_all</code>, and add an
+    opencode-style fuzzy-match cascade — while deliberately <em>not</em> coercing
+    malformed input, so tool/argument mismatches stay visible.
+  </p>
+</div>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#method">Method</a></li>
+    <li><a href="#headline">Headline numbers</a></li>
+    <li><a href="#breakdown">Failure breakdown</a></li>
+    <li><a href="#structural">The malformed-call cases, decomposed</a></li>
+    <li><a href="#timeline">Timeline</a></li>
+    <li><a href="#agents">How other agents do it</a></li>
+    <li><a href="#decision">Decided design</a></li>
+    <li><a href="#plan">Implementation plan (not started)</a></li>
+  </ol>
+</div>
+
+<h2 id="method">1 · Method</h2>
+<p>
+  Every session under <code>.omega/sessions/</code> writes an append-only
+  <code>events.jsonl</code>. For each session I correlated every
+  <code>edit_file</code> tool-call with its matching tool-result (by id),
+  classified the failures by result message, and — for the malformed calls —
+  inspected the actual argument shape the model emitted (key set, JSON type of
+  <code>replacements</code>). I also measured recovery: whether a failed call was
+  followed by a successful <code>edit_file</code> later in the same session.
+</p>
+
+<h2 id="headline">2 · Headline numbers</h2>
+<table>
+  <tbody>
+    <tr><td>Sessions with an <code>events.jsonl</code></td><td class="num">335</td></tr>
+    <tr><td>Sessions that used <code>edit_file</code></td><td class="num">251</td></tr>
+    <tr><td>Sessions with ≥ 1 <code>edit_file</code> error</td><td class="num">105</td></tr>
+    <tr><td>Total <code>edit_file</code> calls</td><td class="num">3 117</td></tr>
+    <tr><td><strong>Total <code>edit_file</code> errors</strong></td><td class="num"><strong>213 (6.8 %)</strong></td></tr>
+    <tr><td>Failed calls followed by a successful retry (same session)</td><td class="num">166 / 213 (78 %)</td></tr>
+  </tbody>
+</table>
+<p>
+  The model usually recovers — but every failure costs a full round-trip and
+  re-echoes large <code>old_text</code>/<code>new_text</code> blocks, which is
+  the expensive part.
+</p>
+
+<h2 id="breakdown">3 · Failure breakdown by kind</h2>
+<div class="bar-row"><span class="bar-label">old_text_not_found</span><span class="bar-track"><span class="bar-fill" style="width:75.6%"></span></span><span class="bar-pct">161 · 75.6%</span></div>
+<div class="bar-row"><span class="bar-label">malformed call (structural)</span><span class="bar-track"><span class="bar-fill" style="width:16.9%"></span></span><span class="bar-pct">36 · 16.9%</span></div>
+<div class="bar-row"><span class="bar-label">old_text_ambiguous (N&gt;1 matches)</span><span class="bar-track"><span class="bar-fill" style="width:6.6%"></span></span><span class="bar-pct">14 · 6.6%</span></div>
+<div class="bar-row"><span class="bar-label">file_not_found</span><span class="bar-track"><span class="bar-fill" style="width:0.9%"></span></span><span class="bar-pct">2 · 0.9%</span></div>
+
+<table>
+  <thead><tr><th>Category</th><th class="num">Count</th><th class="num">% of errors</th><th>What happened</th></tr></thead>
+  <tbody>
+    <tr><td><code>old_text_not_found</code></td><td class="num">161</td><td class="num">75.6 %</td><td>snippet didn't byte-match (whitespace / indentation / stale content)</td></tr>
+    <tr><td>malformed call</td><td class="num">36</td><td class="num">16.9 %</td><td>call rejected as <em>"requires a non-empty replacements array"</em> — see §4</td></tr>
+    <tr><td><code>old_text_ambiguous</code></td><td class="num">14</td><td class="num">6.6 %</td><td>snippet matched more than once</td></tr>
+    <tr><td><code>file_not_found</code></td><td class="num">2</td><td class="num">0.9 %</td><td>bad path</td></tr>
+  </tbody>
+</table>
+
+<h2 id="structural">4 · The malformed-call cases, decomposed</h2>
+<p>
+  The 36 structural errors split into exactly two shapes. Notably, <strong>none</strong>
+  were a literal empty array <code>[]</code> — the model never "forgot" to fill
+  the array; it produced the <em>wrong container</em> for it.
+</p>
+<table>
+  <thead><tr><th>Malformed shape</th><th class="num">Count</th><th>What the model emitted</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>replacements</code> as a JSON <strong>string</strong></td>
+      <td class="num">29</td>
+      <td><code>"replacements": "[{\"new_text\": …}]"</code> — the whole array serialized into a string instead of a real JSON array.</td>
+    </tr>
+    <tr>
+      <td><strong>flattened</strong> single edit</td>
+      <td class="num">7</td>
+      <td>top-level <code>{path, old_text, new_text}</code> with no <code>replacements</code> key — i.e. the Claude-Code single-edit shape.</td>
+    </tr>
+    <tr>
+      <td>truly empty array <code>[]</code></td>
+      <td class="num">0</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+<div class="callout">
+  <div class="callout-title">Cross-model, not Omega-specific</div>
+  <p>
+    pi-mono's edit tool contains this exact guard, with a revealing comment:
+  </p>
+  <pre><code>// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+if (typeof args.edits === "string") { … JSON.parse … }</code></pre>
+  <p>
+    So the "stringified array" tendency is a known behaviour of frontier models
+    when faced with an array-of-objects parameter — strong evidence that the
+    schema <em>shape</em> is what induces the error, not Omega's wiring.
+  </p>
+</div>
+
+<h2 id="timeline">5 · Timeline</h2>
+<p>
+  The stringified-array failure is <strong>persistent</strong>, not a one-off: it
+  appears across the entire data range (May 5 → Jun 15), roughly 1–2 per active
+  day. The flattened-shape failure appears only in June. Monthly totals are
+  steady, so this is structural rather than a transient regression.
+</p>
+<table>
+  <thead><tr><th>Month</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">Rate</th></tr></thead>
+  <tbody>
+    <tr><td>2026-05</td><td class="num">2 177</td><td class="num">151</td><td class="num">6.9 %</td></tr>
+    <tr><td>2026-06</td><td class="num">940</td><td class="num">62</td><td class="num">6.6 %</td></tr>
+  </tbody>
+</table>
+
+<h2 id="agents">6 · How other agents do it</h2>
+<p>
+  Every comparison agent is more lenient than Omega today, and two of them defend
+  against precisely the malformed shapes above. The split between a flat
+  single-edit tool and a separate multi-edit tool is the Claude-Code pattern.
+</p>
+<table>
+  <thead><tr><th>Agent</th><th>Schema</th><th>Matching / leniency</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Omega</strong> <small class="note">(today)</small></td>
+      <td><code>edit_file{path, replacements:[{old_text,new_text}]}</code> — required array-of-objects</td>
+      <td><strong>strict</strong>: exact byte match only; no fuzzy fallback, no coercion</td>
+    </tr>
+    <tr>
+      <td><strong>Claude Code</strong></td>
+      <td>flat <code>Edit{file_path, old_string, new_string, replace_all?}</code> + <em>separate</em> <code>MultiEdit{file_path, edits:[…]}</code></td>
+      <td>exact match; <code>replace_all</code> for renames</td>
+    </tr>
+    <tr>
+      <td><strong>opencode</strong></td>
+      <td>flat <code>{filePath, oldString, newString, replaceAll?}</code> — no array</td>
+      <td><strong>9-strategy fuzzy cascade</strong>: simple → line-trimmed → block-anchor → whitespace-normalized → indentation-flexible → escape-normalized → trimmed-boundary → context-aware → multi-occurrence</td>
+    </tr>
+    <tr>
+      <td><strong>forgecode</strong></td>
+      <td>flat <code>FSPatch{file_path, old_string, new_string, replace_all}</code> + separate <code>FSMultiPatch{edits:[…]}</code></td>
+      <td><code>#[serde(alias)]</code> accepts <code>path</code>/<code>search</code>/<code>content</code> key variants; fuzzy-search repository</td>
+    </tr>
+    <tr>
+      <td><strong>pi-mono</strong></td>
+      <td>array-based <code>{path, edits:[{oldText,newText}]}</code></td>
+      <td><code>prepareArguments()</code> coerces both Omega failure modes (stringified array → parse; flattened → wrap)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="decision">7 · Decided design</h2>
+<div class="callout rec">
+  <div class="callout-title">Decisions (locked in)</div>
+  <ul style="margin-bottom:0">
+    <li><strong>Two tools</strong> <span class="tag todo">planned</span> — a flat single-edit tool and a separate multi-edit tool, in the Claude-Code style. The flat single-edit shape is the common case and avoids the array-of-objects parameter that induces the stringified-array error.</li>
+    <li><strong>Optional <code>replace_all</code></strong> <span class="tag todo">planned</span> — addresses the <code>old_text_ambiguous</code> class (renames / repeated snippets); matches Claude Code, opencode, forgecode.</li>
+    <li><strong>opencode-style fuzzy-match cascade</strong> <span class="tag todo">planned</span> — the biggest lever, targeting the 75.6 % <code>old_text_not_found</code> class. Try exact match first, then progressively more tolerant strategies, keeping a "must resolve to exactly one location" guard for safety.</li>
+    <li><strong>Lenient input-shape coercion</strong> <span class="tag no">deliberately not now</span> — we will <em>not</em> auto-fix stringified arrays or flattened edits. A mismatch between tool type and arguments may be a <em>thinking error</em> worth observing; coercing it would hide the signal. Keep monitoring before deciding.</li>
+    <li><strong>System prompt updated to match</strong> <span class="tag todo">planned</span> — the current rule <em>"never call <code>edit_file</code> on the same file twice in a row"</em> exists only because the array is mandatory; with a flat single-edit tool it should be revised, and the two-tool choice (single vs multi) should be described.</li>
+  </ul>
+</div>
+<div class="callout warn">
+  <div class="callout-title">Why keep strict input-shape handling?</div>
+  <p>
+    Coercion (pi-mono / forgecode style) would erase ~17 % of failures cheaply,
+    but it also erases the evidence. If a model sends a stringified array or a
+    flattened edit, that is the model picking the wrong contract — potentially a
+    reasoning slip we want to see and measure, especially right after introducing
+    two distinct tools. We keep it loud for now and revisit once the new tools
+    have produced data.
+  </p>
+</div>
+
+<h2 id="plan">8 · Implementation plan <span class="tag todo">not started</span></h2>
+<p>Suggested order (open to revision):</p>
+<ol>
+  <li><strong>Single-edit tool + <code>replace_all</code>.</strong> Smallest, self-contained unit; establishes the flat schema and exact-match-then-replace_all semantics. Tested through <code>execute_tool</code>.</li>
+  <li><strong>Fuzzy-match cascade.</strong> The highest-impact change; layer it under the single-edit tool's matcher so the multi-edit tool inherits it. Port opencode's strategies, each with the single-location guard.</li>
+  <li><strong>Multi-edit tool.</strong> Built on the same matcher; applies a sequence of edits to one file, failing the whole call if any edit doesn't resolve.</li>
+  <li><strong>System prompt.</strong> Describe single vs multi, document <code>replace_all</code>, drop/replace the "twice in a row" rule.</li>
+  <li><strong>Retire <code>edit_file</code></strong> (or keep transitionally) once the two replacements are in place.</li>
+</ol>
+<p>
+  <small class="note">
+    Rationale for this order: each step is independently shippable and testable,
+    and the fuzzy cascade — the dominant win — sits at the bottom of the stack so
+    both tools benefit from it. Per project conventions, each non-trivial unit gets
+    red/green tests through the public tool API plus a targeted
+    <code>cargo mutants</code> run.
+  </small>
+</p>
+
+<h3>Touchpoints — everywhere a tool is registered</h3>
+<p>
+  Adding/removing a tool is a cross-crate change. The Rust types lead; schema,
+  prompt, and UI follow (Contract Authority rule). Missing any one of these
+  silently drops the new tool from a surface — the tool-choice dialog in
+  particular has an explicit invariant that will hide an unlisted tool.
+</p>
+<table>
+  <thead><tr><th>#</th><th>File</th><th>What changes</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>crates/omega-types/src/tools.rs</code></td><td><code>DEFAULT_TOOL_NAMES</code>, <code>ALL_TOOL_NAMES</code>, and any <code>PRESETS</code> entry listing <code>edit_file</code> — swap in the single-edit + multi-edit names.</td></tr>
+    <tr><td>2</td><td><code>crates/omega-tools/src/schemas.rs</code></td><td>Replace the <code>edit_file</code> tool definition (JSON schema sent to the model) with the two new definitions, including the <code>replace_all</code> property.</td></tr>
+    <tr><td>3</td><td><code>crates/omega-tools/src/tools/</code> + <code>execute_tool</code> dispatch</td><td>New tool module(s) implementing the matcher + cascade; wire both names into dispatch.</td></tr>
+    <tr><td>4</td><td><code>crates/omega-agent/src/system_prompt.rs</code></td><td>Per-tool guidance: describe single vs multi, document <code>replace_all</code>, drop the <em>"never call <code>edit_file</code> twice in a row"</em> rule. (Several test fixtures here reference <code>edit_file</code> too.)</td></tr>
+    <tr><td>5</td><td><code>frontends/leptos/src/picker.rs</code> — <strong>the tool-choice dialog</strong></td><td><code>TOOL_CATEGORIES</code> ("File ops"): replace <code>edit_file</code> with the two new tools. <strong>Invariant:</strong> every tool surfaced by <code>PRESETS</code> must appear in exactly one category here, or the checkbox grid silently drops it.</td></tr>
+    <tr><td>6</td><td><code>crates/omega-agent/src/session_resume.rs</code></td><td><code>primary_tool_arg</code> match arm (used to show which file a tool touched in resumed sessions) — add the new tool names.</td></tr>
+    <tr><td>7</td><td>Reference / golden tests</td><td><code>crates/omega-types/tests/events_reference.rs</code> and the <code>system_prompt.rs</code> tests assert on the tool list — update fixtures.</td></tr>
+  </tbody>
+</table>
+
+<hr class="soft" />
+<p><small class="note">
+  Per the Contract Authority rule, the canonical change is in the Rust tool/event
+  types; schema, WS protocol, and UI follow. Backward compatibility with old
+  <code>edit_file</code> log entries is best-effort, not required.
+</small></p>
+
+</body>
+</html>
