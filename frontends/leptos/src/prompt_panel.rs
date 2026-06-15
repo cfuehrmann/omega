@@ -308,23 +308,51 @@ pub fn PromptPanel() -> impl IntoView {
         save_draft(&text);
     });
 
-    // Auto-focus the textarea whenever the panel opens (and editor not busy).
-    Effect::new(move |_| {
-        if state.open.get() && !state.editor_in_flight.get() {
+    // On mount: populate the textarea from state.draft and focus it.
+    // Uses spawn_local so the DOM node is guaranteed to exist by the time
+    // the closure runs.  No reactive reads → runs exactly once per mount,
+    // which is what we want (the panel is inside <Show when=open>, so it
+    // is fully unmounted/remounted on each open/close cycle).
+    Effect::new(move |_: Option<()>| {
+        let draft = state.draft.get_untracked();
+        let cursor = draft.len();
+        spawn_local(async move {
+            if let Some(el) = textarea_ref.get_untracked() {
+                el.set_value(&draft);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                let cursor_u32 = cursor.min(u32::MAX as usize) as u32;
+                let _ = el.set_selection_start(Some(cursor_u32));
+                let _ = el.set_selection_end(Some(cursor_u32));
+                let _ = el.focus();
+            }
+        });
+    });
+
+    // Re-focus the textarea after the external editor closes.  Only fires
+    // when editor_in_flight transitions true → false; the initial run
+    // (prev = None) is intentionally a no-op because the mount effect
+    // above already handles the initial focus.
+    Effect::new(move |prev: Option<bool>| {
+        let in_flight = state.editor_in_flight.get();
+        if prev == Some(true) && !in_flight {
             spawn_local(async move {
                 if let Some(el) = textarea_ref.get_untracked() {
                     let _ = el.focus();
                 }
             });
         }
+        in_flight
     });
 
-    // Watch trigger_editor: fire the editor when the counter increments.
-    // The Prompt button (in Composer) increments this when editor_configured.
+    // Watch trigger_editor: fire the editor when the Prompt button
+    // increments the counter.  `count > prev.unwrap_or(0)` (rather than
+    // requiring prev.is_some()) ensures this fires on the *first* effect
+    // run (mount) when the Prompt button already incremented the counter
+    // before the panel existed in the DOM.
     let trigger = state.trigger_editor;
     Effect::new(move |prev: Option<u32>| {
         let count = trigger.get();
-        if prev.is_some() && count > prev.unwrap_or(0) {
+        if count > prev.unwrap_or(0) {
             do_editor();
         }
         count
