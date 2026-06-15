@@ -364,7 +364,7 @@ async fn create_active_session(
     let has_pending_changes = git_has_pending_changes(&cwd);
     let cwd_string = cwd.display().to_string();
     let config = AgentConfig {
-        model: model.unwrap_or_else(|| "claude-sonnet-4-6".to_owned()),
+        model: model.unwrap_or_else(|| "claude-opus-4-8".to_owned()),
         effort,
         cwd,
         session_dir: paths.dir.clone(),
@@ -440,7 +440,7 @@ async fn create_active_session(
 /// Optional JSON body for `POST /api/sessions`.
 ///
 /// Both fields are optional; absent fields fall back to defaults
-/// (`claude-sonnet-4-6` / [`omega_agent::DEFAULT_EFFORT`]).  The
+/// (`claude-opus-4-8` / [`omega_agent::DEFAULT_EFFORT`]).  The
 /// endpoint also accepts a request with no body at all (legacy).
 #[derive(Debug, Default, Deserialize)]
 struct PostSessionBody {

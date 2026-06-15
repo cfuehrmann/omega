@@ -364,16 +364,16 @@ async fn composer_switch_model_idle() {
     h.press_key(INPUT, "Enter").await.expect("submit");
     wait_for_turn_state(&h, "idle", Duration::from_secs(10)).await;
 
-    // Sanity: server default is sonnet-4-6.
+    // Sanity: server default is opus-4-8.
     let cur: String = h
         .eval(&format!("document.querySelector('{MODEL}').value"))
         .await
         .expect("model.value");
-    assert_eq!(cur, "claude-sonnet-4-6");
+    assert_eq!(cur, "claude-opus-4-8");
 
-    h.select_option(MODEL, "claude-opus-4-8")
+    h.select_option(MODEL, "claude-sonnet-4-6")
         .await
-        .expect("select opus");
+        .expect("select sonnet");
 
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
@@ -381,12 +381,12 @@ async fn composer_switch_model_idle() {
             .eval(&format!("document.querySelector('{MODEL}').value"))
             .await
             .expect("model.value poll");
-        if v == "claude-opus-4-8" {
+        if v == "claude-sonnet-4-6" {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "model select never reflected opus, last = {v:?}"
+            "model select never reflected sonnet, last = {v:?}"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -409,9 +409,11 @@ async fn composer_switch_effort_idle() {
         .eval(&format!("document.querySelector('{EFFORT}').value"))
         .await
         .expect("effort.value");
-    assert_eq!(cur, "medium");
+    assert_eq!(cur, "high");
 
-    h.select_option(EFFORT, "high").await.expect("select high");
+    h.select_option(EFFORT, "medium")
+        .await
+        .expect("select medium");
 
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
@@ -419,12 +421,12 @@ async fn composer_switch_effort_idle() {
             .eval(&format!("document.querySelector('{EFFORT}').value"))
             .await
             .expect("effort.value poll");
-        if v == "high" {
+        if v == "medium" {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "effort never reflected high, last = {v:?}"
+            "effort never reflected medium, last = {v:?}"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

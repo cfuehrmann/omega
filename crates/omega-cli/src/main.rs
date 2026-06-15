@@ -38,14 +38,14 @@ enum Command {
         instruction: String,
 
         /// Anthropic model identifier.
-        #[arg(long, default_value = "claude-sonnet-4-6")]
+        #[arg(long, default_value = "claude-opus-4-8")]
         model: String,
 
         /// Adaptive-thinking effort level (low / medium / high; also
         /// `xhigh` on Opus 4.7/4.8 and `max` on Opus models). Forwarded as
         /// `output_config.effort` on every Anthropic request and
         /// capped per model by `cap_effort_for_model`.
-        #[arg(long, default_value = "medium")]
+        #[arg(long, default_value = "high")]
         effort: String,
 
         /// Override session root directory (default: `<cwd>/.omega/sessions`).

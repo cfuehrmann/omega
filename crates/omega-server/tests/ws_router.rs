@@ -412,8 +412,8 @@ async fn set_model_max_effort_with_non_opus_resets_effort_to_medium() {
     );
 }
 
-/// TestSM2: effort="medium" (default) + non-list model → only model_changed,
-/// NO effort_changed.
+/// TestSM2: effort="high" (default) + non-list model → only model_changed,
+/// NO effort_changed ("high" is valid on Sonnet, so no reset).
 /// Kills: `replace && with || (588)`, `replace && with || (xhigh, 589)`,
 ///        `replace == with != (xhigh, 589)`.
 #[tokio::test]
@@ -429,7 +429,7 @@ async fn set_model_medium_effort_does_not_reset_effort() {
     assert_eq!(recv_json(&mut ws).await["type"], "ready");
     reset_and_ready(&mut ws).await;
 
-    // Default effort is "medium"; switch to a non-Opus model.
+    // Default effort is "high" (valid on Sonnet); switch to a non-Opus model.
     send_json(
         &mut ws,
         serde_json::json!({ "type": "set_model", "model": "claude-sonnet-4-6" }),

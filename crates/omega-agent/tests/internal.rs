@@ -816,13 +816,13 @@ async fn active_model_reflects_set_model() {
 
 /// Kills `replace Agent::active_effort -> &str with ""` (and `"xyzzy"`).
 /// `make_test_agent` constructs with `effort = None`; the agent
-/// substitutes `DEFAULT_EFFORT` ("medium") in `Agent::new`, so the
+/// substitutes `DEFAULT_EFFORT` ("high") in `Agent::new`, so the
 /// accessor MUST round-trip the resolved string (not be replaced by a
 /// literal `""` or `"xyzzy"` returned regardless of state).
 #[tokio::test]
 async fn active_effort_reflects_initial_config() {
     let (agent, _p, _t) = make_test_agent();
-    assert_eq!(agent.active_effort(), "medium");
+    assert_eq!(agent.active_effort(), "high");
 }
 
 /// Pinned: a follow-on `set_effort` is observable through the accessor.
@@ -845,7 +845,7 @@ async fn active_effort_reflects_set_effort() {
 async fn model_effort_handle_effort_getter_round_trips() {
     let (agent, _p, _t) = make_test_agent();
     let handle = agent.model_effort_handle();
-    // Reflects the agent's resolved default ("medium").
+    // Reflects the agent's resolved default ("high").
     assert_eq!(handle.effort(), agent.active_effort());
     // Reflects a change made through the handle.
     handle.set_effort("high".to_owned()).await;

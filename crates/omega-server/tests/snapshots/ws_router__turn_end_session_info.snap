@@ -5,8 +5,8 @@ expression: "serde_json::to_string_pretty(&redact(info)).unwrap()"
 {
   "type": "session_info",
   "dir": "[REDACTED]",
-  "model": "claude-sonnet-4-6",
-  "effort": "medium",
+  "model": "claude-opus-4-8",
+  "effort": "high",
   "cwd": "[REDACTED]",
   "turnState": "idle",
   "hasPendingChanges": "[REDACTED]",

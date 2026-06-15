@@ -50,8 +50,10 @@ const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 
 /// Default thinking-effort level when none is explicitly set.
 ///
-/// Matches `src/agent.ts` (`activeEffort = "medium"`).
-pub const DEFAULT_EFFORT: &str = "medium";
+/// `high` is the project default: it pairs with the default Opus model,
+/// which is markedly stronger than Sonnet at the same cost and handles
+/// long-horizon agentic work (e.g. `run_background` + monitors) better.
+pub const DEFAULT_EFFORT: &str = "high";
 
 // ---------------------------------------------------------------------------
 // Agent
