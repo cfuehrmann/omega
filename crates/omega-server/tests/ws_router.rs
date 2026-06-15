@@ -234,19 +234,20 @@ async fn reset_and_ready(ws: &mut WsClient) -> String {
         .to_owned()
 }
 
-/// Redact volatile JSON fields (time, dir, cwd, contextHash, hasPendingChanges,
-/// editorConfigured) so snapshots are stable across runs.
-/// `editorConfigured` varies by test-runner environment (editor env-vars).
+/// Redact volatile JSON fields (time, dir, cwd, contextHash, hasPendingChanges)
+/// so snapshots are stable across runs.
+///
+/// `editorConfigured` is *dropped entirely* rather than redacted: the field
+/// varies by test-runner environment (editor env-vars) and is **omitted from
+/// the wire when false** (see `WsMessage::to_json`). Replacing its value with
+/// `[REDACTED]` cannot normalize its *presence*, so a value-only redaction
+/// still leaks the ambient environment — passing where `$EDITOR`/`$VISUAL`/
+/// `$OMEGA_EDITOR` is set and failing where it is not. Removing the key makes
+/// the snapshot deterministic regardless of environment.
 fn redact(mut v: serde_json::Value) -> serde_json::Value {
     if let Some(obj) = v.as_object_mut() {
-        for key in &[
-            "time",
-            "dir",
-            "cwd",
-            "contextHash",
-            "hasPendingChanges",
-            "editorConfigured",
-        ] {
+        obj.remove("editorConfigured");
+        for key in &["time", "dir", "cwd", "contextHash", "hasPendingChanges"] {
             if obj.contains_key(*key) {
                 obj.insert(
                     (*key).to_owned(),

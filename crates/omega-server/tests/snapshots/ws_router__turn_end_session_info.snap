@@ -12,6 +12,5 @@ expression: "serde_json::to_string_pretty(&redact(info)).unwrap()"
   "hasPendingChanges": "[REDACTED]",
   "features": {
     "subagents": false
-  },
-  "editorConfigured": "[REDACTED]"
+  }
 }
