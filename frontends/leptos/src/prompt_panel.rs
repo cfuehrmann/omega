@@ -411,6 +411,7 @@ pub fn PromptPanel() -> impl IntoView {
         <Show when=move || state.open.get() fallback=|| ()>
             <div class="prompt-panel" data-testid="prompt-panel">
                 <div class="prompt-panel-textarea-wrap">
+                    // Completion popup — positioned above the textarea.
                     <Show when=move || completion_open.get() fallback=|| ().into_any()>
                         <FileCompletionDropdown
                             items=completion_items
@@ -429,25 +430,26 @@ pub fn PromptPanel() -> impl IntoView {
                             }
                         />
                     </Show>
-                    <Show
-                        when=move || !state.editor_in_flight.get()
-                        fallback=|| view! {
-                            <div
-                                class="prompt-panel-editor-notice"
-                                data-testid="prompt-panel-editor-notice"
-                            >
-                                "Editor open — waiting for it to close…"
-                            </div>
-                        }.into_any()
-                    >
-                        <textarea
-                            class="prompt-panel-input"
-                            data-testid="leptos-prompt-panel-input"
-                            node_ref=textarea_ref
-                            on:input=on_input
-                            on:keydown=on_keydown
-                            placeholder="Message Omega… (@ for file path, Enter to send, Shift+Enter for newline, Esc to collapse)"
-                        />
+                    // Textarea — ALWAYS in the DOM so node_ref resolves even while
+                    // the editor is in-flight. Disabled (not removed) when busy.
+                    <textarea
+                        class="prompt-panel-input"
+                        data-testid="leptos-prompt-panel-input"
+                        node_ref=textarea_ref
+                        on:input=on_input
+                        on:keydown=on_keydown
+                        disabled=move || state.editor_in_flight.get()
+                        placeholder="Message Omega… (@ for file path, Enter to send, Shift+Enter for newline, Esc to collapse)"
+                    />
+                    // "Editor open…" overlay — absolutely covers the textarea while
+                    // POST /api/compose is in-flight. Textarea remains in DOM.
+                    <Show when=move || state.editor_in_flight.get() fallback=|| ()>
+                        <div
+                            class="prompt-panel-editor-notice"
+                            data-testid="prompt-panel-editor-notice"
+                        >
+                            "Editor open — waiting for it to close…"
+                        </div>
                     </Show>
                 </div>
                 <div class="prompt-panel-actions">
@@ -459,6 +461,15 @@ pub fn PromptPanel() -> impl IntoView {
                         on:click=on_collapse_click
                     >
                         "▼ Collapse"
+                    </button>
+                    <button
+                        class="prompt-panel-editor"
+                        data-testid="prompt-panel-editor"
+                        title="Open the external editor"
+                        disabled=move || state.editor_in_flight.get()
+                        on:click=move |_| do_editor()
+                    >
+                        "✎ Editor"
                     </button>
                     <button
                         class="prompt-panel-send"

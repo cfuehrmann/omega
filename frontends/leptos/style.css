@@ -2418,15 +2418,19 @@ main > h1 {
   color: var(--ctp-subtext0);
   cursor: pointer;
   font-family: var(--font);
-  font-size: 13px;
-  line-height: 1;
-  padding: 5px 10px 5px 8px;
+  font-size: 14px;
+  height: 38px;
+  padding: 0 12px;
   white-space: nowrap;
+  align-self: flex-end;
   flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s;
+  user-select: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
+.leptos-composer-prompt:disabled { opacity: 0.4; cursor: default; }
 /* Upward-pointing chevron — panel slides up */
 .leptos-composer-prompt::after {
   content: '';
@@ -2437,14 +2441,9 @@ main > h1 {
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 5 5 1 9 5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 10px 6px;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 5 5 1 9 5' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / 10px 6px;
 }
-.leptos-composer-prompt:hover {
+.leptos-composer-prompt:hover:not(:disabled) {
   border-color: var(--ctp-blue);
   color: var(--ctp-blue);
-}
-/* When the panel is open, highlight the button */
-.leptos-composer-prompt[data-panel-open="true"] {
-  border-color: var(--user);
-  color: var(--user);
 }
 
 /* Draft badge dot — shown inside the button when there is unsent text */
@@ -2474,8 +2473,10 @@ main > h1 {
   background: var(--bg);
 }
 
-/* Textarea wrapper — fills remaining height, anchors the completion popup */
+/* Textarea wrapper — fills remaining height, anchors the completion popup
+ * and the editor-in-flight overlay (both use position: absolute). */
 .prompt-panel-textarea-wrap {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -2500,23 +2501,28 @@ main > h1 {
   transition: border-color 0.15s;
   box-sizing: border-box;
 }
-.prompt-panel-input:hover:not(:focus) { border-color: var(--ctp-blue); }
-.prompt-panel-input:focus             { border-color: var(--user); }
-.prompt-panel-input::placeholder      { color: var(--dim); }
+.prompt-panel-input:hover:not(:focus):not(:disabled) { border-color: var(--ctp-blue); }
+.prompt-panel-input:focus                             { border-color: var(--user); }
+.prompt-panel-input::placeholder                     { color: var(--dim); }
+.prompt-panel-input:disabled                         { opacity: 0.5; cursor: default; }
 
-/* "Editor open…" placeholder shown while POST /api/compose is in flight */
+/* "Editor open…" overlay — covers the textarea while POST /api/compose
+ * is in-flight. Uses absolute positioning so the textarea stays in the
+ * DOM (node_ref must resolve even while the editor is running). */
 .prompt-panel-editor-notice {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
   font-size: 14px;
   font-style: italic;
   color: var(--ctp-mauve);
-  border: 1px solid color-mix(in srgb, var(--ctp-mauve) 40%, transparent);
+  border: 1px solid var(--ctp-mauve);
   border-radius: var(--radius);
-  padding: 8px 12px;
+  background: var(--bg2);
+  opacity: 0.9;
+  z-index: 1;
 }
 
 /* Action row: Collapse button (left) + Send button (right) */
@@ -2529,8 +2535,9 @@ main > h1 {
   padding: 0 0 8px;
 }
 
-/* Collapse button — secondary/muted style, left-aligned */
-.prompt-panel-collapse {
+/* Shared style for secondary panel action buttons (Collapse, Editor) */
+.prompt-panel-collapse,
+.prompt-panel-editor {
   background: none;
   border: 1px solid var(--ctp-surface2);
   border-radius: var(--radius);
@@ -2542,11 +2549,13 @@ main > h1 {
   flex-shrink: 0;
   transition: border-color 0.15s, color 0.15s;
 }
-.prompt-panel-collapse:hover:not(:disabled) {
+.prompt-panel-collapse:hover:not(:disabled),
+.prompt-panel-editor:hover:not(:disabled) {
   border-color: var(--ctp-blue);
   color: var(--ctp-blue);
 }
-.prompt-panel-collapse:disabled { opacity: 0.4; cursor: default; }
+.prompt-panel-collapse:disabled,
+.prompt-panel-editor:disabled { opacity: 0.4; cursor: default; }
 
 /* Send button — prominent primary action, right-aligned */
 .prompt-panel-send {

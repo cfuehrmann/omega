@@ -222,19 +222,14 @@ pub fn Composer() -> impl IntoView {
 
     // ---- Prompt button -----------------------------------------------------
     //
-    // Opens the collapsible PromptPanel. If the server has an external
-    // editor configured, also fires the editor immediately (via the
-    // trigger_editor counter) so clicking Prompt goes straight to the
-    // editor without a second click.
+    // Always opens the PromptPanel AND fires the editor immediately — same
+    // effect as opening the panel then clicking its "Editor" button. The
+    // button is disabled while the panel is already open to prevent a second
+    // editor from launching.
 
     let on_prompt_click = move |_| {
-        let editor_configured = store
-            .session_info
-            .with(|si| si.as_ref().is_some_and(|s| s.editor_configured));
         prompt_panel.open.set(true);
-        if editor_configured {
-            prompt_panel.trigger_editor.update(|v| *v += 1);
-        }
+        prompt_panel.trigger_editor.update(|v| *v += 1);
     };
 
     // ---- view --------------------------------------------------------------
@@ -259,8 +254,8 @@ pub fn Composer() -> impl IntoView {
             <button
                 class="leptos-composer-prompt"
                 data-testid="leptos-composer-prompt"
-                data-panel-open=move || prompt_panel.open.get().to_string()
-                title="Open prompt panel (compose your message)"
+                title="Open prompt panel — also opens the editor (Prompt)"
+                disabled=move || prompt_panel.open.get() || prompt_panel.editor_in_flight.get()
                 on:click=on_prompt_click
             >
                 <Show when=move || !prompt_panel.draft.with(|d| d.trim().is_empty()) fallback=|| ()>
