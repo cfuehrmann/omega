@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use omega_types::OmegaEvent;
 use omega_types::events::EditFailedSnapshotEvent;
 
-use crate::tools::text_match::{self, NotFoundHint, ReplaceError};
+use crate::tools::text_match::{self, Edit, NotFoundHint, PlanError};
 use crate::{ToolCtx, ToolResult};
 
 pub async fn execute(
@@ -35,21 +35,28 @@ pub async fn execute(
         Err(e) => return ToolResult::err(format!("edit_file: {e}")),
     };
 
-    match text_match::replace(&content, old_text, new_text, replace_all) {
-        Ok(result) => {
-            if let Err(e) = tokio::fs::write(path, &result.content).await {
+    // A single edit is just the one-element case of the shared planner.
+    let edits = [Edit {
+        old: old_text,
+        new: new_text,
+        replace_all,
+    }];
+    match text_match::apply_edits(&content, &edits) {
+        Ok(planned) => {
+            if let Err(e) = tokio::fs::write(path, &planned.content).await {
                 return ToolResult::err(format!("edit_file: failed to write {path}: {e}"));
             }
             ToolResult::ok(format!(
                 "edit_file: {path} — {}",
-                summarize(old_text, new_text, result.count, replace_all)
+                summarize(old_text, new_text, planned.count, replace_all)
             ))
         }
         // Match failure: report why, and capture the file as it is on disk
         // for forensics (the single edit_file read *is* the on-disk content).
         Err(e) => {
-            let message = format_replace_error("edit_file", e, path, "", &content, old_text);
-            match_failure_result(message, ctx, path, &content, 1, 1)
+            let message = format_plan_error("edit_file", e, path, &content, &edits);
+            let index = u32::try_from(e.edit() + 1).unwrap_or(u32::MAX);
+            match_failure_result(message, ctx, path, &content, index, 1)
         }
     }
 }
@@ -151,36 +158,46 @@ fn cap_at_char_boundary(s: &str, cap: usize) -> (String, bool) {
     (s[..end].to_owned(), true)
 }
 
-/// Map a [`ReplaceError`] to an actionable message.  `label` is an optional
-/// suffix such as `" (edit 2/3)"` used by `multi_edit_file`.  `content` and
-/// `old_text` are used to diagnose *why* a match failed (read-only).
-pub(crate) fn format_replace_error(
+/// Map a [`PlanError`] to an actionable message, shared by `edit_file` and
+/// `multi_edit_file`.  For a batch (more than one edit) each message names the
+/// offending edit as `(edit i/n)`.  `content` and the edits' `old` text are
+/// used to diagnose *why* a match failed (read-only).
+pub(crate) fn format_plan_error(
     tool: &str,
-    err: ReplaceError,
+    err: PlanError,
     path: &str,
-    label: &str,
     content: &str,
-    old_text: &str,
+    edits: &[Edit],
 ) -> String {
+    // Suffix locating an edit within a batch; empty for a single edit.
+    let at = |i: usize| -> String {
+        if edits.len() > 1 {
+            format!(" (edit {}/{})", i + 1, edits.len())
+        } else {
+            String::new()
+        }
+    };
     match err {
-        ReplaceError::Identical => format!(
-            "{tool}: old_text and new_text are identical in {path}{label}; nothing to change."
+        PlanError::Identical { edit } => format!(
+            "{tool}: old_text and new_text are identical in {path}{}; nothing to change.",
+            at(edit)
         ),
-        ReplaceError::Ambiguous { count } => {
-            let lines = text_match::occurrence_lines(content, old_text);
+        PlanError::Ambiguous { edit, count } => {
+            let lines = text_match::occurrence_lines(content, edits[edit].old);
             let where_ = lines
                 .iter()
                 .map(usize::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "{tool}: old_text matches {count} locations in {path}{label} (lines {where_}). \
+                "{tool}: old_text matches {count} locations in {path}{} (lines {where_}). \
                  Add surrounding context to make it unique, or pass \"replace_all\": true to \
-                 change every occurrence."
+                 change every occurrence.",
+                at(edit)
             )
         }
-        ReplaceError::NotFound => {
-            let hint = match text_match::diagnose_not_found(content, old_text) {
+        PlanError::NotFound { edit } => {
+            let hint = match text_match::diagnose_not_found(content, edits[edit].old) {
                 NotFoundHint::WhitespaceOnly { line } => format!(
                     " The text appears at line {line} but with different whitespace or \
                      indentation — copy it exactly as it appears in the file (whitespace is not \
@@ -193,7 +210,34 @@ pub(crate) fn format_replace_error(
                      including whitespace and indentation."
                     .to_string(),
             };
-            format!("{tool}: old_text not found in {path}{label}.{hint}")
+            format!("{tool}: old_text not found in {path}{}.{hint}", at(edit))
+        }
+        // The totality of matches is not disjoint.
+        PlanError::Overlap {
+            edit_a,
+            edit_b,
+            line,
+        } => {
+            if edit_a == edit_b {
+                // One edit's own matches overlap (only possible with replace_all).
+                format!(
+                    "{tool}: the matches of old_text in {path}{} overlap at line {line} \
+                     (e.g. \"aa\" within \"aaa\"); they are not disjoint, so they cannot all be \
+                     replaced. Use a longer snippet that does not overlap itself.",
+                    at(edit_a)
+                )
+            } else {
+                // Two different edits target the same text.
+                format!(
+                    "{tool}: edit {}/{} and edit {}/{} target overlapping text at line {line} in \
+                     {path}; edits must apply to disjoint regions. Merge them into one edit, or \
+                     target distinct text.",
+                    edit_a + 1,
+                    edits.len(),
+                    edit_b + 1,
+                    edits.len()
+                )
+            }
         }
     }
 }

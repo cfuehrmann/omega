@@ -81,8 +81,14 @@ small.note { color:var(--muted); }
   study of the <code>old_text_not_found</code> failures (see addendum) showed the cascade
   would mostly &quot;rescue&quot; genuine content mistakes (wrong numbers, dropped words,
   glyph-vs-escape) by editing the wrong place, and whitespace is often load-bearing.
-  Input-shape leniency also deliberately omitted. The schema descriptions below document
-  the <em>pre-change</em> baseline and the rationale. ·
+  Input-shape leniency also deliberately omitted. Ambiguity is now governed by one
+  <strong>universal disjointness rule</strong> across all scenarios (single, single +
+  <code>replace_all</code>, and multi-edit): the totality of match ranges must be pairwise
+  disjoint, with non-<code>replace_all</code> edits additionally requiring a unique match.
+  <code>multi_edit_file</code> matches every edit against the <em>original</em> file (parallel,
+  not sequential) and reports overlapping edits as a conflict. A dedicated
+  <code>EditFailedSnapshot</code> event captures the on-disk file at each failed attempt.
+  The schema descriptions below document the <em>pre-change</em> baseline and the rationale. ·
   Scope: reduce the LLM error rate when editing files in Omega ·
   Source data: all <code>events.jsonl</code> logs under <code>.omega/sessions/</code> (335 sessions) ·
   Comparison agents: Claude Code, opencode, forgecode, pi-mono.

@@ -14,73 +14,127 @@
 //! *why* it failed (whitespace/indentation drift, CRLF line endings, multiple
 //! matches) so it can correct itself.
 
-/// A successful replacement: the new file contents and how many occurrences
-/// were replaced (always 1 unless `replace_all`).
+/// One requested replacement: replace `old` with `new`, optionally at every
+/// (disjoint) occurrence.
+#[derive(Debug, Clone, Copy)]
+pub struct Edit<'a> {
+    pub old: &'a str,
+    pub new: &'a str,
+    pub replace_all: bool,
+}
+
+/// The result of planning and applying a batch of [`Edit`]s.
 #[derive(Debug)]
-pub struct Replacement {
+pub struct Planned {
     pub content: String,
+    /// Total number of individual replacements made across all edits.
     pub count: usize,
 }
 
-/// Why a replacement could not be applied.
+/// Why a batch of edits could not be applied.  Every variant names the
+/// offending edit by its index into the `edits` slice.
 #[derive(Debug, Clone, Copy)]
-pub enum ReplaceError {
-    /// `old_text` and `new_text` are identical — nothing to do.
-    Identical,
-    /// `old_text` does not appear in the content.
-    NotFound,
-    /// `old_text` appears more than once and `replace_all` was not set.
-    Ambiguous { count: usize },
+pub enum PlanError {
+    /// This edit's `old` and `new` are identical — nothing to do.
+    Identical { edit: usize },
+    /// This edit's `old` does not appear in the content.
+    NotFound { edit: usize },
+    /// This (non-`replace_all`) edit's `old` matches more than once, so the
+    /// target is not unique.
+    Ambiguous { edit: usize, count: usize },
+    /// Two target ranges overlap, so the totality of matches is not disjoint.
+    /// When `edit_a == edit_b` the overlap is among a single `replace_all`
+    /// edit's own matches (e.g. `aa` within `aaa`); otherwise two different
+    /// edits target the same text.
+    Overlap {
+        edit_a: usize,
+        edit_b: usize,
+        /// 1-based line of the overlap.
+        line: usize,
+    },
 }
 
-/// Replace `old` with `new` in `content`, matching exactly.
-///
-/// * unique match → replaced once;
-/// * multiple *disjoint* matches + `replace_all` → all replaced;
-/// * multiple matches without `replace_all`, or any *overlapping* matches even
-///   with `replace_all` → [`ReplaceError::Ambiguous`];
-/// * no match → [`ReplaceError::NotFound`].
-pub fn replace(
-    content: &str,
-    old: &str,
-    new: &str,
-    replace_all: bool,
-) -> Result<Replacement, ReplaceError> {
-    if old == new {
-        return Err(ReplaceError::Identical);
-    }
-    if old.is_empty() {
-        return Err(ReplaceError::NotFound);
-    }
-    // Count *overlapping* start positions, not just the non-overlapping ones
-    // `str::matches` would give: `aa` could match at offset 0 *or* 1 inside
-    // `aaa` (likewise `   ` inside `    `), so that is genuinely ambiguous and
-    // must be reported rather than silently replacing the first occurrence.
-    let starts = occurrence_starts(content, old);
-    match starts.len() {
-        0 => Err(ReplaceError::NotFound),
-        1 => {
-            let idx = starts[0];
-            let mut s = String::with_capacity(content.len() - old.len() + new.len());
-            s.push_str(&content[..idx]);
-            s.push_str(new);
-            s.push_str(&content[idx + old.len()..]);
-            Ok(Replacement {
-                content: s,
-                count: 1,
-            })
+impl PlanError {
+    /// The (primary) edit index this error concerns — used to tag the
+    /// edit-failure snapshot.
+    pub fn edit(&self) -> usize {
+        match *self {
+            PlanError::Identical { edit }
+            | PlanError::NotFound { edit }
+            | PlanError::Ambiguous { edit, .. } => edit,
+            PlanError::Overlap { edit_a, .. } => edit_a,
         }
-        // `replace_all` only has an unambiguous meaning when the matches are
-        // *disjoint*.  If any two overlap (e.g. `aa` in `aaaa`, which could be
-        // replaced as {0,2} or {1,3}), there is no single "replace every
-        // occurrence", so report it as ambiguous rather than silently picking
-        // the left-to-right greedy set.
-        n if replace_all && !any_overlap(&starts, old.len()) => Ok(Replacement {
-            content: content.replace(old, new),
-            count: n,
-        }),
-        n => Err(ReplaceError::Ambiguous { count: n }),
     }
+}
+
+/// A single target range produced by an edit.
+struct Span<'a> {
+    start: usize,
+    end: usize,
+    edit: usize,
+    new: &'a str,
+}
+
+/// Plan and apply a batch of exact-match edits against `content`.
+///
+/// The universal rule across every editing scenario (single edit, single edit
+/// with `replace_all`, multi-edit) is the same: gather the target range of
+/// every match of every edit, and require **the totality of those ranges to be
+/// pairwise disjoint**.  On top of that, a non-`replace_all` edit carries the
+/// stricter constraint that its `old` must match *exactly once*.
+///
+/// All edits match against the *original* `content` — they are applied in
+/// parallel, not sequentially — so one edit never sees another's output, and a
+/// pair of edits targeting the same text is reported as an overlap up front
+/// rather than surfacing later as a confusing "not found".
+pub fn apply_edits(content: &str, edits: &[Edit]) -> Result<Planned, PlanError> {
+    // 1. Gather every target range, enforcing each edit's own constraints.
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, e) in edits.iter().enumerate() {
+        if e.old == e.new {
+            return Err(PlanError::Identical { edit: i });
+        }
+        // `occurrence_starts` returns every (possibly overlapping) match; an
+        // empty `old` yields none.
+        let starts = occurrence_starts(content, e.old);
+        match starts.len() {
+            0 => return Err(PlanError::NotFound { edit: i }),
+            n if !e.replace_all && n > 1 => {
+                return Err(PlanError::Ambiguous { edit: i, count: n });
+            }
+            _ => spans.extend(starts.into_iter().map(|start| Span {
+                start,
+                end: start + e.old.len(),
+                edit: i,
+                new: e.new,
+            })),
+        }
+    }
+
+    // 2. Universal rule: the totality of ranges must be pairwise disjoint.
+    // After sorting by start, checking consecutive pairs is sufficient (if
+    // every next.start >= prev.end then all pairs are disjoint).
+    spans.sort_by_key(|s| s.start);
+    for w in spans.windows(2) {
+        if w[1].start < w[0].end {
+            return Err(PlanError::Overlap {
+                edit_a: w[0].edit.min(w[1].edit),
+                edit_b: w[0].edit.max(w[1].edit),
+                line: content[..w[1].start].matches('\n').count() + 1,
+            });
+        }
+    }
+
+    // 3. Apply from the highest offset down so earlier offsets stay valid.
+    let count = spans.len();
+    let mut out = content.to_string();
+    for s in spans.iter().rev() {
+        out.replace_range(s.start..s.end, s.new);
+    }
+    Ok(Planned {
+        content: out,
+        count,
+    })
 }
 
 /// Byte offsets of every (possibly *overlapping*) start position of `old` in
@@ -100,16 +154,9 @@ fn occurrence_starts(content: &str, old: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Whether any two of the ascending `starts` lie within `width` bytes of each
-/// other — i.e. matches of a `width`-byte needle overlap.  (Consecutive pairs
-/// suffice because `starts` is ascending.)
-fn any_overlap(starts: &[usize], width: usize) -> bool {
-    starts.windows(2).any(|w| w[1] - w[0] < width)
-}
-
 /// The 1-based starting line of every (possibly overlapping) occurrence of
 /// `old`.  Used to make an "ambiguous" error point at the matches, so it must
-/// agree with the overlapping count used in [`replace`].
+/// agree with the overlapping matches gathered by [`apply_edits`].
 pub fn occurrence_lines(content: &str, old: &str) -> Vec<usize> {
     occurrence_starts(content, old)
         .into_iter()
@@ -182,119 +229,134 @@ fn unique_trimmed_block(content: &str, old: &str) -> Option<usize> {
 mod tests {
     use super::*;
 
-    fn ok(r: Result<Replacement, ReplaceError>) -> Replacement {
+    fn ok(r: Result<Planned, PlanError>) -> Planned {
         match r {
             Ok(v) => v,
             Err(e) => panic!("expected Ok, got {e:?}"),
         }
     }
 
+    /// Apply a single edit (the `edit_file` shape).
+    fn one<'a>(content: &str, old: &'a str, new: &'a str, all: bool) -> Result<Planned, PlanError> {
+        apply_edits(
+            content,
+            &[Edit {
+                old,
+                new,
+                replace_all: all,
+            }],
+        )
+    }
+
     #[test]
-    fn replace_unique_match() {
-        let r = ok(replace("a\nB\nc", "B", "X", false));
+    fn single_unique_match() {
+        let r = ok(one("a\nB\nc", "B", "X", false));
         assert_eq!(r.content, "a\nX\nc");
         assert_eq!(r.count, 1);
     }
 
     #[test]
-    fn replace_is_exact_not_fuzzy() {
-        // Indentation differs -> NOT found (no silent rescue).
+    fn single_is_exact_not_fuzzy() {
+        // `foo()` is a genuine substring of `    foo()` -> matches.
+        assert!(one("    foo()", "foo()", "bar()", false).is_ok());
+        // Different leading whitespace -> NOT found (no silent rescue).
         assert!(matches!(
-            replace("    foo()", "foo()", "bar()", false),
-            Ok(Replacement { .. })
-        )); // substring match is fine
-        assert!(matches!(
-            replace("\tfoo()", "    foo()", "bar()", false),
-            Err(ReplaceError::NotFound)
+            one("\tfoo()", "    foo()", "bar()", false),
+            Err(PlanError::NotFound { edit: 0 })
         ));
     }
 
     #[test]
-    fn replace_not_found() {
+    fn single_not_found() {
         assert!(matches!(
-            replace("abc", "xyz", "q", false),
-            Err(ReplaceError::NotFound)
+            one("abc", "xyz", "q", false),
+            Err(PlanError::NotFound { edit: 0 })
         ));
     }
 
     #[test]
-    fn replace_empty_old_is_not_found() {
+    fn single_empty_old_is_not_found() {
         assert!(matches!(
-            replace("abc", "", "q", false),
-            Err(ReplaceError::NotFound)
+            one("abc", "", "q", false),
+            Err(PlanError::NotFound { edit: 0 })
         ));
     }
 
     #[test]
-    fn replace_identical() {
+    fn single_identical() {
         assert!(matches!(
-            replace("abc", "b", "b", false),
-            Err(ReplaceError::Identical)
+            one("abc", "b", "b", false),
+            Err(PlanError::Identical { edit: 0 })
         ));
     }
 
     #[test]
-    fn replace_ambiguous_reports_count() {
-        match replace("x x x", "x", "y", false) {
-            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 3),
-            _ => panic!("expected Ambiguous"),
+    fn single_ambiguous_reports_count() {
+        match one("x x x", "x", "y", false) {
+            Err(PlanError::Ambiguous { edit: 0, count }) => assert_eq!(count, 3),
+            other => panic!("expected Ambiguous, got {other:?}"),
         }
     }
 
     #[test]
     fn replace_all_changes_every_occurrence() {
-        let r = ok(replace("x x x", "x", "y", true));
+        let r = ok(one("x x x", "x", "y", true));
         assert_eq!(r.content, "y y y");
         assert_eq!(r.count, 3);
     }
 
     #[test]
     fn replace_all_single_occurrence_counts_one() {
-        let r = ok(replace("only one", "one", "two", true));
+        let r = ok(one("only one", "one", "two", true));
         assert_eq!(r.content, "only two");
         assert_eq!(r.count, 1);
     }
 
     #[test]
-    fn replace_overlapping_chars_is_ambiguous() {
-        // `aa` could start at offset 0 or 1 inside `aaa` -> ambiguous.
-        match replace("aaa", "aa", "X", false) {
-            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
+    fn single_overlapping_chars_is_ambiguous() {
+        // `aa` could start at offset 0 or 1 inside `aaa`; without replace_all
+        // the (>1) match count makes it ambiguous.
+        match one("aaa", "aa", "X", false) {
+            Err(PlanError::Ambiguous { edit: 0, count }) => assert_eq!(count, 2),
             other => panic!("expected Ambiguous, got {other:?}"),
         }
     }
 
     #[test]
-    fn replace_overlapping_whitespace_is_ambiguous() {
+    fn single_overlapping_whitespace_is_ambiguous() {
         // Three spaces inside a run of four -> two overlapping positions.
-        match replace("    ", "   ", "X", false) {
-            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
+        match one("    ", "   ", "X", false) {
+            Err(PlanError::Ambiguous { edit: 0, count }) => assert_eq!(count, 2),
             other => panic!("expected Ambiguous, got {other:?}"),
         }
     }
 
     #[test]
-    fn replace_overlapping_lines_is_ambiguous() {
+    fn single_overlapping_lines_is_ambiguous() {
         // The two-line block `X\nX` overlaps itself in three identical lines.
-        match replace("X\nX\nX\n", "X\nX", "Y", false) {
-            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
+        match one("X\nX\nX\n", "X\nX", "Y", false) {
+            Err(PlanError::Ambiguous { edit: 0, count }) => assert_eq!(count, 2),
             other => panic!("expected Ambiguous, got {other:?}"),
         }
     }
 
     #[test]
-    fn replace_all_overlapping_is_ambiguous() {
-        // Overlapping matches have no unambiguous "replace all" -> error even
-        // with replace_all. (Non-zero offsets also pin the subtraction.)
-        match replace("xaaa", "aa", "b", true) {
-            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
-            other => panic!("expected Ambiguous, got {other:?}"),
+    fn replace_all_overlapping_is_not_disjoint() {
+        // Overlapping matches have no unambiguous "replace all" -> the matches
+        // are not disjoint, reported as Overlap (within one edit).
+        match one("xaaa", "aa", "b", true) {
+            Err(PlanError::Overlap {
+                edit_a: 0,
+                edit_b: 0,
+                line,
+            }) => assert_eq!(line, 1),
+            other => panic!("expected Overlap, got {other:?}"),
         }
     }
 
     #[test]
     fn replace_all_disjoint_succeeds() {
-        let r = ok(replace("aa bb aa", "aa", "X", true));
+        let r = ok(one("aa bb aa", "aa", "X", true));
         assert_eq!(r.content, "X bb X");
         assert_eq!(r.count, 2);
     }
@@ -302,10 +364,104 @@ mod tests {
     #[test]
     fn replace_all_adjacent_disjoint_succeeds() {
         // Matches exactly `width` apart touch but do not overlap -> allowed.
-        // (Pins `<` rather than `<=` in the overlap check.)
-        let r = ok(replace("abab", "ab", "X", true));
+        // (Pins `<` rather than `<=` in the disjointness check.)
+        let r = ok(one("abab", "ab", "X", true));
         assert_eq!(r.content, "XX");
         assert_eq!(r.count, 2);
+    }
+
+    #[test]
+    fn multi_disjoint_edits_apply_in_parallel() {
+        let r = ok(apply_edits(
+            "foo and bar",
+            &[
+                Edit {
+                    old: "foo",
+                    new: "X",
+                    replace_all: false,
+                },
+                Edit {
+                    old: "bar",
+                    new: "Y",
+                    replace_all: false,
+                },
+            ],
+        ));
+        assert_eq!(r.content, "X and Y");
+        assert_eq!(r.count, 2);
+    }
+
+    #[test]
+    fn multi_overlapping_edits_conflict() {
+        // Two edits targeting the same `aa` -> overlap naming both edits.
+        match apply_edits(
+            "aa",
+            &[
+                Edit {
+                    old: "aa",
+                    new: "X",
+                    replace_all: false,
+                },
+                Edit {
+                    old: "aa",
+                    new: "Y",
+                    replace_all: false,
+                },
+            ],
+        ) {
+            Err(PlanError::Overlap {
+                edit_a: 0,
+                edit_b: 1,
+                line,
+            }) => assert_eq!(line, 1),
+            other => panic!("expected Overlap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn multi_not_found_names_the_edit() {
+        match apply_edits(
+            "foo",
+            &[
+                Edit {
+                    old: "foo",
+                    new: "X",
+                    replace_all: false,
+                },
+                Edit {
+                    old: "bar",
+                    new: "Y",
+                    replace_all: false,
+                },
+            ],
+        ) {
+            Err(PlanError::NotFound { edit }) => assert_eq!(edit, 1),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn multi_is_parallel_not_sequential() {
+        // Edit 2 targets edit 1's *output* (`b`); against the original `a`
+        // there is no `b`, so it is not found rather than chaining.
+        match apply_edits(
+            "a",
+            &[
+                Edit {
+                    old: "a",
+                    new: "b",
+                    replace_all: false,
+                },
+                Edit {
+                    old: "b",
+                    new: "c",
+                    replace_all: false,
+                },
+            ],
+        ) {
+            Err(PlanError::NotFound { edit }) => assert_eq!(edit, 1),
+            other => panic!("expected NotFound, got {other:?}"),
+        }
     }
 
     #[test]

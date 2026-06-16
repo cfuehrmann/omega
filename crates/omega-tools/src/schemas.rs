@@ -175,21 +175,22 @@ fn multi_edit_file() -> ToolDefinition {
     let edit: Value = json!({
         "type": "object",
         "properties": {
-            "old_text": { "type": "string",  "description": "Text to find (copied from the file as it stands after the preceding edits)" },
+            "old_text": { "type": "string",  "description": "Text to find. Copy it from the current file; matched against the original contents, not other edits' output." },
             "new_text": { "type": "string",  "description": "Text to replace old_text with" },
-            "replace_all": { "type": "boolean", "description": "Replace every occurrence for this edit (optional, default false)" },
+            "replace_all": { "type": "boolean", "description": "Replace every (disjoint) occurrence for this edit (optional, default false)" },
         },
         "required": ["old_text", "new_text"],
     });
 
     ToolDefinition {
         name: "multi_edit_file".into(),
-        description: "Apply an ordered sequence of edits to a SINGLE file in one call. Each edit \
-                      is {old_text, new_text, replace_all?} and is applied to the result of the \
-                      previous one, so later edits must reference text as it will read after the \
-                      earlier edits. The whole sequence is atomic: if any edit fails to match, \
-                      the file is left untouched. Use this instead of calling edit_file \
-                      repeatedly on the same file. For a single change, use edit_file."
+        description: "Apply several edits to a SINGLE file in one call. Each edit is \
+                      {old_text, new_text, replace_all?}. All edits are matched against the \
+                      ORIGINAL file contents (not each other's output) and must target \
+                      non-overlapping regions. Atomic: if any edit fails to match, or two edits \
+                      overlap the same text, the file is left untouched and the offending \
+                      edit(s) are named. Use this for several disjoint changes to one file; for \
+                      a single change, use edit_file."
             .into(),
         input_schema: json!({
             "type": "object",
@@ -198,7 +199,7 @@ fn multi_edit_file() -> ToolDefinition {
                 "edits": {
                     "type": "array",
                     "items": edit,
-                    "description": "Edits to apply in order. Each old_text must resolve to one location (unless replace_all) in the file as it reads when that edit runs.",
+                    "description": "Edits to apply. Each old_text must resolve to exactly one location in the original file (unless replace_all), and the regions targeted by different edits must not overlap.",
                 },
             },
             "required": ["path", "edits"],

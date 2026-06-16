@@ -313,6 +313,11 @@ async fn edit_file_not_found_returns_error() {
     .await
     .unwrap_err();
     assert!(err.contains("not found"), "got: {err}");
+    // A single edit must NOT be labelled with an "(edit i/n)" suffix.
+    assert!(
+        !err.contains("(edit "),
+        "single edit should not be numbered: {err}"
+    );
 }
 
 #[tokio::test]
@@ -881,14 +886,15 @@ async fn multi_edit_file_applies_all_edits() {
 }
 
 #[tokio::test]
-async fn multi_edit_file_applies_edits_sequentially() {
-    // The second edit must see the result of the first: it targets text that
-    // only exists after edit 1 has run.
+async fn multi_edit_file_is_parallel_not_sequential() {
+    // Edits match the ORIGINAL file, not each other's output: a second edit
+    // that targets the first edit's result is "not found", and nothing is
+    // written (atomic).
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("seq.txt");
     std::fs::write(&path, "alpha").unwrap();
 
-    exec(
+    let err = exec(
         "multi_edit_file",
         json!({
             "path": path.to_str().unwrap(),
@@ -899,9 +905,43 @@ async fn multi_edit_file_applies_edits_sequentially() {
         }),
     )
     .await
-    .unwrap();
+    .unwrap_err();
 
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "gamma");
+    assert!(err.contains("not found"), "got: {err}");
+    assert!(
+        err.contains("edit 2/2"),
+        "must name the failing edit: {err}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "alpha");
+}
+
+#[tokio::test]
+async fn multi_edit_file_overlapping_edits_conflict() {
+    // Two edits targeting the same text are a disjointness conflict, reported
+    // up front (naming both edits) rather than as a confusing "not found".
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("conflict.txt");
+    std::fs::write(&path, "aa").unwrap();
+
+    let err = exec(
+        "multi_edit_file",
+        json!({
+            "path": path.to_str().unwrap(),
+            "edits": [
+                { "old_text": "aa", "new_text": "X" },
+                { "old_text": "aa", "new_text": "Y" }
+            ]
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(err.contains("overlapping"), "got: {err}");
+    assert!(
+        err.contains("edit 1/2") && err.contains("edit 2/2"),
+        "must name both conflicting edits: {err}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "aa");
 }
 
 #[tokio::test]
