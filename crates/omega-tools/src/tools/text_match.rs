@@ -36,8 +36,9 @@ pub enum ReplaceError {
 /// Replace `old` with `new` in `content`, matching exactly.
 ///
 /// * unique match → replaced once;
-/// * multiple matches + `replace_all` → all replaced;
-/// * multiple matches without `replace_all` → [`ReplaceError::Ambiguous`];
+/// * multiple *disjoint* matches + `replace_all` → all replaced;
+/// * multiple matches without `replace_all`, or any *overlapping* matches even
+///   with `replace_all` → [`ReplaceError::Ambiguous`];
 /// * no match → [`ReplaceError::NotFound`].
 pub fn replace(
     content: &str,
@@ -69,11 +70,14 @@ pub fn replace(
                 count: 1,
             })
         }
-        // `replace_all` is non-overlapping (the only sane definition): the
-        // reported count is the number of replacements actually made.
-        _ if replace_all => Ok(Replacement {
+        // `replace_all` only has an unambiguous meaning when the matches are
+        // *disjoint*.  If any two overlap (e.g. `aa` in `aaaa`, which could be
+        // replaced as {0,2} or {1,3}), there is no single "replace every
+        // occurrence", so report it as ambiguous rather than silently picking
+        // the left-to-right greedy set.
+        n if replace_all && !any_overlap(&starts, old.len()) => Ok(Replacement {
             content: content.replace(old, new),
-            count: content.matches(old).count(),
+            count: n,
         }),
         n => Err(ReplaceError::Ambiguous { count: n }),
     }
@@ -94,6 +98,13 @@ fn occurrence_starts(content: &str, old: &str) -> Vec<usize> {
         .filter(|&(i, _)| content[i..].starts_with(old))
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Whether any two of the ascending `starts` lie within `width` bytes of each
+/// other — i.e. matches of a `width`-byte needle overlap.  (Consecutive pairs
+/// suffice because `starts` is ascending.)
+fn any_overlap(starts: &[usize], width: usize) -> bool {
+    starts.windows(2).any(|w| w[1] - w[0] < width)
 }
 
 /// The 1-based starting line of every (possibly overlapping) occurrence of
@@ -272,11 +283,29 @@ mod tests {
     }
 
     #[test]
-    fn replace_all_overlapping_is_non_overlapping() {
-        // `replace_all` opts into non-overlapping replacement.
-        let r = ok(replace("aaa", "aa", "b", true));
-        assert_eq!(r.content, "ba");
-        assert_eq!(r.count, 1);
+    fn replace_all_overlapping_is_ambiguous() {
+        // Overlapping matches have no unambiguous "replace all" -> error even
+        // with replace_all. (Non-zero offsets also pin the subtraction.)
+        match replace("xaaa", "aa", "b", true) {
+            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_all_disjoint_succeeds() {
+        let r = ok(replace("aa bb aa", "aa", "X", true));
+        assert_eq!(r.content, "X bb X");
+        assert_eq!(r.count, 2);
+    }
+
+    #[test]
+    fn replace_all_adjacent_disjoint_succeeds() {
+        // Matches exactly `width` apart touch but do not overlap -> allowed.
+        // (Pins `<` rather than `<=` in the overlap check.)
+        let r = ok(replace("abab", "ab", "X", true));
+        assert_eq!(r.content, "XX");
+        assert_eq!(r.count, 2);
     }
 
     #[test]
