@@ -35,13 +35,24 @@ pub fn format_tool_call(name: &str, input: &Value) -> String {
             format!("write_file: {path} ({bytes} bytes)")
         }
         "edit_file" => {
+            let mut s = format!("edit_file: {}", string_field(input, "path"));
+            if input
+                .get("replace_all")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                s.push_str(" (replace all)");
+            }
+            s
+        }
+        "multi_edit_file" => {
             let count = input
-                .get("replacements")
+                .get("edits")
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len);
             let suffix = if count == 1 { "" } else { "s" };
             format!(
-                "edit_file: {} ({count} replacement{suffix})",
+                "multi_edit_file: {} ({count} edit{suffix})",
                 string_field(input, "path"),
             )
         }
@@ -150,19 +161,43 @@ mod tests {
     }
 
     #[test]
-    fn edit_file_pluralisation() {
+    fn edit_file_shows_path() {
+        let plain = format_tool_call(
+            "edit_file",
+            &json!({"path": "p", "old_text": "a", "new_text": "b"}),
+        );
+        assert_eq!(plain, "edit_file: p");
+    }
+
+    #[test]
+    fn edit_file_flags_replace_all() {
+        let all = format_tool_call(
+            "edit_file",
+            &json!({"path": "p", "old_text": "a", "new_text": "b", "replace_all": true}),
+        );
+        assert_eq!(all, "edit_file: p (replace all)");
+        // replace_all:false renders identically to omitting it.
+        let no = format_tool_call(
+            "edit_file",
+            &json!({"path": "p", "old_text": "a", "new_text": "b", "replace_all": false}),
+        );
+        assert_eq!(no, "edit_file: p");
+    }
+
+    #[test]
+    fn multi_edit_file_pluralisation() {
         let one = format_tool_call(
-            "edit_file",
-            &json!({"path": "p", "replacements": [{"old_text":"a","new_text":"b"}]}),
+            "multi_edit_file",
+            &json!({"path": "p", "edits": [{"old_text":"a","new_text":"b"}]}),
         );
-        assert_eq!(one, "edit_file: p (1 replacement)");
+        assert_eq!(one, "multi_edit_file: p (1 edit)");
         let two = format_tool_call(
-            "edit_file",
-            &json!({"path": "p", "replacements": [{"old_text":"a","new_text":"b"},{"old_text":"c","new_text":"d"}]}),
+            "multi_edit_file",
+            &json!({"path": "p", "edits": [{"old_text":"a","new_text":"b"},{"old_text":"c","new_text":"d"}]}),
         );
-        assert_eq!(two, "edit_file: p (2 replacements)");
-        let zero = format_tool_call("edit_file", &json!({"path": "p"}));
-        assert_eq!(zero, "edit_file: p (0 replacements)");
+        assert_eq!(two, "multi_edit_file: p (2 edits)");
+        let zero = format_tool_call("multi_edit_file", &json!({"path": "p"}));
+        assert_eq!(zero, "multi_edit_file: p (0 edits)");
     }
 
     #[test]

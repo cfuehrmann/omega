@@ -75,7 +75,10 @@ small.note { color:var(--muted); }
 
 <h1>File-Editing Tool — Error Analysis &amp; Redesign</h1>
 <p class="doc-meta">
-  Status: <strong>Analysis complete · design decided · implementation not started</strong> ·
+  Status: <strong>Implemented</strong> — single <code>edit_file</code> + new <code>multi_edit_file</code>,
+  optional <code>replace_all</code>, and the opencode-style fuzzy cascade are live;
+  input-shape leniency deliberately omitted. The schema descriptions below document
+  the <em>pre-change</em> baseline and the rationale. ·
   Scope: reduce the LLM error rate when editing files in Omega ·
   Source data: all <code>events.jsonl</code> logs under <code>.omega/sessions/</code> (335 sessions) ·
   Comparison agents: Claude Code, opencode, forgecode, pi-mono.

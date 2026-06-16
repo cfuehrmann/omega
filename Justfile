@@ -772,12 +772,19 @@ mutants-ws-event-broadcaster:
 # - edit_file.rs: the flat single-edit tool (old_text→new_text, replace_all)
 #   plus the shared summarize()/format_replace_error() helpers.
 # - multi_edit_file.rs: sequential + atomic batch edits to one file.
+# - format.rs: the edit_file/multi_edit_file arms of format_tool_call (the
+#   human-readable log-line rendering of a tool call).
 # All exercised via execute_tool in tests/file_tools.rs, plus the pure-function
-# carve-out unit tests in text_match.rs. All mutations must be CAUGHT or
-# UNVIABLE — no survivors. Template: mutants-system-prompt-guard (see AGENTS.md).
+# carve-out unit tests in text_match.rs and the format_tool_call unit tests.
+# All mutations must be CAUGHT or UNVIABLE — no survivors. Template:
+# mutants-system-prompt-guard (see AGENTS.md).
+#
+# Uses -j1: two parallel workers each build a full target copy under TMPDIR,
+# which can exceed available disk headroom on this machine (ENOSPC).
 mutants-edit-tools:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j1 --cap-lints=true \
         --file "crates/omega-tools/src/tools/text_match.rs" \
         --file "crates/omega-tools/src/tools/edit_file.rs" \
-        --file "crates/omega-tools/src/tools/multi_edit_file.rs"
+        --file "crates/omega-tools/src/tools/multi_edit_file.rs" \
+        --file "crates/omega-tools/src/format.rs"
