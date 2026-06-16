@@ -16,6 +16,7 @@
 
 /// A successful replacement: the new file contents and how many occurrences
 /// were replaced (always 1 unless `replace_all`).
+#[derive(Debug)]
 pub struct Replacement {
     pub content: String,
     pub count: usize,
@@ -50,44 +51,59 @@ pub fn replace(
     if old.is_empty() {
         return Err(ReplaceError::NotFound);
     }
-    let count = content.matches(old).count();
-    match count {
+    // Count *overlapping* start positions, not just the non-overlapping ones
+    // `str::matches` would give: `aa` could match at offset 0 *or* 1 inside
+    // `aaa` (likewise `   ` inside `    `), so that is genuinely ambiguous and
+    // must be reported rather than silently replacing the first occurrence.
+    let starts = occurrence_starts(content, old);
+    match starts.len() {
         0 => Err(ReplaceError::NotFound),
-        1 => match content.find(old) {
-            Some(idx) => {
-                let mut s = String::with_capacity(content.len() - old.len() + new.len());
-                s.push_str(&content[..idx]);
-                s.push_str(new);
-                s.push_str(&content[idx + old.len()..]);
-                Ok(Replacement {
-                    content: s,
-                    count: 1,
-                })
-            }
-            None => Err(ReplaceError::NotFound),
-        },
-        n if replace_all => Ok(Replacement {
+        1 => {
+            let idx = starts[0];
+            let mut s = String::with_capacity(content.len() - old.len() + new.len());
+            s.push_str(&content[..idx]);
+            s.push_str(new);
+            s.push_str(&content[idx + old.len()..]);
+            Ok(Replacement {
+                content: s,
+                count: 1,
+            })
+        }
+        // `replace_all` is non-overlapping (the only sane definition): the
+        // reported count is the number of replacements actually made.
+        _ if replace_all => Ok(Replacement {
             content: content.replace(old, new),
-            count: n,
+            count: content.matches(old).count(),
         }),
         n => Err(ReplaceError::Ambiguous { count: n }),
     }
 }
 
-/// The 1-based starting line of every (non-overlapping) occurrence of `old`.
-/// Used to make an "ambiguous" error point at the matches.
-pub fn occurrence_lines(content: &str, old: &str) -> Vec<usize> {
-    let mut lines = Vec::new();
+/// Byte offsets of every (possibly *overlapping*) start position of `old` in
+/// `content`.  Overlap matters: `aa` starts at offsets 0 and 1 in `aaa`.
+///
+/// Implemented as a bounded scan over every char boundary (rather than a
+/// `find` loop with manual advancement) so it can never spin: each candidate
+/// start is tested independently.
+fn occurrence_starts(content: &str, old: &str) -> Vec<usize> {
     if old.is_empty() {
-        return lines;
+        return Vec::new();
     }
-    let mut start = 0;
-    while let Some(rel) = content[start..].find(old) {
-        let idx = start + rel;
-        lines.push(content[..idx].matches('\n').count() + 1);
-        start = idx + old.len();
-    }
-    lines
+    content
+        .char_indices()
+        .filter(|&(i, _)| content[i..].starts_with(old))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The 1-based starting line of every (possibly overlapping) occurrence of
+/// `old`.  Used to make an "ambiguous" error point at the matches, so it must
+/// agree with the overlapping count used in [`replace`].
+pub fn occurrence_lines(content: &str, old: &str) -> Vec<usize> {
+    occurrence_starts(content, old)
+        .into_iter()
+        .map(|idx| content[..idx].matches('\n').count() + 1)
+        .collect()
 }
 
 /// A read-only explanation for a not-found match, used to build a helpful
@@ -226,6 +242,47 @@ mod tests {
         let r = ok(replace("only one", "one", "two", true));
         assert_eq!(r.content, "only two");
         assert_eq!(r.count, 1);
+    }
+
+    #[test]
+    fn replace_overlapping_chars_is_ambiguous() {
+        // `aa` could start at offset 0 or 1 inside `aaa` -> ambiguous.
+        match replace("aaa", "aa", "X", false) {
+            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_overlapping_whitespace_is_ambiguous() {
+        // Three spaces inside a run of four -> two overlapping positions.
+        match replace("    ", "   ", "X", false) {
+            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_overlapping_lines_is_ambiguous() {
+        // The two-line block `X\nX` overlaps itself in three identical lines.
+        match replace("X\nX\nX\n", "X\nX", "Y", false) {
+            Err(ReplaceError::Ambiguous { count }) => assert_eq!(count, 2),
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replace_all_overlapping_is_non_overlapping() {
+        // `replace_all` opts into non-overlapping replacement.
+        let r = ok(replace("aaa", "aa", "b", true));
+        assert_eq!(r.content, "ba");
+        assert_eq!(r.count, 1);
+    }
+
+    #[test]
+    fn occurrence_lines_counts_overlaps() {
+        // Two overlapping matches on the same line -> reported twice.
+        assert_eq!(occurrence_lines("aaa", "aa"), vec![1, 1]);
     }
 
     #[test]

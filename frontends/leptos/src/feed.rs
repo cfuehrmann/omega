@@ -618,6 +618,7 @@ fn event_has_label_row(event: &OmegaEvent) -> bool {
             | OmegaEvent::ToolResult(_)
             | OmegaEvent::ThinkingBlock(_)
             | OmegaEvent::ToolUseBlock(_)
+            | OmegaEvent::EditFailedSnapshot(_)
     )
 }
 
@@ -1166,6 +1167,8 @@ fn EditFailedSnapshotBlock(event: omega_types::events::EditFailedSnapshotEvent) 
     } else {
         event.content.clone()
     };
+    let time_iso = event.time.clone();
+    let time_pill = format_time(&time_iso, &current_agent_tz());
 
     view! {
         <div class="block-label-row">
@@ -1179,6 +1182,7 @@ fn EditFailedSnapshotBlock(event: omega_types::events::EditFailedSnapshotEvent) 
             >
                 "View file"
             </button>
+            <TimestampChip iso=time_iso display=time_pill pill=true />
         </div>
     }
 }
