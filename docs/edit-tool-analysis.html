@@ -76,8 +76,12 @@ small.note { color:var(--muted); }
 <h1>File-Editing Tool — Error Analysis &amp; Redesign</h1>
 <p class="doc-meta">
   Status: <strong>Implemented</strong> — single <code>edit_file</code> + new <code>multi_edit_file</code>,
-  optional <code>replace_all</code>, and the opencode-style fuzzy cascade are live;
-  input-shape leniency deliberately omitted. The schema descriptions below document
+  optional <code>replace_all</code>. <strong>The fuzzy cascade was subsequently removed</strong>
+  in favour of <strong>exact matching with informative errors</strong>: a deeper root-cause
+  study of the <code>old_text_not_found</code> failures (see addendum) showed the cascade
+  would mostly &quot;rescue&quot; genuine content mistakes (wrong numbers, dropped words,
+  glyph-vs-escape) by editing the wrong place, and whitespace is often load-bearing.
+  Input-shape leniency also deliberately omitted. The schema descriptions below document
   the <em>pre-change</em> baseline and the rationale. ·
   Scope: reduce the LLM error rate when editing files in Omega ·
   Source data: all <code>events.jsonl</code> logs under <code>.omega/sessions/</code> (335 sessions) ·
@@ -315,6 +319,42 @@ if (typeof args.edits === "string") { … JSON.parse … }</code></pre>
   types; schema, WS protocol, and UI follow. Backward compatibility with old
   <code>edit_file</code> log entries is best-effort, not required.
 </small></p>
+
+<hr />
+<h2>Addendum — root-cause study of <code>old_text_not_found</code>, and why the cascade was removed</h2>
+<p>
+  The original recommendation (port opencode's fuzzy cascade) was made before we
+  knew <em>why</em> the <code>not_found</code> failures (75.6&nbsp;% of all errors) actually
+  occurred. A follow-up study tried to recover, for each failure, the file contents
+  the model was matching against. Reconstructing file state from a prior read proved
+  unreliable (often the file was located via search and never fully read, or our copy
+  was stale after the model's own earlier edits). The trustworthy signal was the
+  model's <strong>own successful retry</strong> of the same edit: the retry text is
+  verified-present, so the difference from the failed attempt <em>is</em> the root cause.
+  At high similarity this yielded 37 clean, character-diff-verified cases.
+</p>
+<table>
+  <thead><tr><th>Root cause of the failed match</th><th>Share</th><th>Implication</th></tr></thead>
+  <tbody>
+    <tr><td>Genuine wrong content (missing <code>:</code>, wrong region, glyph vs source escape e.g. <code>'</code> vs <code>\u{2019}</code>)</td><td>~73&nbsp;%</td><td>model had the wrong bytes → <strong>should error</strong></td></tr>
+    <tr><td>Interior misquote (first/last line match, middle wrong: <code>5</code>→<code>2</code>, dropped words)</td><td>~13&nbsp;%</td><td>a block-anchor/fuzzy matcher would <strong>edit the wrong content</strong></td></tr>
+    <tr><td>Pure indentation drift</td><td>~8&nbsp;%</td><td>the only genuinely cosmetic, rescuable class</td></tr>
+    <tr><td>External change between attempts</td><td>~5&nbsp;%</td><td>stale → should error</td></tr>
+  </tbody>
+</table>
+<p>
+  Two conclusions reshaped the design. First, <strong>cosmetic whitespace is a small
+  minority</strong>, not the dominant cause — so an elaborate forgiving matcher is
+  unjustified. Second, the 13&nbsp;% interior-misquote cases are <strong>direct evidence
+  that aggressive matching does harm</strong>: it would silently replace a block whose
+  interior the model got wrong. Combined with the fact that whitespace is frequently
+  load-bearing (Python, YAML, Makefiles, aligned columns, string literals), the chosen
+  policy is <strong>exact matching, forgive nothing</strong> — and move all the cleverness
+  into <em>read-only diagnostics</em> that explain a failure (whitespace/indentation drift,
+  CRLF line endings, multiple matches with line numbers) without ever acting on a guess.
+  The nine-strategy cascade (and its Levenshtein/​similarity machinery) was deleted;
+  the matcher shrank from ~900 to ~270 lines.
+</p>
 
 </body>
 </html>

@@ -1,7 +1,7 @@
 //! `multi_edit_file` — apply an ordered sequence of edits to a single file.
 //!
 //! Each edit is `{old_text, new_text, replace_all?}` and is applied to the
-//! result of the previous one, sharing the same fuzzy matcher as
+//! result of the previous one, sharing the same exact matcher as
 //! [`crate::tools::edit_file`].  The sequence is atomic: if any edit fails to
 //! match, the file is left untouched and the failing edit is reported.
 
@@ -42,8 +42,10 @@ pub async fn execute(input: Value, _cancel: Option<&CancellationToken>) -> Resul
             .ok_or_else(|| format!("multi_edit_file: edit {}/{total} missing new_text", i + 1))?;
         let replace_all = edit["replace_all"].as_bool().unwrap_or(false);
 
-        let result = text_match::replace(&content, old_text, new_text, replace_all)
-            .map_err(|e| format_replace_error("multi_edit_file", e, path, &label))?;
+        let result =
+            text_match::replace(&content, old_text, new_text, replace_all).map_err(|e| {
+                format_replace_error("multi_edit_file", e, path, &label, &content, old_text)
+            })?;
         content = result.content;
         summaries.push(summarize(old_text, new_text, result.count, replace_all));
     }

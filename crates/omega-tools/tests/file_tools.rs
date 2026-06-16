@@ -332,8 +332,8 @@ async fn edit_file_ambiguous_returns_error_unless_replace_all() {
     .await
     .unwrap_err();
     assert!(
-        err.contains("multiple locations"),
-        "ambiguous match must be rejected: {err}"
+        err.contains("2 locations") && err.contains("replace_all"),
+        "ambiguous match must be rejected with an informative message: {err}"
     );
     // File must be untouched after the rejected edit.
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "aa bb aa");
