@@ -721,6 +721,7 @@ mod tests {
             OmegaEvent::MonitorDelivery(_) => "monitor_delivery",
             OmegaEvent::MonitorStderr(_) => "monitor_stderr",
             OmegaEvent::MonitorStopped(_) => "monitor_stopped",
+            OmegaEvent::EditFailedSnapshot(_) => "edit_failed_snapshot",
         }
     }
 
@@ -764,6 +765,7 @@ mod tests {
             r#"{"type":"monitor_delivery","time":"t","items":[{"monitorId":"m1","lines":["l"]}]}"#,
             r#"{"type":"monitor_stderr","id":"m1","chunk":"c","time":"t"}"#,
             r#"{"type":"monitor_stopped","id":"m1","reason":"process_exited","time":"t"}"#,
+            r#"{"type":"edit_failed_snapshot","time":"t","toolCallId":"tc","path":"p","content":"c","truncated":false,"byteLen":1,"contentSha256":"h","failedEditIndex":1,"editCount":1}"#,
         ];
         SAMPLES
             .iter()
@@ -778,7 +780,7 @@ mod tests {
         // guard; this count is the runtime reminder to add the sample too.
         assert_eq!(
             samples.len(),
-            35,
+            36,
             "add a drift-guard sample for the new OmegaEvent variant"
         );
         let mut seen = std::collections::BTreeSet::new();
@@ -802,7 +804,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(seen.len(), 35, "all 35 variant tags must be distinct");
+        assert_eq!(seen.len(), 36, "all 36 variant tags must be distinct");
     }
 
     // ---- ClientFrame --------------------------------------------------------

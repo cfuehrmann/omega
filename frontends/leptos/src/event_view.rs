@@ -113,7 +113,10 @@ pub fn kind_for(event: &OmegaEvent) -> EventKind {
         | OmegaEvent::MonitorStarted(_)
         | OmegaEvent::MonitorDelivery(_)
         | OmegaEvent::MonitorStderr(_)
-        | OmegaEvent::MonitorStopped(_) => EventKind::Status,
+        | OmegaEvent::MonitorStopped(_)
+        // Forensic snapshot of a failed edit's target file: a diagnostic
+        // marker that accompanies the (already-Error) tool result.
+        | OmegaEvent::EditFailedSnapshot(_) => EventKind::Status,
     }
 }
 
@@ -191,6 +194,7 @@ pub fn event_type_tag(event: &OmegaEvent) -> &'static str {
         OmegaEvent::MonitorDelivery(_) => "monitor_delivery",
         OmegaEvent::MonitorStderr(_) => "monitor_stderr",
         OmegaEvent::MonitorStopped(_) => "monitor_stopped",
+        OmegaEvent::EditFailedSnapshot(_) => "edit_failed_snapshot",
     }
 }
 
@@ -235,6 +239,7 @@ pub const LABEL_THINKING: &str = "Thinking";
 pub const LABEL_CONTEXT_COMPACTED: &str = "Context compacted";
 pub const LABEL_PYTHON_REPL_BOOTSTRAPPED: &str = "python3 bootstrapped";
 pub const LABEL_HARNESS_RECOVERY: &str = "Harness recovery";
+pub const LABEL_EDIT_FAILED_SNAPSHOT: &str = "Edit-failure snapshot";
 
 /// Canonical human label for an event.  Used by the big-block
 /// `<span class="block-label">` and the status chip alike.
@@ -284,6 +289,7 @@ pub fn event_label(event: &OmegaEvent) -> &str {
         OmegaEvent::MonitorDelivery(_) => "Monitor delivery",
         OmegaEvent::MonitorStderr(_) => "Monitor stderr",
         OmegaEvent::MonitorStopped(_) => "Monitor stopped",
+        OmegaEvent::EditFailedSnapshot(_) => LABEL_EDIT_FAILED_SNAPSHOT,
     }
 }
 

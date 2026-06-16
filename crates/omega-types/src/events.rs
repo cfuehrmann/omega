@@ -766,6 +766,44 @@ pub struct ConversationInvariantViolatedEvent {
     pub history_tail: Vec<String>,
 }
 
+/// The file an `edit_file` / `multi_edit_file` attempt saw, captured when the
+/// match failed (`old_text` not found, or ambiguous).
+///
+/// Forensic only, like [`MonitorStderrEvent`]: written to `events.jsonl` and
+/// surfaced in the UI, but never projected into `context.jsonl` or the
+/// model's history.  The model already received the diagnostic error as the
+/// tool result; this event lets a human (or later analysis) see exactly what
+/// was on disk — which reveals drift when the file changed since the model
+/// last read it (formatters, codegen, git, the user's editor).
+///
+/// `content` is the file as freshly read from disk at the attempt, capped to
+/// a fixed byte budget; `byte_len` and `content_sha256` always describe the
+/// *full* file, even when `content` is truncated.  For `multi_edit_file` the
+/// on-disk file is the untouched original (the batch is atomic), and
+/// `failed_edit_index` / `edit_count` locate the failing edit within it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditFailedSnapshotEvent {
+    pub time: ISOTimestamp,
+    /// Omega-issued id of the failed tool call this snapshot belongs to.
+    /// Matches the `tool_call_id` of the `ToolCallEvent` / `ToolResultEvent`.
+    pub tool_call_id: String,
+    /// Path the edit targeted.
+    pub path: String,
+    /// File as read from disk at the attempt, capped to a fixed byte budget.
+    pub content: String,
+    /// True when `content` was capped because the full file exceeds the cap.
+    pub truncated: bool,
+    /// Size of the full file in bytes (even when `content` is truncated).
+    pub byte_len: u64,
+    /// Lowercase hex SHA-256 of the full file contents.
+    pub content_sha256: String,
+    /// 1-based index of the failing edit (`1` for a single `edit_file`).
+    pub failed_edit_index: u32,
+    /// Total edits in the batch (`1` for a single `edit_file`).
+    pub edit_count: u32,
+}
+
 // ---------------------------------------------------------------------------
 // OmegaEvent — the unified discriminated union
 // ---------------------------------------------------------------------------
@@ -856,6 +894,14 @@ pub enum OmegaEvent {
     /// A forensic tombstone written durably immediately before the harness
     /// panics (the violation is always an Omega bug, never recoverable).
     ConversationInvariantViolated(ConversationInvariantViolatedEvent),
+
+    // --- Edit-failure forensics --------------------------------------------
+    /// An `edit_file` / `multi_edit_file` match failed; the file as read from
+    /// disk at that attempt is captured for forensics.  **DIAGNOSTIC only** —
+    /// present in `events.jsonl` and the UI, never projected into
+    /// `context.jsonl` or the model's history (the model already received the
+    /// diagnostic error as the tool result).
+    EditFailedSnapshot(EditFailedSnapshotEvent),
 }
 
 impl OmegaEvent {
@@ -903,6 +949,7 @@ impl OmegaEvent {
             Self::MonitorStderr(e) => &e.time,
             Self::MonitorStopped(e) => &e.time,
             Self::ConversationInvariantViolated(e) => &e.time,
+            Self::EditFailedSnapshot(e) => &e.time,
         }
     }
 }

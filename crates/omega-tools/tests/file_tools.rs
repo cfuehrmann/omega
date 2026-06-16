@@ -427,6 +427,190 @@ async fn edit_file_missing_old_text_arg_returns_error() {
 }
 
 // ---------------------------------------------------------------------------
+// edit failure snapshots (forensics)
+// ---------------------------------------------------------------------------
+
+use omega_tools::{ToolCtx, ToolResult, execute_tool};
+use omega_types::OmegaEvent;
+use omega_types::events::EditFailedSnapshotEvent;
+
+/// Run a tool with a `ToolCtx` (carrying a known `tool_call_id`) so we can
+/// inspect the `extra_events` (snapshots) it returns.
+async fn exec_ctx(
+    name: &str,
+    input: serde_json::Value,
+    session_dir: &std::path::Path,
+) -> ToolResult {
+    let ctx = ToolCtx::new(session_dir, "testcall-1");
+    execute_tool(name, input, None, Some(&ctx)).await
+}
+
+fn only_snapshot(res: &ToolResult) -> &EditFailedSnapshotEvent {
+    let snaps: Vec<&EditFailedSnapshotEvent> = res
+        .extra_events
+        .iter()
+        .filter_map(|e| match e {
+            OmegaEvent::EditFailedSnapshot(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        snaps.len(),
+        1,
+        "expected exactly one snapshot, got {:?}",
+        res.extra_events
+    );
+    snaps[0]
+}
+
+#[tokio::test]
+async fn edit_file_failure_emits_snapshot_of_disk_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("src.txt");
+    let on_disk = "alpha\nbeta\ngamma\n";
+    std::fs::write(&path, on_disk).unwrap();
+
+    let res = exec_ctx(
+        "edit_file",
+        json!({ "path": path.to_str().unwrap(), "old_text": "MISSING", "new_text": "x" }),
+        dir.path(),
+    )
+    .await;
+
+    assert!(res.is_error);
+    let snap = only_snapshot(&res);
+    assert_eq!(snap.tool_call_id, "testcall-1");
+    assert_eq!(snap.path, path.to_str().unwrap());
+    assert_eq!(
+        snap.content, on_disk,
+        "snapshot must be the file as on disk"
+    );
+    assert!(!snap.truncated);
+    assert_eq!(snap.byte_len, on_disk.len() as u64);
+    assert_eq!(snap.content_sha256.len(), 64, "hex sha-256");
+    assert_eq!(snap.failed_edit_index, 1);
+    assert_eq!(snap.edit_count, 1);
+}
+
+#[tokio::test]
+async fn edit_file_ambiguous_also_emits_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dup.txt");
+    std::fs::write(&path, "x x").unwrap();
+
+    let res = exec_ctx(
+        "edit_file",
+        json!({ "path": path.to_str().unwrap(), "old_text": "x", "new_text": "y" }),
+        dir.path(),
+    )
+    .await;
+
+    assert!(res.is_error);
+    let snap = only_snapshot(&res);
+    assert_eq!(snap.content, "x x");
+}
+
+#[tokio::test]
+async fn edit_file_success_emits_no_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ok.txt");
+    std::fs::write(&path, "hello world").unwrap();
+
+    let res = exec_ctx(
+        "edit_file",
+        json!({ "path": path.to_str().unwrap(), "old_text": "world", "new_text": "there" }),
+        dir.path(),
+    )
+    .await;
+
+    assert!(!res.is_error);
+    assert!(res.extra_events.is_empty(), "success must not snapshot");
+}
+
+#[tokio::test]
+async fn edit_file_missing_file_emits_no_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("does-not-exist.txt");
+
+    let res = exec_ctx(
+        "edit_file",
+        json!({ "path": path.to_str().unwrap(), "old_text": "a", "new_text": "b" }),
+        dir.path(),
+    )
+    .await;
+
+    assert!(res.is_error);
+    assert!(
+        res.extra_events.is_empty(),
+        "no file -> nothing to snapshot"
+    );
+}
+
+#[tokio::test]
+async fn multi_edit_failure_snapshots_ondisk_content_with_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("multi.txt");
+    let on_disk = "one\ntwo\nthree\n";
+    std::fs::write(&path, on_disk).unwrap();
+
+    // First edit would succeed; second fails -> whole batch aborts (atomic).
+    let res = exec_ctx(
+        "multi_edit_file",
+        json!({
+            "path": path.to_str().unwrap(),
+            "edits": [
+                { "old_text": "one", "new_text": "ONE" },
+                { "old_text": "NOPE", "new_text": "x" }
+            ]
+        }),
+        dir.path(),
+    )
+    .await;
+
+    assert!(res.is_error);
+    let snap = only_snapshot(&res);
+    // Atomic: file untouched on failure, so the snapshot is the original.
+    assert_eq!(snap.content, on_disk);
+    assert_eq!(snap.failed_edit_index, 2);
+    assert_eq!(snap.edit_count, 2);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        on_disk,
+        "file must be untouched"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_snapshot_caps_large_file_and_reports_full_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.txt");
+    // Comfortably larger than the 512 KiB cap.
+    let big = "a".repeat(700 * 1024);
+    std::fs::write(&path, &big).unwrap();
+
+    let res = exec_ctx(
+        "edit_file",
+        json!({ "path": path.to_str().unwrap(), "old_text": "MISSING", "new_text": "x" }),
+        dir.path(),
+    )
+    .await;
+
+    assert!(res.is_error);
+    let snap = only_snapshot(&res);
+    assert!(snap.truncated, "large file must be flagged truncated");
+    assert_eq!(snap.byte_len, big.len() as u64, "byte_len is the FULL size");
+    assert!(
+        snap.content.len() < big.len(),
+        "content must be capped below the full size"
+    );
+    // All-ASCII, so the 512 KiB cap lands exactly on a char boundary: pins the
+    // cap VALUE (a 512*1024 -> 512+1024 mutation would yield 1536 bytes).
+    assert_eq!(snap.content.len(), 512 * 1024, "capped at exactly 512 KiB");
+    // Hash is over the full file, not the truncated content.
+    assert_ne!(snap.content_sha256.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
 // list_files
 // ---------------------------------------------------------------------------
 

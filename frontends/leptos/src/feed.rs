@@ -63,15 +63,16 @@ use crate::context_modal::ContextModalState;
 #[cfg(target_arch = "wasm32")]
 use crate::diff_render::render_diff_html;
 use crate::event_view::{
-    EventKind, LABEL_AGENT_ERROR, LABEL_ASSISTANT, LABEL_CONTEXT_COMPACTED, LABEL_EFFORT_CHANGED,
-    LABEL_HALT_REQUESTED, LABEL_HALT_UNREQUESTED, LABEL_HARNESS_RECOVERY, LABEL_LLM_CALL,
-    LABEL_LLM_ERROR, LABEL_LLM_RESPONSE_ENDED, LABEL_LLM_RESPONSE_STARTED, LABEL_LLM_RETRY,
-    LABEL_MODEL_CHANGED, LABEL_PYTHON_REPL_BOOTSTRAPPED, LABEL_RESUMING_SESSION,
-    LABEL_SERVER_STARTED, LABEL_SERVER_STOPPED, LABEL_SESSION_RESUMED, LABEL_SESSION_STARTED,
-    LABEL_THINKING, LABEL_TOOL_CALL, LABEL_TOOL_RESULT, LABEL_TRANSPORT_ERROR, LABEL_TURN_END,
-    LABEL_TURN_HALTED, LABEL_TURN_INTERRUPTED, LABEL_TURN_RESUMED, LABEL_USER_MESSAGE,
-    assign_partial_counts, assign_tool_corr, css_class_for, event_type_tag, format_time, kind_for,
-    kind_tag, should_autoscroll, tool_call_preview, truncate_preview, virtual_line_count,
+    EventKind, LABEL_AGENT_ERROR, LABEL_ASSISTANT, LABEL_CONTEXT_COMPACTED,
+    LABEL_EDIT_FAILED_SNAPSHOT, LABEL_EFFORT_CHANGED, LABEL_HALT_REQUESTED, LABEL_HALT_UNREQUESTED,
+    LABEL_HARNESS_RECOVERY, LABEL_LLM_CALL, LABEL_LLM_ERROR, LABEL_LLM_RESPONSE_ENDED,
+    LABEL_LLM_RESPONSE_STARTED, LABEL_LLM_RETRY, LABEL_MODEL_CHANGED,
+    LABEL_PYTHON_REPL_BOOTSTRAPPED, LABEL_RESUMING_SESSION, LABEL_SERVER_STARTED,
+    LABEL_SERVER_STOPPED, LABEL_SESSION_RESUMED, LABEL_SESSION_STARTED, LABEL_THINKING,
+    LABEL_TOOL_CALL, LABEL_TOOL_RESULT, LABEL_TRANSPORT_ERROR, LABEL_TURN_END, LABEL_TURN_HALTED,
+    LABEL_TURN_INTERRUPTED, LABEL_TURN_RESUMED, LABEL_USER_MESSAGE, assign_partial_counts,
+    assign_tool_corr, css_class_for, event_type_tag, format_time, kind_for, kind_tag,
+    should_autoscroll, tool_call_preview, truncate_preview, virtual_line_count,
 };
 use crate::markdown;
 use crate::store::SessionStore;
@@ -1134,6 +1135,51 @@ fn render_event_body(
             }
             .into_any()
         }
+        OmegaEvent::EditFailedSnapshot(e) => {
+            view! { <EditFailedSnapshotBlock event=e /> }.into_any()
+        }
+    }
+}
+
+/// Forensic snapshot of a failed edit's target file.
+///
+/// Shortened status row: label · path · `N bytes · edit i/n` meta · a
+/// `View file` button that opens the full snapshotted contents in the shared
+/// [`TextModal`].  The body is the file exactly as it was on disk at the
+/// moment the edit failed — the ground truth for "why didn't my edit apply?".
+#[component]
+fn EditFailedSnapshotBlock(event: omega_types::events::EditFailedSnapshotEvent) -> impl IntoView {
+    let text_modal = use_context::<TextModalState>().expect("TextModalState must be provided");
+
+    let path = event.path.clone();
+    let trunc = if event.truncated { " · truncated" } else { "" };
+    let meta = format!(
+        "{} bytes · edit {}/{}{trunc}",
+        event.byte_len, event.failed_edit_index, event.edit_count,
+    );
+    let title = event.path.clone();
+    let body = if event.truncated {
+        format!(
+            "{}\n\n[snapshot truncated — full file is {} bytes]",
+            event.content, event.byte_len,
+        )
+    } else {
+        event.content.clone()
+    };
+
+    view! {
+        <div class="block-label-row">
+            <span class="block-label">{LABEL_EDIT_FAILED_SNAPSHOT}</span>
+            <span class="block-body" data-testid="leptos-edit-snapshot-path">{path}</span>
+            <span class="block-meta">{meta}</span>
+            <button
+                data-testid="leptos-edit-snapshot-view"
+                class="block-label-row-btn"
+                on:click=move |_| text_modal.open(title.clone(), body.clone())
+            >
+                "View file"
+            </button>
+        </div>
     }
 }
 
