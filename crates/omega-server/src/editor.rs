@@ -158,15 +158,38 @@ pub enum ComposeOutcome {
     Backout(String),
 }
 
+/// Normalize text written by the external editor before it is sent or kept
+/// as a draft.
+///
+/// Strips trailing whitespace from every line (including a stray `\r` from
+/// CRLF endings), normalizes line endings to LF, and drops trailing blank
+/// lines and the final newline. Leading whitespace and interior blank lines
+/// are preserved, so intentional indentation and paragraph breaks survive.
+///
+/// Trailing whitespace is never meaningful in a prompt — it only wastes
+/// tokens and adds noise, and markdown's two-trailing-spaces hard break is
+/// irrelevant to a model reading raw text. Pure, so the policy is unit- and
+/// mutation-testable without spawning an editor.
+#[must_use]
+pub fn strip_trailing_whitespace(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_owned()
+}
+
 /// Launch the configured editor on a temp file seeded with `draft`, wait
 /// for it to exit, and return the edited contents tagged with the operator's
 /// intent.
 ///
 /// The exit code decides the [`ComposeOutcome`]: `0` → [`ComposeOutcome::Send`]
 /// (send immediately), [`BACKOUT_EXIT_CODE`] → [`ComposeOutcome::Backout`]
-/// (keep as draft, do not send). In both cases the file contents are returned
-/// as-is — including when the operator quit without saving, in which case the
-/// file still holds the seed, so a backout is loss-free.
+/// (keep as draft, do not send). In both cases the file contents are passed
+/// through [`strip_trailing_whitespace`] — including when the operator quit
+/// without saving, in which case the file still holds the seed, so a backout
+/// is loss-free.
 ///
 /// # Errors
 ///
@@ -238,9 +261,10 @@ pub async fn compose_with_editor(draft: &str) -> Result<ComposeOutcome, String> 
         )
     })?;
 
-    let content = tokio::fs::read_to_string(&path)
+    let raw = tokio::fs::read_to_string(&path)
         .await
         .map_err(|e| format!("read prompt file: {e}"))?;
+    let content = strip_trailing_whitespace(&raw);
 
     Ok(match disposition {
         ExitDisposition::Send => ComposeOutcome::Send(content),
@@ -264,6 +288,7 @@ mod tests {
 
     use super::{
         ExitDisposition, classify_exit_code, resolve_editor_command, split_editor_command,
+        strip_trailing_whitespace,
     };
     use std::collections::HashMap;
 
@@ -370,5 +395,36 @@ mod tests {
     fn classify_signal_termination_is_error() {
         // No exit code (killed by a signal) is always an error.
         assert_eq!(classify_exit_code(None), None);
+    }
+
+    #[test]
+    fn strip_removes_per_line_trailing_spaces_and_tabs() {
+        assert_eq!(strip_trailing_whitespace("a   \nb\t\nc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn strip_normalizes_crlf_to_lf_and_drops_the_carriage_return() {
+        assert_eq!(strip_trailing_whitespace("a\r\nb\r\nc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn strip_drops_trailing_blank_lines_and_final_newline() {
+        assert_eq!(strip_trailing_whitespace("hello\n\n\n"), "hello");
+        assert_eq!(strip_trailing_whitespace("hello\n"), "hello");
+    }
+
+    #[test]
+    fn strip_preserves_interior_blank_lines_and_leading_indent() {
+        // Paragraph breaks and intentional indentation must survive.
+        assert_eq!(
+            strip_trailing_whitespace("para one\n\n    indented line  \n"),
+            "para one\n\n    indented line",
+        );
+    }
+
+    #[test]
+    fn strip_empty_stays_empty() {
+        assert_eq!(strip_trailing_whitespace(""), "");
+        assert_eq!(strip_trailing_whitespace("   \n  \n"), "");
     }
 }

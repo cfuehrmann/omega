@@ -1067,6 +1067,26 @@ async fn post_compose_unexpected_exit_code_returns_500() {
     );
 }
 
+/// The editor's output is normalized before it leaves the server: per-line
+/// trailing whitespace, CRLF carriage returns, and trailing blank lines are
+/// all stripped (they only waste tokens and add noise in a prompt).
+#[tokio::test]
+async fn post_compose_strips_trailing_whitespace_from_editor_output() {
+    // Fake editor writes: "first   " + CR + LF + "second" + TAB + LF + 2 blank
+    // lines. Expected after normalization: "first\nsecond".
+    let (status, text) = compose_with_fake_editor(
+        "#!/bin/sh\nprintf 'first   \\r\\nsecond\\t\\n\\n\\n' > \"$1\"\n",
+        "seed",
+    )
+    .await;
+    assert_eq!(status, 200, "expected 200; got body {text:?}");
+    let body: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(
+        body["content"], "first\nsecond",
+        "trailing whitespace, CR, and trailing blank lines must be stripped",
+    );
+}
+
 /// `POST /api/compose` with no editor configured responds `500` with an
 /// actionable plaintext error mentioning `OMEGA_EDITOR`.
 #[tokio::test]
