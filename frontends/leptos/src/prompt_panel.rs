@@ -52,7 +52,7 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlTextAreaElement;
 
 use crate::completion::{accept_completion, at_token_at_cursor, next_highlight, selected_item};
-use crate::http::{compose_via_editor, get_files};
+use crate::http::{ComposeOutcome, compose_via_editor, get_files};
 use crate::protocol::ClientFrame;
 use crate::store::SessionStore;
 use crate::ws::WsClient;
@@ -273,15 +273,29 @@ pub fn PromptPanel() -> impl IntoView {
     };
 
     // Launch the external editor ($OMEGA_EDITOR / $VISUAL / $EDITOR), seeded
-    // with the current draft.  The result is dropped back into the textarea
-    // for review — NOT sent automatically.  On failure the draft is left
-    // untouched and the error appears in the transport-error banner.
+    // with the current draft.  The editor's *exit code* decides what happens:
+    //
+    //   * normal exit (0) → ComposeOutcome::Send: drop the text into the
+    //     draft and send it immediately, exactly as if the Send button had
+    //     been clicked (`do_send`).
+    //   * backout exit (Helix `:cq!`) → ComposeOutcome::Backout: drop the
+    //     text into the textarea (persisted to localStorage via the draft
+    //     signal) WITHOUT sending, so the operator backs out loss-free.
+    //
+    // On failure the draft is left untouched and the error appears in the
+    // transport-error banner.
     let do_editor = move || {
         let draft_now = state.draft.get_untracked();
         state.editor_in_flight.set(true);
         spawn_local(async move {
             match compose_via_editor(&draft_now).await {
-                Ok(content) => {
+                Ok(ComposeOutcome::Send(content)) => {
+                    let cursor = content.len();
+                    set_textarea_state(content, cursor);
+                    state.editor_in_flight.set(false);
+                    do_send();
+                }
+                Ok(ComposeOutcome::Backout(content)) => {
                     let cursor = content.len();
                     set_textarea_state(content, cursor);
                     state.editor_in_flight.set(false);

@@ -36,26 +36,44 @@ struct ComposeRequest<'a> {
 /// Response body for `POST /api/compose`.
 #[derive(Deserialize)]
 struct ComposeResponse {
+    /// `"send"` (exit 0) or `"backout"` (Helix `:cq!`). See [`ComposeOutcome`].
+    outcome: String,
     /// The text the operator saved in their editor.
     content: String,
 }
 
-/// `POST /api/compose { draft }` → composed prompt text.
+/// What the operator did when they closed the external editor.
+///
+/// Derived from the editor's exit code on the server (see
+/// [`omega-server`'s `editor` module]). `Send` means "send the text now";
+/// `Backout` means "keep it as a draft but do not send".
+#[derive(Debug, PartialEq, Eq)]
+pub enum ComposeOutcome {
+    /// Editor exited normally (`0`): send the composed text immediately.
+    Send(String),
+    /// Editor force-quit with the backout code (Helix `:cq!`): keep the text
+    /// as the draft (persisted to localStorage) without sending.
+    Backout(String),
+}
+
+/// `POST /api/compose { draft }` → composed prompt text + intent.
 ///
 /// Asks the server to launch the operator's configured editor
 /// (`$OMEGA_EDITOR` → `$VISUAL` → `$EDITOR`), seeded with `draft`, wait for
-/// it to close, and return the edited text. The call blocks for as long as
-/// the editor stays open, so callers must `spawn_local` it rather than
-/// awaiting on a UI-blocking path.
+/// it to close, and return the edited text tagged with the operator's intent
+/// (send vs. backout). The call blocks for as long as the editor stays open,
+/// so callers must `spawn_local` it rather than awaiting on a UI-blocking
+/// path.
 ///
 /// # Errors
 ///
-/// Returns `Err(message)` for any network-level failure or when the server
-/// reports the editor could not be launched (no editor configured, non-zero
-/// exit, etc.). The server's plaintext error body is forwarded verbatim so
-/// the operator sees an actionable hint (e.g. the `OMEGA_EDITOR` suggestion).
+/// Returns `Err(message)` for any network-level failure, when the server
+/// reports the editor could not be launched (no editor configured, unexpected
+/// exit, etc.), or when the response carries an unrecognised `outcome`. The
+/// server's plaintext error body is forwarded verbatim so the operator sees
+/// an actionable hint (e.g. the `OMEGA_EDITOR` suggestion).
 #[mutants::skip] // fetch() wrapper; network behaviour covered by e2e harness.
-pub async fn compose_via_editor(draft: &str) -> Result<String, String> {
+pub async fn compose_via_editor(draft: &str) -> Result<ComposeOutcome, String> {
     let resp = Request::post("/api/compose")
         .json(&ComposeRequest { draft })
         .map_err(|e| format!("POST /api/compose: build failed: {e}"))?
@@ -69,10 +87,15 @@ pub async fn compose_via_editor(draft: &str) -> Result<String, String> {
         return Err(format!("POST /api/compose: HTTP {status}: {body}"));
     }
 
-    resp.json::<ComposeResponse>()
+    let parsed = resp
+        .json::<ComposeResponse>()
         .await
-        .map(|r| r.content)
-        .map_err(|e| format!("POST /api/compose: decode failed: {e}"))
+        .map_err(|e| format!("POST /api/compose: decode failed: {e}"))?;
+    match parsed.outcome.as_str() {
+        "send" => Ok(ComposeOutcome::Send(parsed.content)),
+        "backout" => Ok(ComposeOutcome::Backout(parsed.content)),
+        other => Err(format!("POST /api/compose: unknown outcome {other:?}")),
+    }
 }
 
 /// `GET /api/sessions` → `Vec<SessionListItem>`.

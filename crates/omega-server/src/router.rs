@@ -210,22 +210,31 @@ pub struct ComposeBody {
 
 /// `POST /api/compose` — launch the operator's configured editor (see
 /// [`crate::editor`]), seeded with `draft`, wait for it to close, and return
-/// the edited text as `{ "content": "…" }`.
+/// the edited text together with the operator's intent as
+/// `{ "outcome": "send" | "backout", "content": "…" }`.
+///
+/// `outcome` is derived from the editor's exit code: a normal exit (`0`)
+/// yields `"send"` (the client sends immediately), while a force-quit with
+/// [`crate::editor::BACKOUT_EXIT_CODE`] (Helix `:cq!`) yields `"backout"`
+/// (the client keeps the text as a draft without sending).
 ///
 /// Blocks for as long as the editor stays open (the browser issues this as a
 /// background `fetch`). On failure — no editor configured, spawn error,
-/// non-zero exit — responds `500` with the plaintext reason so the UI can
-/// surface an actionable hint.
+/// unexpected exit code — responds `500` with the plaintext reason so the UI
+/// can surface an actionable hint.
 async fn post_compose(body: Option<Json<ComposeBody>>) -> Response {
+    use crate::editor::ComposeOutcome;
     let ComposeBody { draft } = body.map_or_else(ComposeBody::default, |Json(b)| b);
-    match crate::editor::compose_with_editor(&draft).await {
-        Ok(content) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "content": content })),
-        )
-            .into_response(),
-        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
-    }
+    let (outcome, content) = match crate::editor::compose_with_editor(&draft).await {
+        Ok(ComposeOutcome::Send(content)) => ("send", content),
+        Ok(ComposeOutcome::Backout(content)) => ("backout", content),
+        Err(message) => return (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    };
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "outcome": outcome, "content": content })),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------

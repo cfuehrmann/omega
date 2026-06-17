@@ -776,6 +776,10 @@ async fn post_compose_runs_configured_editor_and_returns_edited_text() {
     assert_eq!(resp.status().as_u16(), 200, "expected 200 OK");
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_eq!(
+        body["outcome"], "send",
+        "a normal (exit 0) editor close must map to the send outcome",
+    );
+    assert_eq!(
         body["content"].as_str().expect("content field"),
         "EDITED[hello world]",
         "content must reflect the seeded draft wrapped by the fake editor",
@@ -945,6 +949,122 @@ async fn post_compose_quit_without_saving_returns_seed_verbatim() {
     );
 
     let _ = child.kill().await;
+}
+
+/// Spawn `omega-server` with `OMEGA_EDITOR` pointing at a fake editor whose
+/// shell body is `script`, POST `/api/compose` with `draft`, and return the
+/// HTTP status code and response body text. Keeps the exit-code tests below
+/// concise (they differ only in the fake editor's body and the assertions).
+async fn compose_with_fake_editor(script: &str, draft: &str) -> (u16, String) {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let editor = tmp.path().join("fake-editor.sh");
+    std::fs::write(&editor, script).expect("write fake editor");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).expect("chmod +x");
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let sessions_root = tmp.path().join("sessions");
+    let bin = env!("CARGO_BIN_EXE_omega-server");
+    let mut child = Command::new(bin)
+        .args(["--port", &port.to_string()])
+        .arg("--sessions-root")
+        .arg(&sessions_root)
+        .current_dir(tmp.path())
+        .env("HOME", tmp.path())
+        .env("ANTHROPIC_API_KEY", "dummy")
+        .env("OMEGA_EDITOR", &editor)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn omega-server");
+
+    let url = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = reqwest::get(format!("{url}/health")).await {
+            if r.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "server did not become ready in 5 s");
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/api/compose"))
+        .json(&serde_json::json!({ "draft": draft }))
+        .send()
+        .await
+        .expect("POST /api/compose");
+    let status = resp.status().as_u16();
+    let text = resp.text().await.expect("text");
+    let _ = child.kill().await;
+    (status, text)
+}
+
+/// Normal editor exit (code 0) maps to `outcome: "send"` — the client sends
+/// the composed text immediately, as if the Send button were clicked.
+#[tokio::test]
+async fn post_compose_normal_exit_yields_send_outcome() {
+    let (status, text) =
+        compose_with_fake_editor("#!/bin/sh\nprintf 'final prompt' > \"$1\"\n", "seed").await;
+    assert_eq!(status, 200, "expected 200; got body {text:?}");
+    let body: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(
+        body["outcome"], "send",
+        "exit 0 must map to the send outcome"
+    );
+    assert_eq!(body["content"], "final prompt");
+}
+
+/// Backout exit (code 1, Helix `:cq!`) maps to `outcome: "backout"` — the
+/// client keeps the text as a draft without sending. The file content is
+/// returned so the backout is loss-free.
+#[tokio::test]
+async fn post_compose_backout_exit_yields_backout_outcome() {
+    let (status, text) = compose_with_fake_editor(
+        "#!/bin/sh\nprintf 'work in progress' > \"$1\"\nexit 1\n",
+        "seed",
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "a deliberate backout is a 200, not an error; got body {text:?}"
+    );
+    let body: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(
+        body["outcome"], "backout",
+        "exit 1 must map to the backout outcome"
+    );
+    assert_eq!(
+        body["content"], "work in progress",
+        "backout must return the saved file content so no work is lost",
+    );
+}
+
+/// An unexpected non-zero exit (neither `0` nor the backout code `1`) is a
+/// genuine launch/runtime error → `500` with the terminal-wrapper hint.
+#[tokio::test]
+async fn post_compose_unexpected_exit_code_returns_500() {
+    let (status, text) = compose_with_fake_editor("#!/bin/sh\nexit 2\n", "seed").await;
+    assert_eq!(status, 500, "exit 2 must be an error; got body {text:?}");
+    assert!(
+        text.contains("foot") || text.contains("terminal"),
+        "error must carry the terminal-wrapper hint; got: {text:?}",
+    );
 }
 
 /// `POST /api/compose` with no editor configured responds `500` with an

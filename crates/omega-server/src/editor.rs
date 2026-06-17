@@ -3,7 +3,10 @@
 //! The browser's "Editor" button POSTs to `/api/compose`; the server
 //! launches the operator's configured editor on a temp file seeded with the
 //! current draft, waits for the editor to close, and returns the edited text
-//! (which the UI then auto-sends).
+//! tagged with the operator's intent (derived from the exit code): a normal
+//! exit (`0`) means *send immediately*, while a force-quit with
+//! [`BACKOUT_EXIT_CODE`] (Helix `:cq!`) means *keep as draft, do not send* —
+//! a loss-free backout.
 //!
 //! ## Where the temp file lives
 //!
@@ -44,10 +47,11 @@
 //!
 //! ## Mutation-test split
 //!
-//! The pure helpers ([`resolve_editor_command`], [`split_editor_command`])
-//! carry the mutation-testing budget.  [`compose_with_editor`] is the
-//! process/tempfile I/O edge — `#[mutants::skip]`, exercised end-to-end by
-//! the `/api/compose` integration test with a fake editor.
+//! The pure helpers ([`resolve_editor_command`], [`split_editor_command`],
+//! [`classify_exit_code`]) carry the mutation-testing budget.
+//! [`compose_with_editor`] is the process/tempfile I/O edge —
+//! `#[mutants::skip]`, exercised end-to-end by the `/api/compose` integration
+//! test with a fake editor.
 
 /// Environment variables consulted to find the editor command, in
 /// precedence order.  `OMEGA_EDITOR` wins over the conventional
@@ -91,18 +95,78 @@ pub fn split_editor_command(command: &str) -> Option<(String, Vec<String>)> {
 /// environment — i.e. at least one of [`EDITOR_ENV_VARS`] is set and
 /// non-blank.  Pure delegation to [`resolve_editor_command`] so the
 /// precedence logic stays in one place and is not duplicated at call sites.
+///
+/// `#[mutants::skip]`: trivial delegation that reads process-global
+/// `std::env`. The substantive precedence logic lives in
+/// [`resolve_editor_command`], which is unit-tested through an injectable
+/// lookup closure precisely because real-env mutation is racy under
+/// parallel tests. This shim only does `.is_some()`, and the one spot it
+/// touches real env means a hermetic `--lib` unit test can't pin its
+/// `true`/`false` body replacements; the wiring is exercised only by the
+/// env-controlled integration/e2e paths the `-- --lib` recipe excludes.
 #[must_use]
+#[mutants::skip]
 pub fn is_editor_configured() -> bool {
     resolve_editor_command(|var| std::env::var(var).ok()).is_some()
 }
 
-/// Launch the configured editor on a temp file seeded with `draft`, wait
-/// for it to exit, and return the edited contents verbatim.
+/// Exit code an editor uses to signal a **loss-free backout**: keep the
+/// composed text as the draft but do *not* send it. This is Helix's default
+/// `:cq!` (force-quit) code; vim's `:cq` matches too. Normal exit (`0`)
+/// means "send"; any other code is treated as a launch/runtime error.
+pub const BACKOUT_EXIT_CODE: i32 = 1;
+
+/// How the editor's exit code maps to a compose disposition.
 ///
-/// The contents are returned as-is (including when the operator quit without
-/// saving, in which case the file still holds the seed). The client drops the
-/// result into the composer textarea for review rather than sending it, so
-/// there is always a chance to back out.
+/// Pure classifier so the exit-code policy is unit- and mutation-testable
+/// without spawning a process. `None` means "neither a clean send nor a
+/// deliberate backout" — i.e. an error the caller should surface with the
+/// terminal-wrapper hint.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExitDisposition {
+    /// Editor exited normally (`0`): send the composed text immediately.
+    Send,
+    /// Editor force-quit with [`BACKOUT_EXIT_CODE`]: keep as draft, no send.
+    Backout,
+}
+
+/// Classify an editor process exit code into a [`ExitDisposition`].
+///
+/// `code` is `None` when the process was terminated by a signal (no exit
+/// code), which is always an error. Pure.
+#[must_use]
+pub fn classify_exit_code(code: Option<i32>) -> Option<ExitDisposition> {
+    match code {
+        Some(0) => Some(ExitDisposition::Send),
+        Some(BACKOUT_EXIT_CODE) => Some(ExitDisposition::Backout),
+        _ => None,
+    }
+}
+
+/// Outcome of a successful external-editor compose session.
+///
+/// Carries the composed text together with the operator's intent, derived
+/// from the editor's exit code (see [`classify_exit_code`]).
+#[derive(Debug, PartialEq, Eq)]
+pub enum ComposeOutcome {
+    /// Editor exited normally (`0`): the client sends this immediately,
+    /// as if the Send button had been clicked.
+    Send(String),
+    /// Editor force-quit with [`BACKOUT_EXIT_CODE`] (Helix `:cq!`): the
+    /// client keeps this as the draft (persisted to localStorage) without
+    /// sending, so the operator backs out without losing what they wrote.
+    Backout(String),
+}
+
+/// Launch the configured editor on a temp file seeded with `draft`, wait
+/// for it to exit, and return the edited contents tagged with the operator's
+/// intent.
+///
+/// The exit code decides the [`ComposeOutcome`]: `0` → [`ComposeOutcome::Send`]
+/// (send immediately), [`BACKOUT_EXIT_CODE`] → [`ComposeOutcome::Backout`]
+/// (keep as draft, do not send). In both cases the file contents are returned
+/// as-is — including when the operator quit without saving, in which case the
+/// file still holds the seed, so a backout is loss-free.
 ///
 /// # Errors
 ///
@@ -110,10 +174,11 @@ pub fn is_editor_configured() -> bool {
 /// - no editor is configured (`OMEGA_EDITOR` / `VISUAL` / `EDITOR` unset),
 /// - the temp file cannot be created or seeded,
 /// - the editor cannot be spawned,
-/// - the editor exits with a non-zero status, or
+/// - the editor exits with a status that is neither `0` nor
+///   [`BACKOUT_EXIT_CODE`] (or is killed by a signal), or
 /// - the edited file cannot be read back.
 #[mutants::skip] // process/tempfile I/O edge — pure helpers carry the budget.
-pub async fn compose_with_editor(draft: &str) -> Result<String, String> {
+pub async fn compose_with_editor(draft: &str) -> Result<ComposeOutcome, String> {
     let command = resolve_editor_command(|var| std::env::var(var).ok()).ok_or_else(|| {
         "no editor configured: set OMEGA_EDITOR (e.g. \"foot hx\"), VISUAL, or EDITOR".to_owned()
     })?;
@@ -162,19 +227,25 @@ pub async fn compose_with_editor(draft: &str) -> Result<String, String> {
         .status()
         .await
         .map_err(|e| format!("launch editor '{program}': {e}"))?;
-    if !status.success() {
-        return Err(format!(
+    let disposition = classify_exit_code(status.code()).ok_or_else(|| {
+        format!(
             "editor '{program}' exited with {status}. If this is a terminal \
              editor (nvim, vim, hx), the server has no terminal to run it in \
              — wrap it in one, e.g. OMEGA_EDITOR=\"foot {program}\" or \
              \"alacritty -e {program}\"; GUI editors need a blocking flag \
-             like \"code --wait\"."
-        ));
-    }
+             like \"code --wait\". (To back out without sending, exit with \
+             code {BACKOUT_EXIT_CODE} — e.g. Helix `:cq!`.)"
+        )
+    })?;
 
-    tokio::fs::read_to_string(&path)
+    let content = tokio::fs::read_to_string(&path)
         .await
-        .map_err(|e| format!("read prompt file: {e}"))
+        .map_err(|e| format!("read prompt file: {e}"))?;
+
+    Ok(match disposition {
+        ExitDisposition::Send => ComposeOutcome::Send(content),
+        ExitDisposition::Backout => ComposeOutcome::Backout(content),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +262,9 @@ mod tests {
     // whitespace, multi-arg) are tested directly here.
     #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-    use super::{resolve_editor_command, split_editor_command};
+    use super::{
+        ExitDisposition, classify_exit_code, resolve_editor_command, split_editor_command,
+    };
     use std::collections::HashMap;
 
     /// Build a `lookup` closure backed by a fixed map.
@@ -272,5 +345,30 @@ mod tests {
     fn split_blank_command_is_none() {
         assert_eq!(split_editor_command(""), None);
         assert_eq!(split_editor_command("   "), None);
+    }
+
+    #[test]
+    fn classify_exit_zero_is_send() {
+        assert_eq!(classify_exit_code(Some(0)), Some(ExitDisposition::Send));
+    }
+
+    #[test]
+    fn classify_backout_code_is_backout() {
+        // Helix `:cq!` default — the deliberate loss-free backout signal.
+        assert_eq!(classify_exit_code(Some(1)), Some(ExitDisposition::Backout));
+    }
+
+    #[test]
+    fn classify_other_nonzero_code_is_error() {
+        // Anything that is neither a clean send nor the backout code is an
+        // error the caller surfaces with the terminal-wrapper hint.
+        assert_eq!(classify_exit_code(Some(2)), None);
+        assert_eq!(classify_exit_code(Some(127)), None);
+    }
+
+    #[test]
+    fn classify_signal_termination_is_error() {
+        // No exit code (killed by a signal) is always an error.
+        assert_eq!(classify_exit_code(None), None);
     }
 }
