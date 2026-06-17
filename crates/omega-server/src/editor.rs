@@ -5,6 +5,16 @@
 //! current draft, waits for the editor to close, and returns the edited text
 //! (which the UI then auto-sends).
 //!
+//! ## Where the temp file lives
+//!
+//! The seed file is created in the **server's working directory** (the
+//! project CWD), not the system temp dir. TUI editors anchor in-buffer path
+//! completion at the *current document's* directory rather than the working
+//! directory, so a temp file under `/tmp` would complete paths against
+//! `/tmp`. Anchoring it at the cwd lets the operator tab-complete project
+//! files while composing. The `omega-prompt-*.md` name is gitignored and the
+//! file is unlinked when the request completes.
+//!
 //! ## Editor resolution
 //!
 //! [`resolve_editor_command`] consults, in order: `OMEGA_EDITOR` → `VISUAL`
@@ -112,10 +122,20 @@ pub async fn compose_with_editor(draft: &str) -> Result<String, String> {
 
     // Seed a temp file with the current draft so the operator can continue
     // editing what they had already typed in the browser.
+    //
+    // The file is created in the server's working directory (the project
+    // CWD), *not* the system temp dir. TUI editors anchor in-buffer path
+    // completion at the current document's directory (Helix:
+    // `doc.path().parent()`), so a temp file under `/tmp` would complete
+    // against `/tmp`. Placing it at the cwd lets the operator tab-complete
+    // project files while composing. The `omega-prompt-*.md` name is
+    // gitignored and the file is unlinked on drop, so the project tree is
+    // only transiently touched while the editor is open.
+    let cwd = std::env::current_dir().map_err(|e| format!("determine working directory: {e}"))?;
     let tmp = tempfile::Builder::new()
         .prefix("omega-prompt-")
         .suffix(".md")
-        .tempfile()
+        .tempfile_in(&cwd)
         .map_err(|e| format!("create temp file: {e}"))?;
     let path = tmp.path().to_path_buf();
     tokio::fs::write(&path, draft)

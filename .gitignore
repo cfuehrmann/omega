@@ -53,6 +53,11 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # fatal API error diagnostic snapshots (runtime artifacts, not committed)
 diagnosis/
 
+# external-editor prompt-composition seed files (created in the project cwd
+# so editor path completion is anchored at the project; unlinked on request
+# completion, but transiently present while the editor is open)
+omega-prompt-*.md
+
 # dotenv environment variable files
 .env
 .env.development.local

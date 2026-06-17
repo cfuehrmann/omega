@@ -784,6 +784,94 @@ async fn post_compose_runs_configured_editor_and_returns_edited_text() {
     let _ = child.kill().await;
 }
 
+/// The seed temp file is created **inside the server's working directory**
+/// (the project CWD), not the system temp dir. Helix-style path completion
+/// resolves relative paths against the *current document's* directory, so a
+/// temp file in `/tmp` would complete against `/tmp` rather than the project.
+/// Anchoring it at the cwd lets the operator tab-complete project files while
+/// composing a prompt.
+///
+/// The fake editor writes the canonical directory of its file argument back
+/// into the file; the test asserts that directory is the server's cwd.
+#[tokio::test]
+async fn post_compose_seeds_temp_file_in_server_cwd() {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let tmp = TempDir::new().expect("tempdir");
+
+    // Fake editor: replace the file contents with the canonical path of the
+    // directory the temp file lives in (`cd $(dirname $1) && pwd`).
+    let editor = tmp.path().join("fake-editor.sh");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\nprintf '%s' \"$(cd \"$(dirname \"$1\")\" && pwd)\" > \"$1\"\n",
+    )
+    .expect("write fake editor");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&editor).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&editor, perms).expect("chmod +x");
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let sessions_root = tmp.path().join("sessions");
+    let bin = env!("CARGO_BIN_EXE_omega-server");
+    let mut child = Command::new(bin)
+        .args(["--port", &port.to_string()])
+        .arg("--sessions-root")
+        .arg(&sessions_root)
+        .current_dir(tmp.path())
+        .env("HOME", tmp.path())
+        .env("ANTHROPIC_API_KEY", "dummy")
+        .env("OMEGA_EDITOR", &editor)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn omega-server");
+
+    let url = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = reqwest::get(format!("{url}/health")).await {
+            if r.status().is_success() {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready, "server did not become ready in 5 s");
+
+    let resp = reqwest::Client::new()
+        .post(format!("{url}/api/compose"))
+        .json(&serde_json::json!({ "draft": "anything" }))
+        .send()
+        .await
+        .expect("POST /api/compose");
+    assert_eq!(resp.status().as_u16(), 200, "expected 200 OK");
+    let body: serde_json::Value = resp.json().await.expect("json");
+
+    let reported_dir = body["content"].as_str().expect("content field");
+    // The server's cwd is `tmp.path()` (passed via `.current_dir`).
+    // Canonicalize for a symlink-stable comparison (e.g. /tmp vs /private/tmp).
+    let expected_cwd = std::fs::canonicalize(tmp.path()).expect("canonicalize cwd");
+    assert_eq!(
+        std::path::Path::new(reported_dir),
+        expected_cwd,
+        "temp file must be created in the server cwd so path completion is \
+         anchored at the project, not the system temp dir",
+    );
+
+    let _ = child.kill().await;
+}
+
 /// `POST /api/compose` returns the file **verbatim** even when the editor is
 /// quit without saving (the file still holds the seed). The server does no
 /// send/suppress logic: the client drops the result into the textarea for
