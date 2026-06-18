@@ -558,6 +558,122 @@ async fn maps_sse_error_event_to_stream_error() {
 }
 
 // ---------------------------------------------------------------------------
+// Truncated stream (EOF before `message_stop`) → LlmError::Transport
+// ---------------------------------------------------------------------------
+//
+// A 200 response whose SSE body ends at EOF without ever delivering
+// `message_stop` is a truncated response — e.g. an idle-connection reap
+// during a long generation.  reqwest reports the peer close as a clean
+// end-of-stream (not an error), so the provider must synthesise a retryable
+// `Transport` error rather than silently ending.  This is the exact failure
+// that dead-ended a real session with "Provider stream ended without
+// LlmResponseEnded".
+
+/// The pathological case from the incident: 200 headers, then EOF with
+/// *zero* SSE events (not even `message_start`).  The very first item the
+/// stream yields must be a retryable `Transport` error.
+#[tokio::test]
+async fn empty_stream_maps_to_transport_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(sse_body(&[]))
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let mut stream = provider.stream(simple_request());
+
+    match stream.next().await.expect("expected one item") {
+        Err(err @ LlmError::Transport { .. }) => {
+            assert!(err.is_retryable(), "Transport must be retryable");
+            assert!(
+                format!("{err:?}").contains("message_stop"),
+                "message should name the missing terminator, got {err:?}"
+            );
+        }
+        other => panic!("expected LlmError::Transport, got {other:?}"),
+    }
+}
+
+/// A partial stream — valid events arrive, then EOF before `message_stop`.
+/// The earlier items deserialize fine; the *final* item must be the
+/// retryable `Transport` error.
+#[tokio::test]
+async fn partial_stream_without_message_stop_maps_to_transport_error() {
+    let server = MockServer::start().await;
+
+    let body = sse_body(&[
+        (
+            "message_start",
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_trunc",
+                    "model": "claude-sonnet-4-6",
+                    "usage": { "input_tokens": 5, "output_tokens": 0 }
+                }
+            }),
+        ),
+        (
+            "content_block_start",
+            json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": { "type": "text", "text": "" }
+            }),
+        ),
+        (
+            "content_block_delta",
+            json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": { "type": "text_delta", "text": "Hello" }
+            }),
+        ),
+        // EOF here — no content_block_stop, no message_delta, no message_stop.
+    ]);
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("test-key").with_base_url(server.uri());
+    let mut stream = provider.stream(simple_request());
+
+    let mut items = Vec::new();
+    while let Some(item) = stream.next().await {
+        items.push(item);
+    }
+
+    let last = items.pop().expect("stream yielded at least one item");
+    match last {
+        Err(err @ LlmError::Transport { .. }) => {
+            assert!(err.is_retryable(), "Transport must be retryable");
+        }
+        other => panic!("expected final item to be LlmError::Transport, got {other:?}"),
+    }
+    // Earlier items are the valid prefix and must not be errors.
+    for item in &items {
+        assert!(
+            item.is_ok(),
+            "prefix item before truncation should be Ok, got {item:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Beta header propagated when configured
 // ---------------------------------------------------------------------------
 

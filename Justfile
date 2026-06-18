@@ -202,6 +202,24 @@ mutants-llm-error-retryable:
         --file "crates/omega-core/src/types.rs" \
         -F "is_retryable|retry_after|fn status"
 
+# cargo-mutants on the SSE streaming decoder (stream_impl in anthropic.rs).
+#
+# CARVE-OUT: stream_impl's entire body lives inside an `async_stream::try_stream!`
+# macro, which cargo-mutants treats as an opaque token stream and does NOT
+# descend into — so this run reports "0 mutants found" (verify with --list).
+# The truncated-stream guard (a 200 whose SSE body ends at EOF without
+# `message_stop` → retryable Transport error, via the `saw_message_stop` flag
+# + post-loop check) therefore cannot be mutation-tested. Its coverage is
+# instead proven by the red/green pair in tests/anthropic.rs:
+# `empty_stream_maps_to_transport_error` and
+# `partial_stream_without_message_stop_maps_to_transport_error` — both fail
+# when the guard condition is neutralised and pass with it in place.
+# The recipe is kept so the 0-mutants result is documented and re-checkable.
+# Uses --in-place to avoid copying the large (incl. leptos wasm) target tree.
+mutants-anthropic-stream:
+    cargo mutants -p omega-core --in-place --cap-lints=true \
+        --file "crates/omega-core/src/anthropic.rs" -F "stream_impl" --list
+
 # Run cargo-mutants targeted at the system-prompt-path guard only.
 # Mutates only omega-tools/src/lib.rs (where the guard logic lives)
 # and runs the fast omega-tools test suite (no network, no subprocesses).

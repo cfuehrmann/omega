@@ -145,6 +145,9 @@ fn stream_impl(
         let mut msg_type = String::from("message");
         let mut msg_role = String::from("assistant");
         let mut msg_model = String::new();
+        // Set true when `message_stop` arrives — the only well-formed stream
+        // terminator.  Checked after the loop to detect a truncated stream.
+        let mut saw_message_stop = false;
 
         while let Some(ev) = futures::StreamExt::next(&mut sse).await {
             let ev = ev.map_err(|e| LlmError::Stream { message: e.to_string() })?;
@@ -338,6 +341,7 @@ fn stream_impl(
                             "content": "[elided — use context hash]",
                         })),
                     }));
+                    saw_message_stop = true;
                     break;
                 }
                 "error" => {
@@ -350,6 +354,22 @@ fn stream_impl(
                 }
                 _ => { /* unknown event — ignore for forward-compat */ }
             }
+        }
+
+        // The SSE byte stream reached EOF.  A well-formed response always
+        // terminates with `message_stop`, which sets `saw_message_stop` and
+        // breaks the loop above.  Reaching here with the flag still false
+        // means the connection closed mid-response — a truncated stream (e.g.
+        // an idle-connection reap during a long generation).  reqwest reports
+        // a peer close as a clean end-of-stream, not an error, so without this
+        // guard the agent sees neither an error nor an `LlmResponseEnded` and
+        // dead-ends the turn.  Synthesising a `Transport` error routes it into
+        // `RetryingProvider`, which retries the (idempotent — nothing was
+        // committed) request.
+        if !saw_message_stop {
+            Err(LlmError::Transport {
+                message: "stream ended without message_stop (truncated response)".to_owned(),
+            })?;
         }
     }
 }
