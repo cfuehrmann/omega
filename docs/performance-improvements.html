@@ -134,7 +134,7 @@ details > .details-body { padding:1rem 1.2rem; }
     <tr><td><code>-j4</code> copy-mode sweeps (was <code>-j2</code>/<code>-j1</code>)</td><td>mutants</td><td class="num">~2–4×</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Scratch-dir hygiene (<code>mutants-prep</code>)</td><td>mutants</td><td class="num">disk</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Convert wide in-place sweeps to copy-mode <code>-j4</code></td><td>mutants</td><td class="num">~2–4×</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
-    <tr><td>Install <code>thermald</code> (stop reactive Tjmax throttling)</td><td>host</td><td class="num">~8 s + cooler</td><td>low</td><td><span class="tag todo">TODO</span></td></tr>
+    <tr><td>Install <code>thermald</code> (stop reactive Tjmax throttling)</td><td>host</td><td class="num">~8 s + cooler</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
   </tbody>
 </table>
 <p style="font-size:0.83rem; color:var(--muted);">The <code>thermald</code> item addresses
@@ -358,7 +358,7 @@ i7-1165G7. Observed: gate ~80 s vs ~72 s — slightly <em>slower</em>. This is n
     <tr><td>sum of per-core throttle events</td><td class="num">7516</td><td>reactive, hardware-floor throttling</td></tr>
     <tr><td>Tjmax (high / crit)</td><td class="num">100 °C</td><td>the hard wall it keeps hitting under load</td></tr>
     <tr><td>RAPL PL1 / PL2 / peak</td><td class="num">35 / 80 / 175 W</td><td>80 W burst in a thin chassis → 100 °C fast</td></tr>
-    <tr><td>thermal daemon</td><td>none</td><td><code>thermald</code> not installed; only power-profiles-daemon</td></tr>
+    <tr><td>thermal daemon <em>(at time of diagnosis)</em></td><td>none</td><td><code>thermald</code> not installed; only power-profiles-daemon</td></tr>
   </tbody>
 </table>
 
@@ -369,7 +369,10 @@ that wastes performance. The cooler-running 4-core 1165G7 sustains its clocks be
 which is a large part of why it finishes the (serial) gate sooner.</p>
 
 <div class="callout rec">
-  <div class="callout-title">Recommendation — install thermald (the temperature-based throttle you want)</div>
+  <div class="callout-title">Recommendation — install thermald (the temperature-based throttle you want) <span class="tag done">DONE</span></div>
+  <p style="margin:0 0 0.6rem;"><strong>Installed &amp; active</strong> as of this session: <code>thermald 2.5.12</code>,
+  <code>enabled</code>, running <code>--systemd --dbus-enable --adaptive</code> (adaptive mode uses the
+  <code>INT3400</code> DPTF tables). Enabled via:</p>
   <pre style="margin:0.6rem 0;"><code>sudo pacman -S thermald
 sudo systemctl enable --now thermald</code></pre>
   <p style="margin:0;"><code>thermald</code> reads the DTS / <code>INT3400</code> DPTF sensors and throttles
