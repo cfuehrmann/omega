@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gate &amp; Mutation-Test Performance — Remaining Improvements</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#f9f9fb; --surface:#fff; --border:#e1e4e8; --text:#1a1a2e; --muted:#6a737d;
+  --accent:#0550ae; --accent-bg:#dbeafe; --warn-bg:#fff8dc; --warn-border:#e6c600;
+  --ok-bg:#dcfce7; --ok-border:#16a34a; --callout-bg:#eff6ff; --callout-border:#3b82f6;
+  --code-bg:#f3f4f6; --toc-width:250px; --content-max:880px;
+  font-size:16px; color-scheme:light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0d1117; --surface:#161b22; --border:#30363d; --text:#e6edf3; --muted:#8b949e;
+    --accent:#58a6ff; --accent-bg:#1c2d48; --warn-bg:#2d2200; --warn-border:#d29922;
+    --ok-bg:#0f2e16; --ok-border:#3fb950; --callout-bg:#0d1f33; --callout-border:#1f6feb;
+    --code-bg:#21262d; color-scheme:dark;
+  }
+  tr:nth-child(even) td { background:#1c2128; }
+  th { background:#21262d; }
+}
+body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  background:var(--bg); color:var(--text); line-height:1.65; display:flex; min-height:100vh; }
+#toc { position:sticky; top:0; height:100vh; overflow-y:auto; width:var(--toc-width); flex-shrink:0;
+  background:var(--surface); border-right:1px solid var(--border); padding:1.5rem 1rem; }
+#toc h2 { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:0.75rem; }
+#toc ol { list-style:none; padding:0; }
+#toc li { margin-bottom:0.3rem; }
+#toc a { text-decoration:none; color:var(--muted); font-size:0.82rem; display:block; padding:0.15rem 0.4rem;
+  border-radius:4px; transition:background .15s,color .15s; }
+#toc a:hover { background:var(--accent-bg); color:var(--accent); }
+#toc .toc-h1 { font-weight:600; color:var(--text); font-size:0.85rem; }
+#toc .toc-sub { padding-left:0.9rem; }
+#toc .toc-divider { border-top:1px solid var(--border); margin:0.6rem 0 0.5rem; }
+main { flex:1; padding:2.5rem 3rem; max-width:calc(var(--toc-width) + var(--content-max)); overflow-x:hidden; }
+article { max-width:var(--content-max); }
+h1 { font-size:2rem; font-weight:700; line-height:1.2; margin-bottom:0.4rem; }
+.doc-meta { font-size:0.83rem; color:var(--muted); margin-bottom:2.5rem; padding-bottom:1.25rem; border-bottom:1px solid var(--border); }
+h2 { font-size:1.35rem; font-weight:700; margin-top:3rem; margin-bottom:0.75rem; padding-bottom:0.35rem;
+  border-bottom:1px solid var(--border); scroll-margin-top:1.5rem; }
+h3 { font-size:1.05rem; font-weight:600; margin-top:1.75rem; margin-bottom:0.4rem; scroll-margin-top:1.5rem; }
+p { margin-bottom:0.85rem; }
+ul, ol { padding-left:1.4rem; margin-bottom:0.85rem; }
+li { margin-bottom:0.25rem; }
+blockquote { border-left:4px solid var(--accent); background:var(--callout-bg); border-radius:0 6px 6px 0;
+  padding:0.85rem 1.1rem; margin:1.2rem 0; font-style:italic; }
+blockquote p { margin-bottom:0; }
+code { font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; font-size:0.87em;
+  background:var(--code-bg); border:1px solid var(--border); border-radius:3px; padding:0.1em 0.35em; }
+pre { background:var(--code-bg); border:1px solid var(--border); border-radius:6px; padding:1rem 1.2rem;
+  overflow-x:auto; margin-bottom:1rem; font-size:0.85rem; line-height:1.55; }
+pre code { background:none; border:none; padding:0; font-size:inherit; }
+.callout { border-left:4px solid var(--callout-border); background:var(--callout-bg); border-radius:0 6px 6px 0;
+  padding:0.85rem 1.1rem; margin:1.2rem 0; }
+.callout.rec { border-color:var(--ok-border); background:var(--ok-bg); }
+.callout.warn { border-color:var(--warn-border); background:var(--warn-bg); }
+.callout-title { font-weight:700; font-size:0.82rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.4rem; color:var(--accent); }
+.callout.rec .callout-title { color:#166534; }
+.callout.warn .callout-title { color:#92400e; }
+@media (prefers-color-scheme: dark) { .callout.rec .callout-title { color:#3fb950; } .callout.warn .callout-title { color:#d29922; } }
+table { width:100%; border-collapse:collapse; font-size:0.88rem; margin-bottom:1rem; }
+th { background:#f6f8fa; border:1px solid var(--border); padding:0.5rem 0.75rem; text-align:left; font-weight:600; }
+td { border:1px solid var(--border); padding:0.45rem 0.75rem; vertical-align:top; }
+tr:nth-child(even) td { background:#fafbfc; }
+.tag { display:inline-block; font-size:0.72rem; font-weight:700; border-radius:999px; padding:0.1em 0.7em; margin-right:0.4em; vertical-align:middle; }
+.tag.done { background:var(--ok-bg); color:#166534; } .tag.todo { background:var(--warn-bg); color:#92400e; }
+.tag.risk { background:#fde2e2; color:#b91c1c; }
+@media (prefers-color-scheme: dark) { .tag.done { color:#3fb950; } .tag.todo { color:#d29922; } .tag.risk { background:#3d1414; color:#f87171; } }
+.bar { display:flex; height:26px; border-radius:5px; overflow:hidden; margin:0.8rem 0 0.3rem; border:1px solid var(--border); font-size:0.7rem; }
+.bar > span { display:flex; align-items:center; justify-content:center; color:#fff; white-space:nowrap; overflow:hidden; }
+.bar-legend { font-size:0.75rem; color:var(--muted); margin-bottom:1rem; }
+.num { font-variant-numeric:tabular-nums; text-align:right; }
+details { margin:0.8rem 0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+details > summary { cursor:pointer; padding:0.6rem 1rem; font-size:0.87rem; font-weight:600;
+  background:#f6f8fa; color:var(--muted); list-style:none; user-select:none; }
+details > summary::-webkit-details-marker { display:none; }
+details > summary::before { content:"▶ "; font-size:0.7em; }
+details[open] > summary { background:var(--accent-bg); color:var(--accent); border-bottom:1px solid var(--border); }
+details > .details-body { padding:1rem 1.2rem; }
+@media (prefers-color-scheme: dark) { details > summary { background:#21262d; } }
+@media (max-width:760px) { #toc { display:none; } main { padding:1.5rem 1.2rem; } }
+</style>
+</head>
+<body>
+<nav id="toc" aria-label="Table of contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#summary" class="toc-h1">Summary</a></li>
+    <li><a href="#breakdown" class="toc-h1">Where the gate time goes</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#e2e" class="toc-h1">E2E test speedups</a></li>
+    <li><a href="#e2e-builds" class="toc-sub">1. Merge the two release builds</a></li>
+    <li><a href="#e2e-parallel" class="toc-sub">2. Parallelize the browser tests</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#mutants" class="toc-h1">Mutation-test improvements</a></li>
+    <li><a href="#mutants-done" class="toc-sub">Done: -j4 &amp; disk hygiene</a></li>
+    <li><a href="#mutants-todo" class="toc-sub">Pending: in-place → copy-mode</a></li>
+    <li class="toc-divider"></li>
+    <li><a href="#cpu" class="toc-h1">Appendix: the 358H puzzle</a></li>
+    <li><a href="#thermal" class="toc-sub">Thermal throttling &amp; thermald</a></li>
+  </ol>
+</nav>
+<main>
+<article>
+
+<h1>Gate &amp; Mutation-Test Performance</h1>
+<p class="doc-meta">
+  Remaining / proposed performance work · Working document ·
+  Measurements taken warm-cache on this host (Intel Core Ultra X7 358H, 16 cores, 30&nbsp;GB RAM) ·
+  Benchmark slice ran on cores 12–15 (the 3.3&nbsp;GHz LP-E cores) — wall-times are therefore
+  conservative, but ratios hold.
+</p>
+
+<blockquote>
+  <p>The gate is dominated by the <strong>e2e step (~81%)</strong>, which is serial by
+  construction. <code>cargo-nextest</code> (already landed) speeds up only the small
+  <code>_rust-checks</code> slice. The remaining levers all live in e2e and in the
+  mutation-test recipes.</p>
+</blockquote>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="summary">Summary</h2>
+
+<table>
+  <thead><tr><th>Improvement</th><th>Area</th><th>Est. saving</th><th>Risk</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>nextest for <code>_rust-checks</code></td><td>gate</td><td class="num">~5.6 s</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Merge two e2e <code>--release</code> builds</td><td>e2e</td><td class="num">~6 s</td><td>low</td><td><span class="tag todo">TODO</span></td></tr>
+    <tr><td>Parallelize e2e browser tests</td><td>e2e</td><td class="num">~30–37 s</td><td>high</td><td><span class="tag todo">TODO</span> <span class="tag risk">needs audit</span></td></tr>
+    <tr><td><code>-j4</code> copy-mode sweeps (was <code>-j2</code>/<code>-j1</code>)</td><td>mutants</td><td class="num">~2–4×</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Scratch-dir hygiene (<code>mutants-prep</code>)</td><td>mutants</td><td class="num">disk</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Convert wide in-place sweeps to copy-mode <code>-j4</code></td><td>mutants</td><td class="num">~2–4×</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
+    <tr><td>Install <code>thermald</code> (stop reactive Tjmax throttling)</td><td>host</td><td class="num">~8 s + cooler</td><td>low</td><td><span class="tag todo">TODO</span></td></tr>
+  </tbody>
+</table>
+<p style="font-size:0.83rem; color:var(--muted);">The <code>thermald</code> item addresses
+both heat and the gate regression — see the <a href="#thermal">thermal appendix</a>.</p>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="breakdown">Where the gate time goes</h2>
+
+<p>Warm-cache section breakdown (no source changes), total ≈&nbsp;78&nbsp;s with nextest:</p>
+
+<div class="bar" aria-hidden="true">
+  <span style="flex:52.5; background:#b91c1c;">e2e tests 52.5s</span>
+  <span style="flex:12.5; background:#d97706;">e2e build 12.5s</span>
+  <span style="flex:8.6; background:#0550ae;">rust-checks 8.6s</span>
+  <span style="flex:2.9; background:#15803d;">leptos-test 2.9s</span>
+  <span style="flex:1.5; background:#6b7280;">other 1.5s</span>
+</div>
+<p class="bar-legend">Each segment is proportional to wall-time. e2e (red + orange) is ~83% of the bar.</p>
+
+<table>
+  <thead><tr><th>Gate section</th><th class="num">Time</th><th>Parallel?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>web-leptos-build</td><td class="num">1.4 s</td><td>build-parallel</td><td>warm: trunk skips rebuild</td></tr>
+    <tr><td>web-leptos-test</td><td class="num">2.9 s</td><td>build-parallel</td><td>wasm-bindgen-test</td></tr>
+    <tr><td>web-leptos-snapshots</td><td class="num">0.1 s</td><td>—</td><td>SSR snapshot</td></tr>
+    <tr><td>_rust-checks (nextest)</td><td class="num">8.6 s</td><td>yes</td><td>clippy + nextest + machete; <code>cargo test</code> was 14.2 s</td></tr>
+    <tr><td><strong>_rust-e2e-run</strong></td><td class="num"><strong>65.2 s</strong></td><td><strong>serial</strong></td><td>~12.5 s release builds + ~52.5 s <code>--test-threads=1</code> browser tests</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="callout-title">Why nextest didn't move the needle</div>
+  nextest shaves ~5.6 s off <code>_rust-checks</code> — real, but only ~7% of an ~80 s gate.
+  The e2e step it cannot touch is 81%. That is why <code>just gate</code> feels identical
+  before and after. The win is genuine; the bottleneck is simply elsewhere.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="e2e">E2E test speedups</h2>
+
+<h3 id="e2e-builds">1. Merge the two release builds <span class="tag todo">TODO</span> <span class="tag done">low risk</span></h3>
+
+<p>The e2e recipe builds the mock server and the real server in <em>two separate</em>
+<code>cargo build --release</code> invocations. On a warm run each still takes ~6.2 s and
+<strong>both recompile <code>omega-agent</code> and <code>omega-server</code></strong>:</p>
+
+<pre><code># observed in the gate log
+Compiling omega-agent … omega-server … omega-mock-server
+   Finished `release` … in 6.24s          # cargo build -p omega-mock-server
+Compiling omega-agent … omega-server
+   Finished `release` … in 6.23s          # cargo build -p omega-server  ← rebuild!</code></pre>
+
+<p>This is <strong>feature-unification thrash</strong>: building different package
+subsets in separate invocations resolves the Cargo feature graph differently, so the
+shared crates are rebuilt with a different feature set the second time. Collapsing both
+into a single invocation unifies features once and builds each crate once:</p>
+
+<pre><code># before
+cargo build --release -p omega-mock-server
+cargo build --release -p omega-server
+# after
+cargo build --release -p omega-mock-server -p omega-server</code></pre>
+
+<div class="callout rec">
+  <div class="callout-title">Recommendation</div>
+  Low-risk, ~6 s back on every gate run. Verify the two binaries still land at the same
+  target paths the e2e harness expects, then ship. No test-behaviour change.
+</div>
+
+<h3 id="e2e-parallel">2. Parallelize the browser tests <span class="tag todo">TODO</span> <span class="tag risk">needs hermeticity audit</span></h3>
+
+<p>The ~52.5 s test phase is <strong>~55 chromium-driven tests across 11 binaries run
+strictly serially</strong> (<code>--test-threads=1</code>):</p>
+
+<table>
+  <thead><tr><th>Binary</th><th class="num">Tests</th><th class="num">Time</th></tr></thead>
+  <tbody>
+    <tr><td>02_picker</td><td class="num">14</td><td class="num">7.28 s</td></tr>
+    <tr><td>03_markdown</td><td class="num">11</td><td class="num">6.61 s</td></tr>
+    <tr><td>(third suite)</td><td class="num">10</td><td class="num">10.62 s</td></tr>
+    <tr><td>(two-test suite)</td><td class="num">2</td><td class="num">12.26 s</td></tr>
+    <tr><td>… 7 more</td><td class="num">~18</td><td class="num">~15.7 s</td></tr>
+    <tr><td><strong>Total</strong></td><td class="num"><strong>~55</strong></td><td class="num"><strong>52.5 s</strong></td></tr>
+  </tbody>
+</table>
+
+<p>Much of this is wall-clock <em>waiting</em> (page navigation, element waits) rather than
+CPU — which is exactly the kind of work that parallelizes well: idle wait on one test
+overlaps with another. Running even 3–4 at a time could cut the phase to ~15–20 s,
+the single biggest win available in the whole gate.</p>
+
+<div class="callout warn">
+  <div class="callout-title">Why it is serial today — and what must be proven first</div>
+  <code>--test-threads=1</code> was a deliberate choice. Before lifting it, audit each
+  test for cross-test interference:
+  <ul style="margin-top:0.5rem; margin-bottom:0;">
+    <li><strong>Ports.</strong> Every test must bind its server on an ephemeral port
+      (<code>127.0.0.1:0</code> / <code>pick_free_port()</code>) — no shared fixed-port
+      mock server. (The startup test already uses <code>pick_free_port()</code>, a good sign.)</li>
+    <li><strong>Chromium profile.</strong> Each test needs its own
+      <code>--user-data-dir</code>; a shared profile dir serializes or corrupts.</li>
+    <li><strong>Filesystem / sessions.</strong> No shared fixed paths under
+      <code>.omega/</code>; use per-test temp dirs.</li>
+    <li><strong>Resource ceiling.</strong> N parallel chromium instances cost RAM; cap
+      the degree (e.g. <code>--test-threads=4</code>) rather than going unbounded.</li>
+  </ul>
+</div>
+
+<div class="callout rec">
+  <div class="callout-title">Recommendation</div>
+  Highest payoff, highest risk. Do it as a focused task <em>after</em> the audit: flip to
+  a bounded <code>--test-threads=N</code>, run the suite 5–10× to prove non-flakiness
+  (per the flaky-test rule), and keep the degree conservative. Could roughly halve the gate.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="mutants">Mutation-test improvements</h2>
+
+<p>Two distinct levers: how many mutants run <em>in parallel</em>, and how much
+<em>disk</em> the scratch trees consume. The old machine conflated them — it throttled
+parallelism to keep disk bounded. With 1.8 TB free, they are now decoupled.</p>
+
+<h3 id="mutants-done">Done: <code>-j4</code> parallelism &amp; disk hygiene <span class="tag done">SHIPPED</span></h3>
+
+<ul>
+  <li><strong>Copy-mode sweeps bumped <code>-j2 → -j4</code></strong>, and the disk-pinned
+    <code>mutants-edit-tools</code> lifted from <code>-j1 → -j4</code>. The binding
+    constraint is now <strong>RAM (30 GB ≈ 7 GB/worker)</strong>, not disk or cores —
+    a GNU jobserver already caps total build tasks at NCPUS across workers, and
+    cargo-mutants' own guidance warns against scaling <code>-j</code> to core count.</li>
+  <li><strong>Scratch hygiene via <code>mutants-prep</code></strong>: every copy-mode
+    recipe now runs <code>rm -rf … &amp;&amp; mkdir -p …</code> on the scratch dir
+    <em>before</em> the sweep. This bounds disk to a single sweep's footprint and
+    cleans up leftovers from interrupted/failed runs — without a failure-path gap (a
+    trailing cleanup line would be skipped when a survivor makes the recipe exit non-zero).</li>
+</ul>
+
+<div class="callout">
+  <div class="callout-title">Principle codified</div>
+  Parallelism is driven by RAM, never throttled to keep a disk number down. Disk is
+  bounded by cleanup, not by lowering <code>-j</code>. The two are independent knobs.
+</div>
+
+<h3 id="mutants-todo">Pending: convert wide in-place sweeps to copy-mode <span class="tag todo">TODO</span></h3>
+
+<p>~17 sweeps still use <code>--in-place</code>, which is inherently <strong>sequential</strong>
+(one shared source tree, cannot parallelize). They were chosen only to dodge the
+~6 GB target-tree copy — a disk worry that is now both abundant and self-cleaning.
+The <em>wide</em> ones (many mutants) should become copy-mode <code>-j4</code> to gain
+parallelism; the <em>narrow</em> <code>--re</code>-scoped agent.rs sweeps (often a handful
+or zero mutants) should stay in-place — copying a 6 GB tree ×4 for 0–3 mutants is pure waste.</p>
+
+<table>
+  <thead><tr><th>Recipe</th><th class="num">Mutants</th><th>Action</th></tr></thead>
+  <tbody>
+    <tr><td>mutants-conv-state</td><td class="num">30</td><td>→ copy-mode <code>-j4</code></td></tr>
+    <tr><td>mutants-u3-controls</td><td class="num">23</td><td>→ copy-mode <code>-j4</code></td></tr>
+    <tr><td>mutants-input-queue</td><td class="num">17</td><td>→ copy-mode <code>-j4</code></td></tr>
+    <tr><td>mutants-u3-turn-state</td><td class="num">17</td><td>→ copy-mode <code>-j4</code></td></tr>
+    <tr><td>mutants-compose-editor</td><td class="num">17</td><td>→ copy-mode <code>-j4</code></td></tr>
+    <tr><td>mutants-retry</td><td class="num">13</td><td>→ copy-mode <code>-j4</code></td></tr>
+    <tr><td>mutants-event-sink</td><td class="num">10</td><td>→ copy-mode <code>-j4</code></td></tr>
+    <tr><td>narrow agent.rs <code>--re</code> sweeps</td><td class="num">0–~5</td><td>keep in-place</td></tr>
+  </tbody>
+</table>
+
+<div class="callout rec">
+  <div class="callout-title">Recommendation</div>
+  Benchmark one conversion (<code>mutants-conv-state</code>: in-place vs copy-mode
+  <code>-j4</code>) to confirm the crossover holds on this box, then apply to the seven
+  wide sweeps. Parked behind the e2e work per current sequencing.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="cpu">Appendix: why the 358H is no faster than the 1165G7</h2>
+
+<p>Expectation: a 16-core Core Ultra X7 358H should beat the old 4-core/8-thread
+i7-1165G7. Observed: gate ~80 s vs ~72 s — slightly <em>slower</em>. This is not a paradox.</p>
+
+<table>
+  <thead><tr><th></th><th>i7-1165G7 (old)</th><th>Core Ultra X7 358H (new)</th></tr></thead>
+  <tbody>
+    <tr><td>Topology</td><td>4 P-cores / 8 threads, homogeneous</td><td>4 P + 8 E + 4 LP-E, <strong>no HT</strong> (16×1)</td></tr>
+    <tr><td>Per-core clock</td><td>all P, up to 4.7 GHz</td><td>P 4.7–4.8 / E 3.7 / LP-E 3.3 GHz</td></tr>
+    <tr><td>Best single-thread</td><td>~4.7 GHz</td><td>~4.8 GHz (≈ parity)</td></tr>
+  </tbody>
+</table>
+
+<p>Three reasons the extra silicon doesn't help here:</p>
+<ol>
+  <li><strong>The bottleneck is serial.</strong> 81% of the gate is the e2e step, which
+    runs <code>--test-threads=1</code> plus serial release builds. By Amdahl's law, a
+    serial phase sees <em>zero</em> benefit from more cores — 12 of the 16 sit idle
+    through the dominant ~52 s. Core <em>count</em> is simply the wrong axis for this workload.</li>
+  <li><strong>Per-thread, the 358H is not faster — and can be slower.</strong> Its best
+    P-core (4.8 GHz) only matches the 1165G7's P-core (4.7 GHz). But on a hybrid chip the
+    scheduler may place a lone, latency-insensitive-looking thread on an <strong>E-core
+    (3.7 GHz) or LP-E core (3.3 GHz)</strong> — 20–30% slower per thread than the old
+    all-P-core chip.</li>
+  <li><strong>It is thermal-throttling.</strong> See below — the strongest single
+    contributor, and the most actionable.</li>
+</ol>
+
+<div class="callout warn">
+  <div class="callout-title">Takeaway</div>
+  The fix for gate wall-time is <strong>not</strong> the CPU — it is removing the serial
+  bottleneck (e2e parallelization, §2 above) and keeping the chip off its thermal wall
+  (below). Once e2e runs N-wide, the 358H's extra E-cores finally have work to do and the
+  core-count advantage materializes.
+</div>
+
+<h3 id="thermal">Thermal throttling &amp; <code>thermald</code></h3>
+
+<p>Measured on this host after only <strong>~3 h uptime</strong>, in the merely
+<code>balanced</code> power profile:</p>
+
+<table>
+  <thead><tr><th>Signal</th><th>Value</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>package_throttle_count</code></td><td class="num">5041</td><td>times the package hit Tjmax and cut clocks</td></tr>
+    <tr><td>sum of per-core throttle events</td><td class="num">7516</td><td>reactive, hardware-floor throttling</td></tr>
+    <tr><td>Tjmax (high / crit)</td><td class="num">100 °C</td><td>the hard wall it keeps hitting under load</td></tr>
+    <tr><td>RAPL PL1 / PL2 / peak</td><td class="num">35 / 80 / 175 W</td><td>80 W burst in a thin chassis → 100 °C fast</td></tr>
+    <tr><td>thermal daemon</td><td>none</td><td><code>thermald</code> not installed; only power-profiles-daemon</td></tr>
+  </tbody>
+</table>
+
+<p>The chip is <strong>cooling-limited, not policy-limited</strong> — it throttles hard
+even in <code>balanced</code>. Reactive Tjmax throttling is the worst case: clocks are
+allowed to climb until 100 °C, then slammed to the floor, then recover — an oscillation
+that wastes performance. The cooler-running 4-core 1165G7 sustains its clocks better,
+which is a large part of why it finishes the (serial) gate sooner.</p>
+
+<div class="callout rec">
+  <div class="callout-title">Recommendation — install thermald (the temperature-based throttle you want)</div>
+  <pre style="margin:0.6rem 0;"><code>sudo pacman -S thermald
+sudo systemctl enable --now thermald</code></pre>
+  <p style="margin:0;"><code>thermald</code> reads the DTS / <code>INT3400</code> DPTF sensors and throttles
+  <em>proactively via RAPL and P-state caps</em> before Tjmax, holding a cooler, steadier
+  clock. On a cooling-limited part this typically <strong>raises sustained throughput</strong>
+  while <strong>lowering peak temperature</strong> — safety and speed in the same move. It
+  coexists with <code>power-profiles-daemon</code> (PPD owns governor/EPP/platform-profile;
+  thermald owns the thermal limit). Optionally cap the target with a custom
+  <code>/etc/thermald/thermal-conf.xml</code> if you want a ceiling below 100 °C.</p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">Do NOT just force the performance governor</div>
+  Pinning the governor/EPP to <code>performance</code> without a thermal daemon would only
+  feed the fire — it is already throttling in <code>balanced</code>. Add the temperature
+  throttle <em>first</em>; then a higher power profile is safe because thermald caps the heat.
+</div>
+
+<details>
+  <summary>How to verify the win</summary>
+  <div class="details-body">
+  <p style="margin:0;">Watch the counter live across a gate run:
+  <code>watch -n1 cat /sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count</code>.
+  Run <code>just gate</code> before and after enabling thermald and compare the delta in that
+  count, the peak <code>sensors</code> package temperature, and the gate wall-time. Expect
+  fewer throttle events, a lower peak temp, and equal-or-better wall-time.</p>
+  </div>
+</details>
+
+</article>
+</main>
+</body>
+</html>
