@@ -173,19 +173,28 @@ rust-gate: web-leptos-build web-leptos-test web-leptos-snapshots _rust-checks
 # -----------------------------------------------------------------------
 #
 # `cargo mutants` defaults to `/tmp` for per-mutant scratch trees. On this
-# host `/tmp` is tmpfs (≈8 GB) which fills before the sweep finishes;
-# redirect to `~/.cache/cargo-mutants-tmp` (real disk). Run sweeps with
-# `-j2` to keep peak disk footprint reasonable.
+# host `/tmp` is tmpfs (16 GB) which fills before the sweep finishes;
+# redirect to `~/.cache/cargo-mutants-tmp` (real disk, 1.8 TB free).
+#
+# Parallelism: copy-mode sweeps run `-j4`. The binding constraint here is
+# RAM (30 GB), not disk or cores — cargo's build/test already saturate the
+# 16 cores, and a GNU jobserver caps total build tasks at NCPUS across all
+# workers, so `-j` is the *extra* concurrency layered on top. Per
+# cargo-mutants' own guidance, `-j` is NOT scaled to core count (the Rust
+# toolchain already parallelizes aggressively); -j4 (~7 GB/worker) is the
+# headroom-safe setting on this box. Override per run with CARGO_MUTANTS_JOBS
+# without editing recipes. `--in-place` recipes stay sequential by nature
+# (they share the one source tree) and so don't carry a `-j`.
 
 # Run cargo-mutants on the root workspace.
 mutants:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -j2
+    TMPDIR={{mutants-tmp}} cargo mutants -j4
 
 # Run cargo-mutants on the leptos crate (wasm32 target).
 web-mutants: wasm-setup
     mkdir -p {{mutants-tmp}}
-    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cargo-arg=--target=wasm32-unknown-unknown
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j4 --cargo-arg=--target=wasm32-unknown-unknown
 
 # Run cargo-mutants targeted at the retry/backoff loop (retry.rs).
 # Covers compute_backoff (Retry-After vs. exponential), the give-up
@@ -230,7 +239,7 @@ mutants-anthropic-stream:
 # Fast: typically under 2 minutes on this host.
 mutants-system-prompt-guard:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
 
 # Run cargo-mutants targeted at the seam-typestate conversation-shape guard.
 # Mutates conv_state.rs (conv_state, classify_move, next_state — the δ that
@@ -246,14 +255,14 @@ mutants-conv-state:
 # Fast: pure functions with no I/O.
 mutants-ids:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/ids.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j4 --cap-lints=true --file "crates/omega-types/src/ids.rs"
 
 # Run cargo-mutants targeted at OmegaEvent (Phase 2.0 — F11).
 # Mutates only omega-types/src/events.rs and runs the omega-types test suite.
 # Verifies ContextCompacted serialisation, round-trips, and time() accessors.
 mutants-events:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/events.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j4 --cap-lints=true --file "crates/omega-types/src/events.rs"
 
 # Run cargo-mutants targeted at the canonical tools module in omega-types.
 # Tests the tool-name constants, Preset registry, preset_by_id, and all
@@ -262,7 +271,7 @@ mutants-events:
 # All mutations must be CAUGHT or UNVIABLE — no survivors.
 mutants-tools:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/tools.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j4 --cap-lints=true --file "crates/omega-types/src/tools.rs"
 
 # Run cargo-mutants targeted at the Phase 0 context projection logic.
 # Mutates agent.rs (project_messages, monitor injection methods, and the
@@ -274,7 +283,7 @@ mutants-tools:
 # Template: mutants-system-prompt-guard (see AGENTS.md).
 mutants-agent-projection:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/agent.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j4 --cap-lints=true --file "crates/omega-agent/src/agent.rs"
 
 # Run cargo-mutants targeted at the Phase 4 shutdown-logging logic.
 # Scoped to format_monitor_lines, format_monitor_stopped, and
@@ -290,7 +299,7 @@ mutants-agent-shutdown:
 # Uses omega-agent's full test suite including the round_trip_gate test.
 mutants-strict-resume:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j4 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
 # Run cargo-mutants targeted at the domain-snapshot type and related logic
 # (Phase 2 follow-up + features correction): DomainSnapshot,
@@ -305,7 +314,7 @@ mutants-domain-snapshot:
         crates/omega-agent/src/agent.rs \
         crates/omega-agent/src/session_resume.rs \
         > /tmp/omega-domain-snapshot.diff
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j4 --cap-lints=true \
         --in-diff /tmp/omega-domain-snapshot.diff
 
 # Run cargo-mutants targeted at the feature-flag parsing module.
@@ -314,7 +323,7 @@ mutants-domain-snapshot:
 # from_env is excluded via #[mutants::skip].
 mutants-feature-flags:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/feature_flags.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j4 --cap-lints=true --file "crates/omega-types/src/feature_flags.rs"
 
 # Run cargo-mutants targeted at the stateful Python REPL module
 # (PythonRepl::execute truncation logic, sentinel handling, output collection).
@@ -323,7 +332,7 @@ mutants-feature-flags:
 # per concern; we sweep the whole tree.
 mutants-python-repl:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/python_repl.rs" \
         --file "crates/omega-tools/src/python_repl/*.rs"
 
@@ -332,7 +341,7 @@ mutants-python-repl:
 # alter the negated-pgid sign are caught by the timeout integration tests.
 mutants-process-util:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/process_util.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true --file "crates/omega-tools/src/process_util.rs"
 
 # Run cargo-mutants targeted at the external-editor prompt composition helpers
 # (resolve_editor_command precedence OMEGA_EDITOR→VISUAL→EDITOR, split_editor_command).
@@ -354,7 +363,7 @@ mutants-compose-editor:
 # Template: mutants-process-util (see AGENTS.md).
 mutants-monitors:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/monitors.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true --file "crates/omega-tools/src/monitors.rs"
 
 # Run cargo-mutants targeted at the two monitor tool wrappers (Monitors Phase 1):
 # monitor() (spawn + MonitorStarted extra_event) and stop_monitor() (kill +
@@ -362,7 +371,7 @@ mutants-monitors:
 # via execute_tool in the monitor E2E tests. Template: mutants-process-util.
 mutants-monitor-tools:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/tools/monitor.rs" \
         --file "crates/omega-tools/src/tools/stop_monitor.rs"
 
@@ -375,7 +384,7 @@ mutants-monitor-tools:
 # the background-job E2E tests in monitors.rs. Template: mutants-process-util.
 mutants-bg-run-background:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/tools/run_background.rs"
 
 # Run cargo-mutants targeted at write_stdin.rs (manager-routed stdin writes).
@@ -385,7 +394,7 @@ mutants-bg-run-background:
 # background job and a streaming monitor. Template: mutants-process-util.
 mutants-bg-write-stdin:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/tools/write_stdin.rs"
 
 # Run cargo-mutants targeted at the python3 bootstrap logic in python_repl.rs.
@@ -396,7 +405,7 @@ mutants-bg-write-stdin:
 # via mock-closure unit tests in start_inner.
 mutants-python-repl-bootstrap:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/python_repl/bootstrap.rs"
 
 # Run cargo-mutants targeted at the REPL resume guard in session_resume.rs.
@@ -404,7 +413,7 @@ mutants-python-repl-bootstrap:
 # Template: mutants-system-prompt-guard (see AGENTS.md).
 mutants-repl-resume:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j4 --cap-lints=true --file "crates/omega-agent/src/session_resume.rs"
 
 # Run cargo-mutants targeted at the Phase-6 unified bottom panels:
 # - serialize/parse_panels_open (localStorage open-set persistence)
@@ -414,7 +423,7 @@ mutants-repl-resume:
 # Template: mutants-system-prompt-guard (see AGENTS.md).
 mutants-bottom-panels:
     mkdir -p {{mutants-tmp}}
-    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cap-lints=true \
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j4 --cap-lints=true \
         --cargo-arg=--no-default-features --cargo-arg=--features=ssr \
         --file "src/lib.rs" \
         --file "src/composer.rs" \
@@ -428,7 +437,7 @@ mutants-bottom-panels:
 # integration assertion lives in tests/http.rs::get_sessions_item_path_is_absolute.
 mutants-sessions-root:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j4 --cap-lints=true \
         --file "crates/omega-server/src/router.rs" --re 'absolute_sessions_root|list_sessions'
 
 # §15 U1 (Unified Input Model) — the persistent per-session agent loop.
@@ -459,7 +468,7 @@ mutants-empty-response:
 # All mutations must be CAUGHT or UNVIABLE.
 mutants-harness-recovery-events:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j2 --cap-lints=true --file "crates/omega-types/src/events.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j4 --cap-lints=true --file "crates/omega-types/src/events.rs"
 
 # §15 inject_harness_recovery helper — the free method on Agent that
 # emits the HarnessRecovery event + appends to context/history.
@@ -492,7 +501,7 @@ mutants-a1-inject-helpers:
 # reset_reaps_prior_sessions_live_monitor tests in tests/ws_router.rs.
 mutants-server-run-task:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j4 --cap-lints=true \
         --file "crates/omega-server/src/router.rs" \
         --re 'handle_user_message|spawn_run_task|teardown_prior_run'
 
@@ -501,7 +510,7 @@ mutants-server-run-task:
 # Runs on the wasm target (the only one the leptos crate's tests build for).
 mutants-session-at-path:
     mkdir -p {{mutants-tmp}}
-    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 \
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j4 \
         --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
         --file "src/picker.rs" --re 'session_at_path'
 
@@ -512,7 +521,7 @@ mutants-session-at-path:
 # Runs on the wasm target (the only one the leptos crate's tests build for).
 mutants-render-block:
     mkdir -p {{mutants-tmp}}
-    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 \
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j4 \
         --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
         --file "src/context_modal.rs" --re 'render_block'
 
@@ -526,7 +535,7 @@ mutants-render-block:
 # crate's tests build for).
 mutants-ws-protocol:
     mkdir -p {{mutants-tmp}}
-    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 \
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j4 \
         --cargo-arg=--target=wasm32-unknown-unknown --cap-lints=true \
         --file "src/protocol.rs"
 
@@ -535,7 +544,7 @@ mutants-ws-protocol:
 # canonical-order iteration, and the shell-aware fetch_url schema branch.
 mutants-schemas:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/schemas.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true --file "crates/omega-tools/src/schemas.rs"
 
 # Run cargo-mutants targeted at the fetch_url tool implementation.
 # Covers the shell-aware branch (driven by shell-tool presence in
@@ -544,7 +553,7 @@ mutants-schemas:
 # Requires network access (real HTTP fetches to example.com).
 mutants-fetch-url:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/tools/fetch_url.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true --file "crates/omega-tools/src/tools/fetch_url.rs"
 
 # Run cargo-mutants targeted at the system_prompt.rs block assembly.
 # Covers file-tool-absent and shell-tool-absent branches (driven by
@@ -552,7 +561,7 @@ mutants-fetch-url:
 # reduced_toolset_addendum.
 mutants-system-prompt:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j4 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
 
 # Phase 1.2 — the three files most changed when REPL feature flags were
 # replaced with `SessionStartedEvent.tool_selection`:
@@ -572,20 +581,20 @@ mutants-tool-selection: mutants-feature-flags mutants-schemas mutants-system-pro
 # Covers the new over-cap rejection path added to execute_tool's python_repl arm.
 mutants-python-repl-timeout:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true --file "crates/omega-tools/src/lib.rs"
 
 # Phase 2.2.1 — full python_repl module sweep (includes repl.rs constant change).
 # Covers MAX_TIMEOUT_SECS constant and repl.execute() defence-in-depth clamp.
 mutants-python-repl-221:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/python_repl/repl.rs"
 
 # Phase 2.2.1 — system_prompt.rs: timeout constants + sh() / SyntaxWarning.
 # Alias for mutants-system-prompt scoped to the 2.2.1 additions.
 mutants-system-prompt-221:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j4 --cap-lints=true --file "crates/omega-agent/src/system_prompt.rs"
 
 # Nudging revamp — system_prompt.rs: monitor_addendum behavioral rules.
 # Scoped to monitor_addendum: verifies that mutations weakening the
@@ -593,7 +602,7 @@ mutants-system-prompt-221:
 # the monitor_addendum_contains_* tests.
 mutants-monitor-addendum:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-agent -j4 --cap-lints=true \
         --file "crates/omega-agent/src/system_prompt.rs" --re 'monitor_addendum'
 
 # Phase 2.3 — event_view.rs: python_repl arm in tool_call_preview.
@@ -611,7 +620,7 @@ mutants-python-repl-23:
 # tests provide coverage.
 mutants-monitor-roster-push:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j4 --cap-lints=true \
         --file "crates/omega-server/src/router.rs" --re 'is_monitor_event|roster_snapshot_msg'
 
 # Phase 3 (UI: roster badge + modal) — MonitorRoster serialisation in
@@ -623,7 +632,7 @@ mutants-monitor-roster-push:
 # This recipe is kept as documentation of the decision.
 mutants-monitor-ws-message:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-server -j4 --cap-lints=true \
         --file "crates/omega-server/src/ws_message.rs" --re 'MonitorRoster|monitor_roster'
 
 # Phase 5 — monitors_panel.rs: badge_label + running_count + total_fired.
@@ -632,7 +641,7 @@ mutants-monitor-ws-message:
 # Tests: wasm-bindgen-test unit tests in monitors_panel.rs + snapshot tests.
 mutants-monitors-panel:
     mkdir -p {{mutants-tmp}}
-    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j2 --cap-lints=true \
+    cd frontends/leptos && TMPDIR={{mutants-tmp}} cargo mutants -j4 --cap-lints=true \
         --file "src/monitors_panel.rs" \
         --no-default-features --features ssr
 
@@ -700,7 +709,7 @@ mutants-input-queue-router:
 # All mutations must be CAUGHT or UNVIABLE.
 mutants-u2-monitor-sink:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j2 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/monitors.rs" \
         --re 'push_stdout|push_stderr|enqueue_stopped|attach_sink|MonitorManager::sink'
 
@@ -801,11 +810,12 @@ mutants-ws-event-broadcaster:
 # All mutations must be CAUGHT or UNVIABLE — no survivors. Template:
 # mutants-system-prompt-guard (see AGENTS.md).
 #
-# Uses -j1: two parallel workers each build a full target copy under TMPDIR,
-# which can exceed available disk headroom on this machine (ENOSPC).
+# Runs at the standard -j4: this is a wide sweep (4 files), but with 1.8 TB
+# free the per-worker target copies no longer risk ENOSPC (the old -j1 pin
+# was a disk-headroom workaround that no longer applies on this machine).
 mutants-edit-tools:
     mkdir -p {{mutants-tmp}}
-    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j1 --cap-lints=true \
+    TMPDIR={{mutants-tmp}} cargo mutants -p omega-tools -j4 --cap-lints=true \
         --file "crates/omega-tools/src/tools/text_match.rs" \
         --file "crates/omega-tools/src/tools/edit_file.rs" \
         --file "crates/omega-tools/src/tools/multi_edit_file.rs" \
