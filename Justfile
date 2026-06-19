@@ -46,12 +46,37 @@ wasm-setup:
     cargo install --locked --version =0.2.121 wasm-bindgen-cli
     cargo install         --version =0.21.14 trunk
 
-# Clippy + cargo test + machete. Assumes dist/ is already built.
+# Clippy + tests + machete. Assumes dist/ is already built.
 # Note: no `cargo fmt --check` here — the pre-commit hook runs `cargo fmt`
 # (auto-fix) before the gate, so a check would always be redundant.
+#
+# Test runner: prefer `cargo nextest` when installed — it runs tests in one
+# global pool ACROSS all ~41 test binaries, where plain `cargo test` runs
+# binaries one at a time (parallel only within a binary). Measured ~1.7x
+# faster on a 4-core slice (≈13s → ≈7.7s; bigger on the full 16 cores), with
+# an identical 1089-test set passing (the workspace has no runnable doctests,
+# so nextest drops nothing). Cross-binary parallelism is safe here: every
+# server/mock test binds 127.0.0.1:0 (ephemeral ports).
+#
+# Reversible by design: set OMEGA_TEST_RUNNER to force a command (e.g.
+# `cargo test`), or just uninstall nextest — this falls back to `cargo test`
+# automatically. The e2e step (_rust-e2e-run) is deliberately NOT routed
+# through here; it stays on `cargo test --test-threads=1`.
 [private]
 _rust-checks:
-    cargo clippy --all-targets -- -D warnings && cargo test
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo clippy --all-targets -- -D warnings
+    runner="${OMEGA_TEST_RUNNER:-}"
+    if [ -z "$runner" ]; then
+        if command -v cargo-nextest >/dev/null 2>&1; then
+            runner="cargo nextest run"
+        else
+            runner="cargo test"
+        fi
+    fi
+    echo "rust-checks: test runner = ${runner}"
+    ${runner}
     cargo machete
 
 # Build mock server + run browser tests. Assumes dist/ is already built.
