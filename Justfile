@@ -64,7 +64,11 @@ _rust-e2e-run:
 gate:
     #!/usr/bin/env bash
     set -eo pipefail
-    mkdir -p test-output .omega/gate-logs
+    # `.omega/sessions` must exist before the BEFORE/AFTER pollution count below:
+    # on a fresh checkout it doesn't, so `ls .omega/sessions/` fails, and under
+    # `set -eo pipefail` that exit code aborts the whole gate before any build
+    # runs (silent: the error is hidden by `2>/dev/null`). Create it up front.
+    mkdir -p test-output .omega/gate-logs .omega/sessions
     TS=$(date -u +"%Y-%m-%dT%H-%M-%S")
     LOG_FILE=".omega/gate-logs/${TS}.log"
     # Keep test-output/gate-latest.log as a backwards-compat symlink so that
