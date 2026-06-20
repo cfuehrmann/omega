@@ -360,6 +360,77 @@ mutants-tools:
     {{mutants-prep}}
     {{mutants-mem-cap}} TMPDIR={{mutants-tmp}} cargo mutants -p omega-types -j1 --cap-lints=true --file "crates/omega-types/src/tools.rs"
 
+# Find the optimal -j (cross-mutant parallelism) for a sweep BY MEASURING it,
+# instead of guessing. Times the SAME mutant set at each -j level and reports a
+# winner. The optimum is regime-dependent (see docs/performance-improvements.html
+# #mutants): build-bound crates → -j1 (copy mode duplicates the CPU-heavy build
+# per worker); latency-bound crates whose tests WAIT on I/O — subprocesses,
+# sockets, monitors, timeouts (omega-tools, and any browser/e2e regime) → ~ -j2
+# fills the idle cores, but the peak is shallow and regresses by -j4.
+#
+#   just mutants-bench omega-tools crates/omega-tools/src/format.rs
+#   just mutants-bench omega-agent crates/omega-agent/src/conv_state.rs "1 2 4 8"
+#
+# Big file? Restrict to a deterministic subset for speed via the 4th arg
+# (shard COUNT → runs shard 1/COUNT, the SAME ~1/COUNT mutants at every -j, so
+# the relative ranking is preserved):
+#   just mutants-bench omega-server crates/omega-server/src/ws_message.rs "1 2 4" 4
+#
+# Close call? Pass a 5th arg reps=N to run each level N times and keep the MIN
+# wall (min is least polluted by background interference):
+#   just mutants-bench omega-types crates/omega-types/src/tools.rs "1 2" "" 3
+#
+# Wall-clock is the decision metric. The "N mutants tested in Ts" summary is the
+# completion signal, so a sweep with surviving (MISSED) mutants still benchmarks
+# fine; a level that ERRORS (e.g. ENOSPC) is reported and excluded from the winner.
+# A win is only declared when the fastest level beats -j1 by >10% (else noise → -j1).
+#
+# Measure optimal -j for a sweep: `just mutants-bench PKG FILE [LEVELS] [SHARD] [REPS]`
+mutants-bench pkg file levels="1 2 4" shard="" reps="1":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    shard_arg=""
+    [ -n "{{shard}}" ] && shard_arg="--shard 1/{{shard}}"
+    echo "mutants-bench: {{file}}  (pkg {{pkg}})  levels=[{{levels}}]  reps={{reps}}  ${shard_arg:-full}"
+    echo
+    best_j=""; best_t=""; j1_t=""
+    for J in {{levels}}; do
+        jt=""; summary=""; err=""
+        for r in $(seq 1 {{reps}}); do
+            {{mutants-prep}}
+            log="/tmp/mutants-bench-{{pkg}}-j$J-r$r.log"
+            start=$(date +%s.%N)
+            {{mutants-mem-cap}} TMPDIR={{mutants-tmp}} cargo mutants -p {{pkg}} -j"$J" $shard_arg \
+                --cap-lints=true --file "{{file}}" >"$log" 2>&1 || true
+            end=$(date +%s.%N)
+            t=$(awk "BEGIN{printf \"%.1f\", $end-$start}")
+            if grep -q "mutants tested" "$log"; then
+                summary=$(grep 'mutants tested' "$log" | tail -1)
+                # keep the MIN wall across reps (least polluted by interference)
+                if [ -z "$jt" ] || awk "BEGIN{exit !($t < $jt)}"; then jt=$t; fi
+            else
+                err=$(grep -iE "error|no space|failed|interrupted" "$log" | tail -1)
+            fi
+        done
+        if [ -n "$jt" ]; then
+            printf "  -j%-2s  %7ss   %s\n" "$J" "$jt" "$summary"
+            [ "$J" = "1" ] && j1_t=$jt
+            if [ -z "$best_t" ] || awk "BEGIN{exit !($jt < $best_t)}"; then best_t=$jt; best_j=$J; fi
+        else
+            printf "  -j%-2s  ERRORED — %s  (see /tmp/mutants-bench-{{pkg}}-j%s-r*.log)\n" "$J" "${err:-unknown}" "$J"
+        fi
+    done
+    echo
+    if [ -z "$best_j" ]; then
+        echo "No level completed — inspect /tmp/mutants-bench-{{pkg}}-j*.log"
+    elif [ -n "$j1_t" ] && [ "$best_j" != "1" ] && awk "BEGIN{exit !($best_t < 0.90*$j1_t)}"; then
+        printf "Winner: -j%s (%ss) beats -j1 (%ss) by >10%% — a real win. Set -j%s for {{file}}.\n" "$best_j" "$best_t" "$j1_t" "$best_j"
+    elif [ -n "$j1_t" ]; then
+        printf "Keep -j1: fastest was -j%s (%ss), within ~10%% of -j1 (%ss) = noise. Re-run with higher reps= to confirm a close call.\n" "$best_j" "$best_t" "$j1_t"
+    else
+        printf "Fastest: -j%s (%ss) (no -j1 baseline in LEVELS). Set -j%s for {{file}}.\n" "$best_j" "$best_t" "$best_j"
+    fi
+
 # Run cargo-mutants targeted at the Phase 0 context projection logic.
 # Mutates agent.rs (project_messages, monitor injection methods, and the
 # XML-wrapper formatters format_monitor_lines / format_monitor_stopped that

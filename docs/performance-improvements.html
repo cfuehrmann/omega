@@ -345,7 +345,10 @@ mutation testing today (its tests are <code>#[ignore = "browser"]</code> and
   any browser/e2e regime) → a <em>modest</em> <code>-j2</code> fills the idle cores for ≈20%, but
   the optimum is shallow and regresses by <code>-j4</code>. Both earlier guesses — &ldquo;RAM is the
   binding constraint&rdquo; and &ldquo;a mutant saturates all cores&rdquo; — were wrong; the bench
-  refutes both.
+  refutes both. And the regimes are not cleanly guessable in advance (a tiny crate's cheap build
+  lets <code>-j2</code> pay off too) — so <strong>don't classify, measure</strong>:
+  <code>just mutants-bench PKG FILE</code> times the same mutant set at each <code>-j</code> and
+  reports the winner (declaring one only when it beats <code>-j1</code> by &gt;10%).
 </div>
 
 <h3 id="mutants-oom">OOM safety: containing runaway mutants <span class="tag done">SHIPPED</span></h3>
