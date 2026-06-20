@@ -60,8 +60,9 @@ wasm-setup:
 #
 # Reversible by design: set OMEGA_TEST_RUNNER to force a command (e.g.
 # `cargo test`), or just uninstall nextest — this falls back to `cargo test`
-# automatically. The e2e step (_rust-e2e-run) is deliberately NOT routed
-# through here; it stays on `cargo test --test-threads=1`.
+# automatically. The e2e step (_rust-e2e-run) has its OWN nextest wiring
+# (separate concurrency knob) rather than sharing this one, because browser
+# tests need a bounded -j8, not the default all-cores pool.
 [private]
 _rust-checks:
     #!/usr/bin/env bash
@@ -80,11 +81,30 @@ _rust-checks:
     cargo machete
 
 # Build mock server + run browser tests. Assumes dist/ is already built.
+#
+# Parallel e2e: every test is fully isolated (ephemeral 127.0.0.1:0 ports,
+# TempDir sessions root, own mock-server subprocess, AND its own Chromium
+# --user-data-dir), so the suite is parallel-safe. With nextest we run it
+# in parallel across all 11 test binaries: ~3x faster than serial on a
+# 16-core box (50s -> 16s). -j8 is the knee of the curve -- higher just
+# saturates cores for <1s gain and raises flake risk on a loaded machine.
+# Override with OMEGA_E2E_TEST_THREADS. Without nextest, fall back to the
+# original serial `cargo test` (also correct, just slow).
 [private]
 _rust-e2e-run:
-    cargo build --release -p omega-mock-server
-    cargo build --release -p omega-server
-    cargo test -p omega-e2e --tests -- --ignored --test-threads=1
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # One invocation for both release binaries so cargo resolves features
+    # once (separate `-p` builds re-unify features and rebuild twice).
+    cargo build --release -p omega-mock-server -p omega-server
+    threads="${OMEGA_E2E_TEST_THREADS:-8}"
+    if command -v cargo-nextest >/dev/null 2>&1; then
+        echo "rust-e2e: cargo nextest run (--test-threads ${threads})"
+        cargo nextest run -p omega-e2e --run-ignored ignored-only --test-threads "${threads}"
+    else
+        echo "rust-e2e: cargo test serial fallback (install cargo-nextest for parallel)"
+        cargo test -p omega-e2e --tests -- --ignored --test-threads=1
+    fi
 
 # -----------------------------------------------------------------------
 # Top-level test pipeline

@@ -98,6 +98,15 @@ pub struct TestHarness {
     /// Browser handle held until drop so the underlying Chromium
     /// process is owned for the test duration.
     _browser: Browser,
+    /// Per-browser Chromium `--user-data-dir` (a unique `TempDir`),
+    /// held alive for the test's lifetime and removed on drop.
+    /// chromiumoxide otherwise points every instance at the SHARED
+    /// `$TMPDIR/chromiumoxide-runner` profile, whose `SingletonLock`
+    /// makes a second concurrent `Browser::launch` abort. A unique
+    /// profile per harness is what makes the suite parallel-safe.
+    /// Declared last so it drops after `_browser` (Chromium first,
+    /// then its profile dir).
+    _profile_dir: TempDir,
 }
 
 /// JS init script installed via `Page::evaluate_on_new_document` in
@@ -157,7 +166,7 @@ impl TestHarness {
 
         wait_for_health(&http, &base_url).await?;
 
-        let (browser, handler_task) = launch_browser().await?;
+        let (browser, handler_task, profile_dir) = launch_browser().await?;
 
         // Open a blank page first so we can install the WS spy init
         // script before the real page's JS executes.
@@ -179,6 +188,7 @@ impl TestHarness {
             server_child: Some(server_child),
             handler_task: Some(handler_task),
             _browser: browser,
+            _profile_dir: profile_dir,
         };
 
         harness
@@ -206,7 +216,7 @@ impl TestHarness {
 
         wait_for_health(&http, &base_url).await?;
 
-        let (browser, handler_task) = launch_browser().await?;
+        let (browser, handler_task, profile_dir) = launch_browser().await?;
         let page = browser
             .new_page(format!("{base_url}/"))
             .await
@@ -222,6 +232,7 @@ impl TestHarness {
             server_child: Some(server_child),
             handler_task: Some(handler_task),
             _browser: browser,
+            _profile_dir: profile_dir,
         };
 
         // Wait for the WebSocket to actually connect — every spec
@@ -875,11 +886,20 @@ async fn wait_for_health(http: &reqwest::Client, base_url: &str) -> Result<()> {
     }
 }
 
-async fn launch_browser() -> Result<(Browser, JoinHandle<()>)> {
+async fn launch_browser() -> Result<(Browser, JoinHandle<()>, TempDir)> {
     // BrowserConfig::builder defaults to headless=true on 0.9.x.
+    //
+    // Give each browser its OWN user-data-dir. Without this,
+    // chromiumoxide points every instance at the shared
+    // `$TMPDIR/chromiumoxide-runner` profile; a second concurrent
+    // launch then aborts with "Failed to create a ProcessSingleton"
+    // because Chromium's `SingletonLock` already exists. The unique
+    // TempDir is returned to the caller so it outlives the browser.
+    let profile_dir = TempDir::new().context("create chromium user-data-dir")?;
     let config = BrowserConfig::builder()
         .arg("--no-sandbox")
         .arg("--disable-dev-shm-usage")
+        .user_data_dir(profile_dir.path())
         .build()
         .map_err(|e| anyhow!("BrowserConfig::build: {e}"))?;
     let _ = Arc::new(HandlerConfig::default()); // keep import live
@@ -893,7 +913,7 @@ async fn launch_browser() -> Result<(Browser, JoinHandle<()>)> {
             }
         }
     });
-    Ok((browser, task))
+    Ok((browser, task, profile_dir))
 }
 
 /// Quote a Rust `&str` as a JS-safe string literal. Useful when

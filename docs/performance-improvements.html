@@ -129,8 +129,8 @@ details > .details-body { padding:1rem 1.2rem; }
   <thead><tr><th>Improvement</th><th>Area</th><th>Est. saving</th><th>Risk</th><th>Status</th></tr></thead>
   <tbody>
     <tr><td>nextest for <code>_rust-checks</code></td><td>gate</td><td class="num">~5.6 s</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
-    <tr><td>Merge two e2e <code>--release</code> builds</td><td>e2e</td><td class="num">~6 s</td><td>low</td><td><span class="tag todo">TODO</span></td></tr>
-    <tr><td>Parallelize e2e browser tests</td><td>e2e</td><td class="num">~30–37 s</td><td>high</td><td><span class="tag todo">TODO</span> <span class="tag risk">needs audit</span></td></tr>
+    <tr><td>Merge two e2e <code>--release</code> builds</td><td>e2e</td><td class="num">~6 s</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Parallelize e2e browser tests (nextest <code>-j8</code>)</td><td>e2e</td><td class="num">~36 s (3.1×)</td><td>high</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td><code>-j4</code> copy-mode sweeps (was <code>-j2</code>/<code>-j1</code>)</td><td>mutants</td><td class="num">~2–4×</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Scratch-dir hygiene (<code>mutants-prep</code>)</td><td>mutants</td><td class="num">disk</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Convert wide in-place sweeps to copy-mode <code>-j4</code></td><td>mutants</td><td class="num">~2–4×</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
@@ -175,7 +175,7 @@ both heat and the gate regression — see the <a href="#thermal">thermal appendi
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <h2 id="e2e">E2E test speedups</h2>
 
-<h3 id="e2e-builds">1. Merge the two release builds <span class="tag todo">TODO</span> <span class="tag done">low risk</span></h3>
+<h3 id="e2e-builds">1. Merge the two release builds <span class="tag done">DONE</span></h3>
 
 <p>The e2e recipe builds the mock server and the real server in <em>two separate</em>
 <code>cargo build --release</code> invocations. On a warm run each still takes ~6.2 s and
@@ -199,12 +199,13 @@ cargo build --release -p omega-server
 cargo build --release -p omega-mock-server -p omega-server</code></pre>
 
 <div class="callout rec">
-  <div class="callout-title">Recommendation</div>
-  Low-risk, ~6 s back on every gate run. Verify the two binaries still land at the same
-  target paths the e2e harness expects, then ship. No test-behaviour change.
+  <div class="callout-title">Done</div>
+  Shipped — <code>_rust-e2e-run</code> now builds both binaries in one
+  <code>cargo build --release -p omega-mock-server -p omega-server</code>. Features
+  unify once; the duplicate rebuild is gone. No test-behaviour change.
 </div>
 
-<h3 id="e2e-parallel">2. Parallelize the browser tests <span class="tag todo">TODO</span> <span class="tag risk">needs hermeticity audit</span></h3>
+<h3 id="e2e-parallel">2. Parallelize the browser tests <span class="tag done">DONE</span></h3>
 
 <p>The ~52.5 s test phase is <strong>~55 chromium-driven tests across 11 binaries run
 strictly serially</strong> (<code>--test-threads=1</code>):</p>
@@ -227,27 +228,26 @@ overlaps with another. Running even 3–4 at a time could cut the phase to ~15�
 the single biggest win available in the whole gate.</p>
 
 <div class="callout warn">
-  <div class="callout-title">Why it is serial today — and what must be proven first</div>
-  <code>--test-threads=1</code> was a deliberate choice. Before lifting it, audit each
-  test for cross-test interference:
-  <ul style="margin-top:0.5rem; margin-bottom:0;">
-    <li><strong>Ports.</strong> Every test must bind its server on an ephemeral port
-      (<code>127.0.0.1:0</code> / <code>pick_free_port()</code>) — no shared fixed-port
-      mock server. (The startup test already uses <code>pick_free_port()</code>, a good sign.)</li>
-    <li><strong>Chromium profile.</strong> Each test needs its own
-      <code>--user-data-dir</code>; a shared profile dir serializes or corrupts.</li>
-    <li><strong>Filesystem / sessions.</strong> No shared fixed paths under
-      <code>.omega/</code>; use per-test temp dirs.</li>
-    <li><strong>Resource ceiling.</strong> N parallel chromium instances cost RAM; cap
-      the degree (e.g. <code>--test-threads=4</code>) rather than going unbounded.</li>
-  </ul>
+  <div class="callout-title">Audit result — hermetic except one shared resource</div>
+  Every test already isolated its ports (<code>127.0.0.1:0</code> ×2), sessions root
+  (<code>TempDir</code>), and mock-server subprocess. The single blocker was the
+  <strong>Chromium profile</strong> — exactly the bullet flagged above. chromiumoxide&nbsp;0.9
+  points every browser at the shared <code>$TMPDIR/chromiumoxide-runner</code> profile, so a
+  second concurrent <code>Browser::launch</code> aborts on the profile
+  <code>SingletonLock</code> ("Failed to create a ProcessSingleton … profile corruption").
+  Fix: a unique <code>TempDir</code> per harness via
+  <code>BrowserConfig::builder().user_data_dir(…)</code>, held alive for the test and
+  dropped after the browser.
 </div>
 
 <div class="callout rec">
-  <div class="callout-title">Recommendation</div>
-  Highest payoff, highest risk. Do it as a focused task <em>after</em> the audit: flip to
-  a bounded <code>--test-threads=N</code>, run the suite 5–10× to prove non-flakiness
-  (per the flaky-test rule), and keep the degree conservative. Could roughly halve the gate.
+  <div class="callout-title">Done — 3.1× on the e2e phase</div>
+  <code>_rust-e2e-run</code> now runs via <code>cargo nextest run --test-threads 8</code>
+  (the knee of the curve; <code>-j12/16</code> buy &lt;1 s more). Measured on the 16-core
+  host: serial 50.9 s → <strong>16.3 s</strong>; <strong>full gate ~76 s → ~38 s</strong>.
+  Stable across 8+ parallel runs (0 flakes); the <code>pick_free_port</code> TOCTOU race
+  never manifested. Reversible: <code>OMEGA_E2E_TEST_THREADS</code> overrides the degree,
+  and without nextest the recipe falls back to serial <code>cargo test</code>.
 </div>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
