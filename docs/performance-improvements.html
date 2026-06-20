@@ -73,6 +73,7 @@ tr:nth-child(even) td { background:#fafbfc; }
 .bar { display:flex; height:26px; border-radius:5px; overflow:hidden; margin:0.8rem 0 0.3rem; border:1px solid var(--border); font-size:0.7rem; }
 .bar > span { display:flex; align-items:center; justify-content:center; color:#fff; white-space:nowrap; overflow:hidden; }
 .bar-legend { font-size:0.75rem; color:var(--muted); margin-bottom:1rem; }
+.smallnote { font-size:0.83rem; color:var(--muted); }
 .num { font-variant-numeric:tabular-nums; text-align:right; }
 details { margin:0.8rem 0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
 details > summary { cursor:pointer; padding:0.6rem 1rem; font-size:0.87rem; font-weight:600;
@@ -99,7 +100,7 @@ details > .details-body { padding:1rem 1.2rem; }
     <li><a href="#mutants" class="toc-h1">Mutation-test improvements</a></li>
     <li><a href="#mutants-done" class="toc-sub">Done: revert to -j1 + mem-cap</a></li>
     <li><a href="#mutants-oom" class="toc-sub">OOM safety: runaway mutants</a></li>
-    <li><a href="#mutants-sweepable" class="toc-sub">TODO: pathological-file sweeps</a></li>
+    <li><a href="#mutants-sweepable" class="toc-sub">Pathological-file sweeps complete</a></li>
     <li><a href="#mutants-inplace" class="toc-sub">TODO: in-place everywhere</a></li>
     <li class="toc-divider"></li>
     <li><a href="#cpu" class="toc-h1">Appendix: the 358H puzzle</a></li>
@@ -137,7 +138,7 @@ details > .details-body { padding:1rem 1.2rem; }
     <tr><td>Memory-cap sweeps (<code>mutants-mem-cap</code> cgroup)</td><td>mutants</td><td class="num">no more OOM</td><td>med</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Scratch-dir hygiene (<code>mutants-prep</code>)</td><td>mutants</td><td class="num">disk</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Convert copy-mode sweeps to <code>--in-place</code> everywhere</td><td>mutants</td><td class="num">~15–20%</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
-    <tr><td>Make pathological-file sweeps completable (<code>output_cleaner</code>)</td><td>mutants</td><td class="num">correctness</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
+    <tr><td>Pathological-file sweeps complete &amp; report the runaway (<code>OOMPolicy=continue</code>)</td><td>mutants</td><td class="num">correctness</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Install <code>thermald</code> (stop reactive Tjmax throttling)</td><td>host</td><td class="num">~8 s + cooler</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
   </tbody>
 </table>
@@ -316,43 +317,43 @@ triggered a <em>global</em> OOM that took down the whole terminal scope (Omega i
 wall-clock timeout never fired — memory exhaustion won the race.</p>
 
 <p>Fix: every sweep now runs inside a memory-capped systemd user scope
-(<code>MemoryMax=20G, MemorySwapMax=0</code>) — well above any legitimate <code>-j1</code> build,
-far below the ~30 GB global-OOM threshold, and with no swap so a runaway dies fast instead of
-thrashing. Validated against the exact crash scenario: the session now <strong>survives</strong>
-(memory freed back to 27 GB) where it previously died.</p>
+(<code>MemoryMax=20G, MemorySwapMax=0, OOMPolicy=continue</code>). The cap is well above any
+legitimate <code>-j1</code> build, far below the ~30 GB global-OOM threshold, and — being
+cgroup-bounded — means the global system <em>can never</em> OOM no matter how wild the mutant. No swap
+so the runaway dies in seconds instead of thrashing. The <code>OOMPolicy=continue</code> flag is what
+makes the sweep not just <em>survive</em> but <em>complete</em> — see below. Validated against the exact
+crash scenario: the session now survives <strong>and the runaway mutants are recorded as caught</strong>
+(memory steady at 27 GB) where it previously died.</p>
 
-<h3 id="mutants-sweepable">Make pathological-file sweeps completable <span class="tag todo">TODO</span></h3>
+<h3 id="mutants-sweepable">Pathological-file sweeps complete cleanly <span class="tag done">SHIPPED</span></h3>
 
-<p>The memory cap is a <em>session-survival</em> net, not a way to <em>complete</em> a sweep of a
-pathological file. Because a systemd scope sets <code>memory.oom.group=1</code>, hitting the cap kills
-the whole cgroup (cargo-mutants included), so the <code>output_cleaner.rs</code> sweep still aborts with
-<code>interrupted</code> rather than recording the runaway mutant as caught. Until this is fixed, that
-one file cannot be swept to a clean result. Options, roughly in order of preference:</p>
+<p>The first cut of the memory cap was only a <em>session-survival</em> net: the
+<code>output_cleaner.rs</code> sweep survived but aborted with <code>interrupted</code> instead of
+recording the runaway mutant. The assumed cause was a group kill — but the kernel log proved otherwise.
+<code>memory.oom.group</code> is already <strong>0</strong> on a transient user scope, so the kernel
+kills <em>only</em> the runaway child. The real culprit was systemd's <strong>scope-failure policy</strong>:
+when any process in a scope is OOM-killed, systemd marks the scope <code>Failed</code> and SIGTERMs the
+survivors — taking cargo-mutants down with it.</p>
 
-<ol>
-  <li><strong>Per-process kill instead of group kill (<code>memory.oom.group=0</code>).</strong> If only
-    the runaway <em>child</em> is OOM-killed, cargo-mutants survives and records the mutant as
-    caught/timeout. Cleanest outcome — but needs verifying systemd exposes this for a transient scope
-    (it defaults the group kill on); may require a raw cgroup write rather than a <code>-p</code> property.</li>
-  <li><strong>Per-mutant memory limit rather than a whole-sweep scope.</strong> Wrap the <em>test</em>
-    command so each test process runs under its own small <code>ulimit -v</code> / mini-cgroup. The
-    runaway then fails its own allocation (or is killed locally) without touching cargo-mutants.
-    cargo-mutants has no native per-test memory limit, so this needs a wrapper script.</li>
-  <li><strong>Tight <code>--timeout</code>.</strong> Force a wall-clock SIGKILL before the runaway can
-    allocate 20 GB. Simple, but the allocating loop reaches the cap in <em>seconds</em>, so the timeout
-    must be aggressive — risking false timeouts on slow-but-legitimate mutants.</li>
-  <li><strong>Exclude the specific loop mutants</strong> (<code>--exclude-re</code> or
-    <code>#[mutants::skip]</code> on the <code>*=</code>/<code>-=</code> index arithmetic). Fastest to do,
-    but it <em>hides</em> a real coverage question rather than answering it.</li>
-</ol>
+<p>The one-flag fix is <code>-p OOMPolicy=continue</code>: systemd then just <em>logs</em> the OOM kill
+and leaves the scope running. cargo-mutants keeps going, sees its test process killed by signal, and
+records the mutant as <strong>caught</strong> — naming it in the normal output, exactly what an operator
+(or the agent) needs to see. Both constraints are met: <strong>no perf cost</strong> (the cap only ever
+fires on a genuine runaway, which the OOM kills in seconds) and <strong>full visibility</strong> (the
+culprit mutant is named with its outcome).</p>
 
-<div class="callout rec">
-  <div class="callout-title">Recommended direction</div>
-  Combine (1) or (2) with a <strong>fast unit test</strong> that feeds <code>clean_output</code> a tiny
-  CRLF input and asserts the output length is bounded. Under the <code>i *= 1</code> mutant that test
-  hangs/allocates; with a per-process kill it dies in milliseconds and is recorded as <em>caught</em> —
-  closing the coverage gap properly instead of skipping it.
-</div>
+<p>Validated end-to-end: the two <code>output_cleaner.rs</code> runaway mutants
+(<code>+= → *=</code> at <code>:72</code> and <code>:75</code>) now report
+<code>2 mutants tested in 36s: 2 caught</code>, cargo-mutants exits 0, and the session's memory never
+moves off 27 GB.</p>
+
+<p class="smallnote">Alternatives considered and rejected: a per-test <code>ulimit -v</code> wrapper
+(more moving parts, and virtual-memory limits misfire on threaded Rust binaries); a tight
+<code>--timeout</code> (the allocating loop hits the cap in seconds, so the timeout would have to be
+aggressive enough to false-fire on slow legitimate mutants); and <code>--exclude-re</code> /
+<code>#[mutants::skip]</code> on the loop mutants (hides a real coverage question instead of answering
+it). <code>OOMPolicy=continue</code> dominates all three: zero overhead, no false positives, and the
+runaway is still exercised and reported.</p>
 
 <h3 id="mutants-inplace">Convert copy-mode sweeps to <code>--in-place</code> everywhere <span class="tag todo">TODO</span></h3>
 

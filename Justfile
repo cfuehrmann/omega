@@ -28,17 +28,26 @@ mutants-prep := "rm -rf " + mutants-tmp + " && mkdir -p " + mutants-tmp
 # and an allocating loop never terminates) and balloon a test process to tens
 # of GB. Unconstrained, that triggers the GLOBAL OOM killer, which takes down
 # the whole terminal/session — exactly how the 2026-06-19 session died. Running
-# every sweep inside a transient systemd scope confines the blast radius: the
-# cgroup hits MemoryMax and is OOM-killed locally, so the SESSION survives
-# (validated against the 2026-06-19 crash scenario). Caveat: a systemd scope
-# sets memory.oom.group=1, so the kill takes cargo-mutants down with the
-# runaway and the sweep aborts with `interrupted` rather than recording the
-# mutant as caught — i.e. this is a session-survival net, not a way to complete
-# a sweep of a pathological file. MemorySwapMax=0 kills the runaway promptly
-# instead of letting it thrash swap. 20 GB is far above any legitimate -j1
-# build (a few GB) yet well below the ~30 GB global-OOM cliff.
+# every sweep inside a transient systemd scope confines the blast radius. Three
+# properties make it work cleanly (all verified empirically, 2026-06-20):
+#   MemoryMax=20G   — cgroup hard cap; far above any legitimate -j1 build (a
+#                     few GB), well below the ~30 GB global-OOM cliff. The
+#                     runaway hits this and the KERNEL OOM-kills just that one
+#                     process (memory.oom.group is 0 by default, so siblings
+#                     survive). Because the cap is cgroup-bounded, the global
+#                     system never OOMs no matter how wild the mutant.
+#   MemorySwapMax=0 — no swap, so the runaway dies in seconds instead of
+#                     thrashing tens of GB of swap (what made the crash slow).
+#   OOMPolicy=continue — THE key flag. By default systemd marks a scope
+#                     `Failed` and SIGTERMs the survivors when any process is
+#                     OOM-killed; that tears down cargo-mutants too and the
+#                     sweep aborts with `interrupted`. `continue` tells systemd
+#                     to just log it, so cargo-mutants keeps running, observes
+#                     the test process killed by signal, and records the mutant
+#                     as CAUGHT — naming it in the normal output. The sweep
+#                     completes; no perf cost on non-runaway mutants.
 # The trailing `env` lets each recipe carry its inline `TMPDIR=…` assignment.
-mutants-mem-cap := "systemd-run --user --scope -p MemoryMax=20G -p MemorySwapMax=0 --quiet env"
+mutants-mem-cap := "systemd-run --user --scope -p MemoryMax=20G -p MemorySwapMax=0 -p OOMPolicy=continue --quiet env"
 
 # -----------------------------------------------------------------------
 # Private helpers
