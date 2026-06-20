@@ -6,6 +6,17 @@
 # function-wide skip would lose coverage of legitimate mutants) are
 # excluded here with a regex matching the mutant description.
 
+# Don't copy gitignored paths into per-worker build dirs. Without this,
+# cargo-mutants copies the 4 GB nested `frontends/leptos/target` (and
+# `.omega/`, `mutants.out/`, `test-output/`) into EVERY copy-mode worker's
+# scratch tree. On a tmpfs TMPDIR that exhausts RAM/space at -j>=4
+# ("No space left on device") and inflates copy cost at every -j. The
+# excluded paths are all build output or logs — never build inputs (the
+# workspace `target/` is already skipped by copy_target=false; omega-e2e,
+# the only consumer of the leptos `dist` bundle, is excluded from mutation
+# below). Measured: this is what makes copy-mode -j scaling viable.
+gitignore = true
+
 # omega-e2e: all tests are #[ignore = "browser"] (require live Chromium).
 # Mutations in the harness helpers are untestable without browser infrastructure.
 # Coverage is provided by the e2e sweeps run separately via `just e2e`.

@@ -134,10 +134,12 @@ details > .details-body { padding:1rem 1.2rem; }
     <tr><td>nextest for <code>_rust-checks</code></td><td>gate</td><td class="num">~5.6 s</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Merge two e2e <code>--release</code> builds</td><td>e2e</td><td class="num">~6 s</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Parallelize e2e browser tests (nextest <code>-j8</code>)</td><td>e2e</td><td class="num">~36 s (3.1×)</td><td>high</td><td><span class="tag done">DONE</span></td></tr>
-    <tr><td>Revert mutant sweeps <code>-j4 → -j1</code> (measured optimum)</td><td>mutants</td><td class="num">~1.6× faster</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Revert mutant sweeps <code>-j4 → -j1</code> (build-bound optimum)</td><td>mutants</td><td class="num">~1.6× faster</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Stop copying gitignored 4 GB Leptos target (<code>gitignore = true</code>)</td><td>mutants</td><td class="num">copy cost; unblocks <code>-j</code></td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Memory-cap sweeps (<code>mutants-mem-cap</code> cgroup)</td><td>mutants</td><td class="num">no more OOM</td><td>med</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Scratch-dir hygiene (<code>mutants-prep</code>)</td><td>mutants</td><td class="num">disk</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Convert copy-mode sweeps to <code>--in-place</code> everywhere</td><td>mutants</td><td class="num">~15–20%</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
+    <tr><td>Set latency-bound crate sweeps (omega-tools) to <code>-j2</code></td><td>mutants</td><td class="num">~20%</td><td>low</td><td><span class="tag todo">TODO</span></td></tr>
     <tr><td>Pathological-file sweeps complete &amp; report the runaway (<code>OOMPolicy=continue</code>)</td><td>mutants</td><td class="num">correctness</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Install <code>thermald</code> (stop reactive Tjmax throttling)</td><td>host</td><td class="num">~8 s + cooler</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
   </tbody>
@@ -279,13 +281,41 @@ measurement shows that theory was wrong: the bump was a <strong>1.6× pessimizat
   </tbody>
 </table>
 
-<p>The curve is flat-to-worse everywhere and <code>-j8</code> is up to <strong>2.4× slower</strong>.
-Correctness (caught / unviable, zero missed) was identical at every level. The cause:
-each mutant's own <code>cargo build</code> + test already saturates all 16 cores
-(<code>rustc</code> codegen and linking are internally parallel, and a GNU jobserver caps
-total build tasks at NCPUS), so layering cross-mutant concurrency on top only
-oversubscribes the scheduler — and in copy mode pays redundant per-worker rebuilds as well.
-Reflink copies make the scratch <em>tree</em> cheap; the bottleneck is CPU contention, not disk.</p>
+<p>The curve is flat-to-worse for these sweeps and <code>-j8</code> is up to <strong>2.4× slower</strong>.
+Correctness (caught / unviable, zero missed) was identical at every level.</p>
+
+<p><strong>Corrected mechanism (a first guess retracted).</strong> The original explanation —
+&ldquo;each mutant already saturates all 16 cores&rdquo; — is <em>wrong</em>. Direct measurement
+shows these sweeps run at only <strong>≈16% CPU</strong> (2.5 of 16 cores). They are
+<em>build-dominated</em>: the per-mutant cost is the incremental rebuild and (largely
+single-threaded) link of the test binary, followed by fast CPU-bound tests. Copy mode gives each
+worker its own <code>target/</code>, so cross-mutant concurrency does not overlap idle time — it
+<em>duplicates</em> the build per worker and oversubscribes the one genuinely CPU-heavy phase
+(codegen). That is why <code>-j1</code> wins <em>here</em>. It is a regime, not a universal law.</p>
+
+<p><strong>The opposite regime — latency-bound sweeps.</strong> When the per-mutant <em>test</em>
+phase waits on I/O (subprocesses, sockets, monitors, timeouts — and, in the extreme, a browser)
+cores sit idle and a second concurrent mutant can fill them. The <code>omega-tools</code> suite is
+exactly this: its tests run at <strong>≈12% CPU</strong> (2 of 16 cores), wall-time dominated by
+waiting. Sweeping <code>format.rs</code> (9 mutants) through it, with the giant-copy confound
+removed (see the infra note below):</p>
+
+<table>
+  <thead><tr><th>Sweep (latency-bound)</th><th class="num"><code>-j1</code></th><th class="num"><code>-j2</code></th><th class="num"><code>-j4</code></th><th class="num"><code>-j8</code></th></tr></thead>
+  <tbody>
+    <tr><td>omega-tools <code>format.rs</code> — wall</td><td class="num">65 s</td><td class="num"><strong>52 s</strong></td><td class="num">61 s</td><td class="num">99 s</td></tr>
+    <tr><td>cores busy (of 16)</td><td class="num">2.1</td><td class="num">4.4</td><td class="num">8.8</td><td class="num">12.1</td></tr>
+  </tbody>
+</table>
+
+<p>Here <code>-j2</code> is <strong>≈20% faster</strong> than <code>-j1</code> (reproduced across two
+runs) — the idle cores get filled, and cores-busy climbs with <code>-j</code>. But the optimum is
+<strong>shallow</strong>: <code>-j4</code> already regresses and <code>-j8</code> is far worse,
+because the per-mutant <em>build</em> is CPU-bound and copy mode duplicates it, so build contention
+overtakes the test-overlap win. Real browser e2e is more latency-bound still, but is excluded from
+mutation testing today (its tests are <code>#[ignore = "browser"]</code> and
+<code>crates/omega-e2e/**</code> is excluded in <code>.cargo/mutants.toml</code>), so the
+<code>omega-tools</code> suite is the closest measured analog.</p>
 
 <ul>
   <li><strong>All sweeps reverted to <code>-j1</code></strong> (the measured optimum),
@@ -296,14 +326,26 @@ Reflink copies make the scratch <em>tree</em> cheap; the bottleneck is CPU conte
   <li><strong>Scratch hygiene via <code>mutants-prep</code></strong> (unchanged, still valid):
     every copy-mode recipe runs <code>rm -rf … &amp;&amp; mkdir -p …</code> on the scratch dir
     <em>before</em> the sweep, bounding disk to one sweep's footprint without a failure-path gap.</li>
+  <li><strong><code>gitignore = true</code> in <code>.cargo/mutants.toml</code></strong>: stop copying
+    gitignored paths into each worker. Without it, copy mode duplicated the <strong>4 GB nested
+    <code>frontends/leptos/target</code></strong> (plus <code>.omega/</code>, <code>mutants.out/</code>)
+    into every worker — exhausting the 16 GB tmpfs <code>TMPDIR</code> at <code>-j4</code>
+    (<code>No space left on device</code>) and inflating copy cost at every <code>-j</code>. The
+    excluded paths are all build output or logs, never build inputs. This is what makes copy-mode
+    <code>-j</code> scaling viable at all.</li>
 </ul>
 
 <div class="callout">
-  <div class="callout-title">Principle codified</div>
-  <code>-j</code> for mutation testing is <strong>not</strong> scaled to core count or RAM
-  headroom — the Rust toolchain already parallelizes each mutant across all cores, so the
-  measured optimum is <code>-j1</code>. The earlier "RAM is the only binding constraint"
-  rule was a guess; the bench refutes it.
+  <div class="callout-title">Principle codified — the optimum is regime-dependent</div>
+  <code>-j</code> for mutation testing is <strong>not</strong> scaled to core count or RAM headroom.
+  The right <code>-j</code> depends on what dominates the per-mutant cost:
+  <strong>build-dominated / CPU-bound</strong> sweeps (most unit-test crates) → <code>-j1</code>,
+  because copy mode duplicates the CPU-heavy build per worker;
+  <strong>latency-bound</strong> sweeps whose tests wait on I/O (e.g. <code>omega-tools</code>, and
+  any browser/e2e regime) → a <em>modest</em> <code>-j2</code> fills the idle cores for ≈20%, but
+  the optimum is shallow and regresses by <code>-j4</code>. Both earlier guesses — &ldquo;RAM is the
+  binding constraint&rdquo; and &ldquo;a mutant saturates all cores&rdquo; — were wrong; the bench
+  refutes both.
 </div>
 
 <h3 id="mutants-oom">OOM safety: containing runaway mutants <span class="tag done">SHIPPED</span></h3>
