@@ -97,8 +97,8 @@ details > .details-body { padding:1rem 1.2rem; }
     <li><a href="#e2e-parallel" class="toc-sub">2. Parallelize the browser tests</a></li>
     <li class="toc-divider"></li>
     <li><a href="#mutants" class="toc-h1">Mutation-test improvements</a></li>
-    <li><a href="#mutants-done" class="toc-sub">Done: -j4 &amp; disk hygiene</a></li>
-    <li><a href="#mutants-todo" class="toc-sub">Pending: in-place → copy-mode</a></li>
+    <li><a href="#mutants-done" class="toc-sub">Done: revert to -j1 + mem-cap</a></li>
+    <li><a href="#mutants-oom" class="toc-sub">OOM safety: runaway mutants</a></li>
     <li class="toc-divider"></li>
     <li><a href="#cpu" class="toc-h1">Appendix: the 358H puzzle</a></li>
     <li><a href="#thermal" class="toc-sub">Thermal throttling &amp; thermald</a></li>
@@ -131,9 +131,9 @@ details > .details-body { padding:1rem 1.2rem; }
     <tr><td>nextest for <code>_rust-checks</code></td><td>gate</td><td class="num">~5.6 s</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Merge two e2e <code>--release</code> builds</td><td>e2e</td><td class="num">~6 s</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Parallelize e2e browser tests (nextest <code>-j8</code>)</td><td>e2e</td><td class="num">~36 s (3.1×)</td><td>high</td><td><span class="tag done">DONE</span></td></tr>
-    <tr><td><code>-j4</code> copy-mode sweeps (was <code>-j2</code>/<code>-j1</code>)</td><td>mutants</td><td class="num">~2–4×</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Revert mutant sweeps <code>-j4 → -j1</code> (measured optimum)</td><td>mutants</td><td class="num">~1.6× faster</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Memory-cap sweeps (<code>mutants-mem-cap</code> cgroup)</td><td>mutants</td><td class="num">no more OOM</td><td>med</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Scratch-dir hygiene (<code>mutants-prep</code>)</td><td>mutants</td><td class="num">disk</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
-    <tr><td>Convert wide in-place sweeps to copy-mode <code>-j4</code></td><td>mutants</td><td class="num">~2–4×</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
     <tr><td>Install <code>thermald</code> (stop reactive Tjmax throttling)</td><td>host</td><td class="num">~8 s + cooler</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
   </tbody>
 </table>
@@ -253,59 +253,78 @@ the single biggest win available in the whole gate.</p>
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <h2 id="mutants">Mutation-test improvements</h2>
 
-<p>Two distinct levers: how many mutants run <em>in parallel</em>, and how much
-<em>disk</em> the scratch trees consume. The old machine conflated them — it throttled
-parallelism to keep disk bounded. With 1.8 TB free, they are now decoupled.</p>
+<p>Two questions were on the table: how many mutants to run <em>in parallel</em>
+(<code>-j</code>), and how to stop a pathological mutant from taking down the machine.
+Both were settled by measurement on this 16-core / 30 GB box. The headline result
+reverses an earlier, unmeasured assumption: <strong>more parallelism does not help —
+<code>-j1</code> is optimal across the entire crate-weight spectrum.</strong></p>
 
-<h3 id="mutants-done">Done: <code>-j4</code> parallelism &amp; disk hygiene <span class="tag done">SHIPPED</span></h3>
+<h3 id="mutants-done">Done: revert to <code>-j1</code> + memory-cap safety <span class="tag done">SHIPPED</span></h3>
+
+<p>An earlier change (commit <code>3f93e65</code>) bumped copy-mode sweeps
+<code>-j2 → -j4</code> and lifted <code>mutants-edit-tools</code> from <code>-j1 → -j4</code>,
+on the theory that RAM (≈7 GB/worker) was the only binding constraint. Direct
+measurement shows that theory was wrong: the bump was a <strong>1.6× pessimization</strong>.</p>
+
+<table>
+  <thead><tr><th>Sweep</th><th class="num"><code>-j1</code></th><th class="num"><code>-j2</code></th><th class="num"><code>-j4</code></th><th class="num"><code>-j8</code></th></tr></thead>
+  <tbody>
+    <tr><td>omega-agent <code>conv_state.rs</code> (30 mutants, heavy)</td><td class="num">53 s</td><td class="num">69 s</td><td class="num">87 s</td><td class="num">126 s</td></tr>
+    <tr><td>omega-types <code>tools.rs</code> (18 mutants, lightest crate)</td><td class="num">13 s</td><td class="num">12 s</td><td class="num">14 s</td><td class="num">23 s</td></tr>
+  </tbody>
+</table>
+
+<p>The curve is flat-to-worse everywhere and <code>-j8</code> is up to <strong>2.4× slower</strong>.
+Correctness (caught / unviable, zero missed) was identical at every level. The cause:
+each mutant's own <code>cargo build</code> + test already saturates all 16 cores
+(<code>rustc</code> codegen and linking are internally parallel, and a GNU jobserver caps
+total build tasks at NCPUS), so layering cross-mutant concurrency on top only
+oversubscribes the scheduler — and in copy mode pays redundant per-worker rebuilds as well.
+Reflink copies make the scratch <em>tree</em> cheap; the bottleneck is CPU contention, not disk.</p>
 
 <ul>
-  <li><strong>Copy-mode sweeps bumped <code>-j2 → -j4</code></strong>, and the disk-pinned
-    <code>mutants-edit-tools</code> lifted from <code>-j1 → -j4</code>. The binding
-    constraint is now <strong>RAM (30 GB ≈ 7 GB/worker)</strong>, not disk or cores —
-    a GNU jobserver already caps total build tasks at NCPUS across workers, and
-    cargo-mutants' own guidance warns against scaling <code>-j</code> to core count.</li>
-  <li><strong>Scratch hygiene via <code>mutants-prep</code></strong>: every copy-mode
-    recipe now runs <code>rm -rf … &amp;&amp; mkdir -p …</code> on the scratch dir
-    <em>before</em> the sweep. This bounds disk to a single sweep's footprint and
-    cleans up leftovers from interrupted/failed runs — without a failure-path gap (a
-    trailing cleanup line would be skipped when a survivor makes the recipe exit non-zero).</li>
+  <li><strong>All sweeps reverted to <code>-j1</code></strong> (the measured optimum),
+    undoing the <code>3f93e65</code> bump.</li>
+  <li><strong>Every invocation wrapped in <code>{{mutants-mem-cap}}</code></strong> — a
+    <code>systemd-run --user --scope -p MemoryMax=20G -p MemorySwapMax=0</code> cgroup.
+    See the OOM section below.</li>
+  <li><strong>Scratch hygiene via <code>mutants-prep</code></strong> (unchanged, still valid):
+    every copy-mode recipe runs <code>rm -rf … &amp;&amp; mkdir -p …</code> on the scratch dir
+    <em>before</em> the sweep, bounding disk to one sweep's footprint without a failure-path gap.</li>
 </ul>
 
 <div class="callout">
   <div class="callout-title">Principle codified</div>
-  Parallelism is driven by RAM, never throttled to keep a disk number down. Disk is
-  bounded by cleanup, not by lowering <code>-j</code>. The two are independent knobs.
+  <code>-j</code> for mutation testing is <strong>not</strong> scaled to core count or RAM
+  headroom — the Rust toolchain already parallelizes each mutant across all cores, so the
+  measured optimum is <code>-j1</code>. The earlier "RAM is the only binding constraint"
+  rule was a guess; the bench refutes it.
 </div>
 
-<h3 id="mutants-todo">Pending: convert wide in-place sweeps to copy-mode <span class="tag todo">TODO</span></h3>
+<h3 id="mutants-oom">OOM safety: containing runaway mutants <span class="tag done">SHIPPED</span></h3>
 
-<p>~17 sweeps still use <code>--in-place</code>, which is inherently <strong>sequential</strong>
-(one shared source tree, cannot parallelize). They were chosen only to dodge the
-~6 GB target-tree copy — a disk worry that is now both abundant and self-cleaning.
-The <em>wide</em> ones (many mutants) should become copy-mode <code>-j4</code> to gain
-parallelism; the <em>narrow</em> <code>--re</code>-scoped agent.rs sweeps (often a handful
-or zero mutants) should stay in-place — copying a 6 GB tree ×4 for 0–3 mutants is pure waste.</p>
+<p>On 2026-06-19 an Omega session was <strong>killed mid-sweep by the kernel OOM killer</strong>.
+A cargo-mutants mutant of <code>output_cleaner.rs</code> — <code>i += 1</code> → <code>i *= 1</code>
+in a hand-written byte-index loop — pinned the loop index at zero, so it pushed bytes into an
+in-memory <code>Vec</code> forever. The <code>process_tools</code> integration test feeds 100–250 KB
+through that function, so the runaway fired instantly, ballooned to <strong>~22 GB RSS</strong>, and
+triggered a <em>global</em> OOM that took down the whole terminal scope (Omega included). cargo-mutants'
+wall-clock timeout never fired — memory exhaustion won the race.</p>
 
-<table>
-  <thead><tr><th>Recipe</th><th class="num">Mutants</th><th>Action</th></tr></thead>
-  <tbody>
-    <tr><td>mutants-conv-state</td><td class="num">30</td><td>→ copy-mode <code>-j4</code></td></tr>
-    <tr><td>mutants-u3-controls</td><td class="num">23</td><td>→ copy-mode <code>-j4</code></td></tr>
-    <tr><td>mutants-input-queue</td><td class="num">17</td><td>→ copy-mode <code>-j4</code></td></tr>
-    <tr><td>mutants-u3-turn-state</td><td class="num">17</td><td>→ copy-mode <code>-j4</code></td></tr>
-    <tr><td>mutants-compose-editor</td><td class="num">17</td><td>→ copy-mode <code>-j4</code></td></tr>
-    <tr><td>mutants-retry</td><td class="num">13</td><td>→ copy-mode <code>-j4</code></td></tr>
-    <tr><td>mutants-event-sink</td><td class="num">10</td><td>→ copy-mode <code>-j4</code></td></tr>
-    <tr><td>narrow agent.rs <code>--re</code> sweeps</td><td class="num">0–~5</td><td>keep in-place</td></tr>
-  </tbody>
-</table>
+<p>Fix: every sweep now runs inside a memory-capped systemd user scope
+(<code>MemoryMax=20G, MemorySwapMax=0</code>) — well above any legitimate <code>-j1</code> build,
+far below the ~30 GB global-OOM threshold, and with no swap so a runaway dies fast instead of
+thrashing. Validated against the exact crash scenario: the session now <strong>survives</strong>
+(memory freed back to 27 GB) where it previously died.</p>
 
 <div class="callout rec">
-  <div class="callout-title">Recommendation</div>
-  Benchmark one conversion (<code>mutants-conv-state</code>: in-place vs copy-mode
-  <code>-j4</code>) to confirm the crossover holds on this box, then apply to the seven
-  wide sweeps. Parked behind the e2e work per current sequencing.
+  <div class="callout-title">Known limitation / follow-up</div>
+  The cap is a <em>session-survival</em> net, not a way to complete a sweep of a pathological file.
+  Because a systemd scope sets <code>memory.oom.group=1</code>, hitting the cap kills the whole cgroup
+  (cargo-mutants included), so the <code>output_cleaner.rs</code> sweep still aborts with
+  <code>interrupted</code> rather than recording the runaway as caught. Making such files sweepable is a
+  separate task (per-mutant memory limit, <code>memory.oom.group=0</code>, a tight <code>--timeout</code>,
+  or excluding the specific <code>*=</code>/<code>-=</code> loop mutants).
 </div>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
