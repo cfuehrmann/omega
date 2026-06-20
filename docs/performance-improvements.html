@@ -101,7 +101,7 @@ details > .details-body { padding:1rem 1.2rem; }
     <li><a href="#mutants-done" class="toc-sub">Done: revert to -j1 + mem-cap</a></li>
     <li><a href="#mutants-oom" class="toc-sub">OOM safety: runaway mutants</a></li>
     <li><a href="#mutants-sweepable" class="toc-sub">Pathological-file sweeps complete</a></li>
-    <li><a href="#mutants-inplace" class="toc-sub">TODO: in-place everywhere</a></li>
+    <li><a href="#mutants-inplace" class="toc-sub">DONE: targeted sweeps in-place</a></li>
     <li class="toc-divider"></li>
     <li><a href="#cpu" class="toc-h1">Appendix: the 358H puzzle</a></li>
     <li><a href="#thermal" class="toc-sub">Thermal throttling &amp; thermald</a></li>
@@ -138,8 +138,8 @@ details > .details-body { padding:1rem 1.2rem; }
     <tr><td>Stop copying gitignored 4 GB Leptos target (<code>gitignore = true</code>)</td><td>mutants</td><td class="num">copy cost; unblocks <code>-j</code></td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Memory-cap sweeps (<code>mutants-mem-cap</code> cgroup)</td><td>mutants</td><td class="num">no more OOM</td><td>med</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Scratch-dir hygiene (<code>mutants-prep</code>)</td><td>mutants</td><td class="num">disk</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
-    <tr><td>Convert copy-mode sweeps to <code>--in-place</code> everywhere</td><td>mutants</td><td class="num">~15–20%</td><td>med</td><td><span class="tag todo">TODO</span></td></tr>
-    <tr><td>Set latency-bound crate sweeps (omega-tools) to <code>-j2</code></td><td>mutants</td><td class="num">~20%</td><td>low</td><td><span class="tag todo">TODO</span></td></tr>
+    <tr><td>Targeted per-file sweeps run <code>--in-place</code> (measured fastest in every regime)</td><td>mutants</td><td class="num">~26% / ties</td><td>med</td><td><span class="tag done">DONE</span></td></tr>
+    <tr><td>Clean-tree guard on in-place sweeps (no silent commit of a crash leftover)</td><td>mutants</td><td class="num">safety</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Pathological-file sweeps complete &amp; report the runaway (<code>OOMPolicy=continue</code>)</td><td>mutants</td><td class="num">correctness</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
     <tr><td>Install <code>thermald</code> (stop reactive Tjmax throttling)</td><td>host</td><td class="num">~8 s + cooler</td><td>low</td><td><span class="tag done">DONE</span></td></tr>
   </tbody>
@@ -400,20 +400,37 @@ aggressive enough to false-fire on slow legitimate mutants); and <code>--exclude
 it). <code>OOMPolicy=continue</code> dominates all three: zero overhead, no false positives, and the
 runaway is still exercised and reported.</p>
 
-<h3 id="mutants-inplace">Convert copy-mode sweeps to <code>--in-place</code> everywhere <span class="tag todo">TODO</span></h3>
+<h3 id="mutants-inplace">Targeted sweeps run <code>--in-place</code> <span class="tag done">DONE</span></h3>
 
-<p>With <code>-j1</code> now the optimum, copy mode's only advantage (running several mutants at once)
-is moot — yet several recipes still copy the whole project per run. <code>--in-place</code> mutates the
-real source file and reverts it, skipping the copy entirely: on the conv-state bench that was
-<strong>~53 s vs ~65 s</strong> for copy <code>-j1</code> (≈15–20% faster). The heavy crates
-(omega-agent, omega-core, omega-server) already use <code>--in-place</code> for this reason.</p>
+<p>Re-measured 2026-06-20 with all fixes in place (reps=2, low noise). <strong>in-place
+<code>-j1</code> is fastest or tied-fastest in every regime</strong>; copy <code>-j1</code> — what the
+recipes used to run — is the slowest in both:</p>
+
+<table>
+  <thead><tr><th>Crate (regime)</th><th>in-place <code>-j1</code></th><th>copy <code>-j1</code></th><th>copy <code>-j2</code></th></tr></thead>
+  <tbody>
+    <tr><td>omega-agent <code>conv_state</code> (build-bound)</td><td class="num"><strong>55 s</strong></td><td class="num">74 s</td><td class="num">69 s</td></tr>
+    <tr><td>omega-tools <code>format</code> (latency-bound)</td><td class="num"><strong>56 s</strong></td><td class="num">69 s</td><td class="num">55 s</td></tr>
+  </tbody>
+</table>
+
+<p>in-place wins outright for build-bound (−26%) and <em>ties</em> the best copy option for latency-bound
+— its warm build cache cancels exactly against copy <code>-j2</code>'s parallelism. The gap was never the
+tree copy: even after the gitignore fix shrank copies to ~18 MB, copy stayed slower because it rebuilds
+the baseline <em>cold</em> each run. So the whole <code>-j2</code> question dissolves — there is never a
+reason to reach for it. All ~54 targeted per-file recipes are now <code>--in-place</code>; the long
+unattended full sweeps (<code>mutants</code>, <code>web-mutants</code>) stay copy, where the copy
+amortises over thousands of mutants and crash-safety on an unwatched run beats speed.</p>
 
 <div class="callout rec">
-  <div class="callout-title">Why it's deferred, not done</div>
-  In-place leaves the working tree <em>dirty</em> if a run is interrupted (Ctrl-C, crash, or the very OOM
-  that just bit us) — recoverable with <code>git checkout</code>, but a real hazard on a machine that just
-  crashed mid-sweep. Copy mode is the safer default; the speed-up is real but secondary, so this is a
-  deliberate trade rather than an oversight.
+  <div class="callout-title">The dirty-tree risk, and the guard</div>
+  In-place edits real source, so a hard crash mid-mutant (the now-fixed OOM aside) can leave a stray
+  mutation behind — and a <em>surviving</em> mutant passes the tests, so a blind <code>git add -A</code>
+  could commit it silently. Each in-place recipe therefore runs <code>scripts/mutants-guard</code> first:
+  it aborts if any tracked file is dirty, forcing a clean committed baseline so recovery is unambiguous
+  (<code>git checkout</code>) and a leftover is caught loudly before the next run. Bypass with
+  <code>MUTANTS_ALLOW_DIRTY=1</code>. (Normal recipes are <em>not</em> guarded — they must work on
+  uncommitted edits.)
 </div>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->

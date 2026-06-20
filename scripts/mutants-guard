@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Clean-tree guard for in-place mutation sweeps.
+#
+# In-place mutation testing writes mutations directly into your real source
+# files and reverts them after each mutant. If a run is hard-killed mid-mutant
+# (OOM, power loss, SIGKILL — anything that skips cargo-mutants' own cleanup), a
+# stray mutation can be left behind in a tracked file. Requiring a clean tracked
+# tree before starting means:
+#   * recovery is unambiguous — `git checkout .` restores the baseline;
+#   * a leftover mutation from a prior killed run is caught loudly HERE, before
+#     it can be mistaken for your own edit and silently committed (a surviving
+#     mutant passes the test suite, so the gate would not catch it).
+#
+# Only the in-place mutation recipes call this. Normal recipes (build, test,
+# fmt, e2e, run) READ the tree and must work on uncommitted edits, so they are
+# deliberately NOT guarded.
+#
+# Escape hatch: set MUTANTS_ALLOW_DIRTY=1 to bypass (e.g. to mutation-test
+# uncommitted work, accepting that crash recovery becomes ambiguous).
+set -euo pipefail
+
+if [ "${MUTANTS_ALLOW_DIRTY:-}" = "1" ]; then
+    echo "⚠  mutants-guard bypassed (MUTANTS_ALLOW_DIRTY=1) — crash recovery is your problem." >&2
+    exit 0
+fi
+
+if ! git diff --quiet HEAD 2>/dev/null; then
+    {
+        echo "✗  Mutation sweep refused: the working tree has uncommitted changes to tracked files."
+        echo "   In-place mutation edits real source, so it needs a clean committed baseline — a"
+        echo "   hard crash mid-run could otherwise leave a stray mutation tangled with your work."
+        echo "   → commit or stash your changes, then re-run (or set MUTANTS_ALLOW_DIRTY=1 to override)."
+        git diff --name-only HEAD | sed 's/^/     modified: /'
+    } >&2
+    exit 1
+fi
